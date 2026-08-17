@@ -1,11 +1,10 @@
 import type { BureauTaskRow, JobContext } from '../contract/index.ts';
 import { VERIFIER_ATTRIBUTION } from '../contract/constants.ts';
-import { formatActor } from '../contract/validation.ts';
 import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
 import { completeJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
-import { handleVerifyOutcome } from './loop.ts';
+import { handleVerifyOutcome, type VerifyOutcomeResult } from './loop.ts';
 import { runVerifier } from './verifier.ts';
 
 export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
@@ -47,8 +46,9 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   const outcome = await runVerifier(ctx.db, taskId, workspaceHandle.path);
   const finishedTime = new Date().toISOString();
 
-  // 4. Atomic Finalization Transaction
+  // 4. Atomic Finalization Transaction (DB logic, run row, state transitions, job completion)
   const runId = crypto.randomUUID();
+  let outcomeResult: VerifyOutcomeResult = { isSuccess: false, isSendback: false };
 
   ctx.db.execTransaction(() => {
     // Record run row
@@ -90,10 +90,27 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
       }
     });
 
-    // Execute state transitions & loop logic
-    handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION);
+    // Execute synchronous DB state transitions & loop logic
+    outcomeResult = handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION);
 
-    // Atomically mark the job done inside finalization transaction (B-2 fix)
+    // Atomically mark the job done inside finalization transaction
     completeJob(ctx.db, ctx.job.id);
   });
+
+  // 5. Awaited Seam Checkpoint after transaction completes (WX-1)
+  if (outcomeResult.isSendback) {
+    try {
+      await provider.checkpoint(ctx.db, taskId, VERIFIER_ATTRIBUTION, 'verify-failure-sendback');
+    } catch (err) {
+      journal(ctx.db, {
+        kind: 'system',
+        attribution: VERIFIER_ATTRIBUTION,
+        taskId,
+        detail: {
+          action: 'checkpoint_failed',
+          error: err instanceof Error ? err.message : String(err)
+        }
+      });
+    }
+  }
 }

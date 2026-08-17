@@ -1,8 +1,8 @@
-import execa from 'child_process';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+
 import type { DbConnection, WorkspaceHandle, WorkspaceProvider, AttributionTuple, BureauWorktreeRow } from '../contract/index.ts';
 
 const FOREMAN_ATTRIBUTION: AttributionTuple = {

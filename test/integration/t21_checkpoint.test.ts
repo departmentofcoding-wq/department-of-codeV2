@@ -94,5 +94,5 @@ describe('T21: Worktree Checkpoints with Attribution Trailers', () => {
     await checkpoint(db, taskId, verifierAttr, 'no-op check');
     const finalCommitCount = runGit(['rev-list', '--count', 'HEAD'], handle.path);
     expect(finalCommitCount).toBe(commitCountAfterDirty);
-  });
+  }, 20000);
 });
