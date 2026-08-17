@@ -153,6 +153,16 @@ export function redactOutput(text: string): string {
     redacted = redacted.replace(regex, '[REDACTED]');
   }
 
+  // 3. Key=Value secret assignment pattern (e.g. GOOGLE_API_KEY=xyz)
+  const keyValueRegex = /(?:GOOGLE_[A-Z0-9_]*|ANTHROPIC_[A-Z0-9_]*|OPENAI_[A-Z0-9_]*|BUREAU_[A-Z0-9_]*|[A-Z0-9_]*API_KEY)\s*=\s*[^\s"';]+/gi;
+  redacted = redacted.replace(keyValueRegex, (match) => {
+    const eqIdx = match.indexOf('=');
+    if (eqIdx !== -1) {
+      return match.slice(0, eqIdx + 1) + '[REDACTED]';
+    }
+    return '[REDACTED]';
+  });
+
   return redacted;
 }
 
