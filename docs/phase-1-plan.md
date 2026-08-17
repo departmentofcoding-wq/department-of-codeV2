@@ -32,17 +32,33 @@ conversation survives the runner being killed mid-turn.*
   duplicated.
 - **The mutation rule, unchanged**: every PR names the guard it broke and the
   test that caught it.
+- **API keys live in environment variables only.** `GOOGLE_API_KEY` (and any
+  future key) is read from env at call time and is never written to the
+  database, the journal, intake messages, or logs. A test enforces it (T18).
 
 ## 1. Model roster for this phase
 
 | Role | Backend | Cost |
 |---|---|---|
-| Task Intake Officer | local Ollama (OpenAI-compatible endpoint), structured tools | free |
+| Task Intake Officer | **local Ollama or Google Gemini (free tier)** — chosen by the `bureau_assignments` row, not by code | free |
 | Everything else | unchanged from Phase 0 | — |
 
-Operator setup (once, before B3): install Ollama, pull one modest instruct
-model that fits RAM, enable it in the registry. `BUREAU_OLLAMA_URL` defaults
-to `http://127.0.0.1:11434/v1`.
+Two supported providers, one interface, selected by configuration:
+
+- **Ollama** (default): `BUREAU_OLLAMA_URL`, default `http://127.0.0.1:11434/v1`.
+  Install Ollama, pull one modest instruct model that fits RAM, enable it in
+  the registry. No key, no quota, GPU-bound.
+- **Google Gemini free tier** (optional): set `GOOGLE_API_KEY` (from AI
+  Studio). Accessed through Gemini's OpenAI-compatible endpoint, so it rides
+  the same client shape as Ollama. Free-tier quotas are real and small —
+  requests per day and requests per minute, not just tokens — so the officer
+  treats quota like money: budgeted, counted, and rotated away from when a
+  429 arrives (v1's recorded experience: on the free tier, a 429 is an
+  ordinary Tuesday, and quota decides the roster more than quality does).
+
+Either provider can serve the officer; both can be enabled at once, with the
+assignment deciding who starts and the cooldown/rotation rules deciding who
+takes over when the first is rate-limited.
 
 ---
 
@@ -62,8 +78,16 @@ One PR into `main`, both juniors review, then freeze:
 - **`LlmClient` interface** (contract): `complete(request) → result`;
   request carries model id, messages (with tool definitions and prior
   tool_use/tool_result blocks), timeout signal; result carries text,
-  tool calls, tokens in/out, latency, `cost_usd: null` for local models.
-  Implementations: `mockClient` (tests), `ollamaClient` (B2).
+  tool calls, tokens in/out, latency, `cost_usd: null` for local and
+  free-tier models. Three implementations: `mockClient` (tests),
+  `ollamaClient`, `googleClient` — the two real ones both speak the
+  OpenAI-compatible chat-completions shape (Gemini via its compat endpoint,
+  authenticated with `GOOGLE_API_KEY` as a bearer token read from env).
+  Provider config (base URL, key presence) resolves from env at call time
+  and is never persisted.
+- **Budgets are data**: `bureau_meta` keys for the rolling-24h token budget
+  AND request-count budget (the free tier caps requests per day, which a
+  token budget cannot see).
 - **Officer tool schemas** (zod, shared): `propose_field {field, value}`,
   `propose_verify {command}`, `ask_human {question}`, `file_task {}`.
 - **Pure functions in the contract, single source of truth:**
@@ -88,8 +112,8 @@ One PR into `main`, both juniors review, then freeze:
 
 | # | Deliverable | Acceptance |
 |---|---|---|
-| B1 | `callModel` choke point: resolves the model via `bureau_assignments`, checks the token budget FIRST (rolling 24h from journal rollups vs `bureau_meta` ceiling), runs the client with timeout, journals an `llm` span with the model's attribution (tokens/latency, cost `null` for local), declines with a `guardrail` span + `notifyOperator` when over budget | T15; span attribution test |
-| B2 | `ollamaClient` (OpenAI-compatible chat completions with tool support) + `mockClient` (scripted turns) + Ollama health/list helper (`provider: 'ollama'`, unpriced, disabled until the operator enables) | Unit tests use mock only; optional `npm run smoke:ollama` |
+| B1 | `callModel` choke point: resolves the model via `bureau_assignments`, checks BOTH budgets FIRST (rolling-24h tokens and request count from journal rollups vs `bureau_meta` ceilings), runs the client with timeout, journals an `llm` span with the model's attribution (tokens/latency, cost `null` for local/free-tier), declines with a `guardrail` span + `notifyOperator` when over budget. **On a 429/quota refusal**: records a cooldown for that model in `bureau_meta` (provider's `retry-after` when present, else a default), rotates to the next enabled model for the role, and refuses rather than rotating if no model is left — rotation must spend the queue, never the budget | T15, T17; span attribution test |
+| B2 | Clients: `ollamaClient` + `googleClient` (both OpenAI-compatible; Gemini's base URL `https://generativelanguage.googleapis.com/v1beta/openai/`, key from env, never logged) + `mockClient` (scripted turns, scriptable 429s). Registry: known Gemini free-tier models seeded `provider: 'google'`, unpriced, **disabled until `GOOGLE_API_KEY` is present**; health/list helpers for both providers | Unit tests use mock only; optional `npm run smoke:llm` against whichever provider is configured |
 | B3 | `taskIntakeOfficer` turn loop: builds the message array **replaying every prior `tool_use` and `tool_result` block each turn** (v1's founding bug was omitting this — the officer asked the same question forever); tools bound to the session store; `propose_verify` pre-flights through the shared `isVacuousVerify`; deterministic gap check after every turn (`taskGaps` decides, never the model); hard cap 10 model calls per `intake.turn` job — at the cap without a question, the gap report supplies the next question | T12 (mutation: remove the replay, watch it fail) |
 | B4 | `intake.turn` job kind: loads the session, runs one turn, persists messages + draft; idempotent on re-run after a crash (state lives in the store, not memory); abort-aware. CLI: `npm run intake -- "fix the login bug"`, `--answer "..."`, `--confirm-verify`, `--show` — the only door a human speaks through | T14 (real kill mid-conversation, resume) |
 | B5 | Attribution in practice: officer turns in the ledger attributed to the Ollama model; end-to-end mock happy path | T13, T16 |
@@ -119,6 +143,14 @@ Merge order: `M1 → A1/A2/A3 → B1–B4 → X2`.
   notifies the operator, and no call beyond the budget is ever made.
 - **T16** — attribution exactness: ledger rollups for the officer model match
   the mock's reported tokens exactly.
+- **T17** — quota rotation: the mock returns 429 for the role's first model;
+  the call rotates to the second enabled model and succeeds, the cooldown is
+  recorded in `bureau_meta`, both attempts are journaled and attributed to
+  their own models, and with every model cooling the officer declines instead
+  of hammering.
+- **T18** — key hygiene: after a full mocked conversation using a fake
+  `GOOGLE_API_KEY`, the key's value appears nowhere — not in any journal span
+  (including `detail`), not in any intake message, not in `last_error`.
 
 ## 6. Explicitly out of scope for Phase 1
 
