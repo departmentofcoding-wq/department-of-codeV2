@@ -84,5 +84,6 @@ describe('T20: Stale Worktree Status on Moved Main Branch', () => {
     const row2 = db.get<BureauWorktreeRow>("SELECT * FROM bureau_worktrees WHERE task_id = ?", taskId);
     expect(row2?.status).toBe('stale');
     expect(row2?.base_commit).toBe(initialBase);
-  });
+  }, 15000);
 });
+

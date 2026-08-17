@@ -13,7 +13,8 @@
     "build": "tsc --noEmit",
     "intake": "node --experimental-strip-types scripts/intake.ts",
     "smoke:llm": "node --experimental-strip-types scripts/smoke_llm.ts",
-    "demo:phase1": "node --experimental-strip-types scripts/demo_phase1.ts"
+    "demo:phase1": "node --experimental-strip-types scripts/demo_phase1.ts",
+    "demo:phase2": "node --experimental-strip-types scripts/demo_phase2.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

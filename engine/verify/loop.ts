@@ -7,12 +7,12 @@ import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import type { VerifyRunResult } from './verifier.ts';
 
-export function handleVerifyOutcome(
+export async function handleVerifyOutcome(
   db: DbConnection,
   taskId: string,
   outcome: VerifyRunResult,
   attribution: AttributionTuple = VERIFIER_ATTRIBUTION
-): void {
+): Promise<void> {
   const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
   if (!task) {
     throw new Error(`Task ${taskId} not found for verification outcome handling`);
@@ -61,7 +61,7 @@ export function handleVerifyOutcome(
 
     // Seam checkpoint after transaction completes
     try {
-      getWorkspaceProvider().checkpoint(db, taskId, attribution, 'verify-failure-sendback');
+      await getWorkspaceProvider().checkpoint(db, taskId, attribution, 'verify-failure-sendback');
     } catch (err) {
       journal(db, {
         kind: 'system',
@@ -74,6 +74,7 @@ export function handleVerifyOutcome(
       });
     }
   } else {
+
     // Budget ceiling reached: block task and notify operator
     db.execTransaction(() => {
       transition(db, taskId, 'blocked', attribution, {

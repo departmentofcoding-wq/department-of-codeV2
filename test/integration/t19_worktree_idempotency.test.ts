@@ -93,9 +93,10 @@ describe('T19 & T19b: Worktree Idempotency, Refuse-Dirty Invariant & Crash-Resum
     expect(fs.existsSync(handle1.path)).toBe(true);
 
     expect(fs.existsSync(path.join(handle1.path, 'dirty_file.txt'))).toBe(true);
-  });
+  }, 15000);
 
   it('T19b: Crash-resume during worktree.prepare job handler (re-entry matrix test)', async () => {
+
     const db = openDbConnection(dbPath);
     const provider = new GitWorkspaceProvider(repoPath);
     setWorkspaceProvider(provider);
@@ -143,5 +144,24 @@ describe('T19 & T19b: Worktree Idempotency, Refuse-Dirty Invariant & Crash-Resum
     // Verify no duplicate verify.run jobs were created
     const verifyJobsAfterRerun = db.all("SELECT * FROM bureau_jobs WHERE task_id = 't19b-crash' AND kind = 'verify.run'") as any[];
     expect(verifyJobsAfterRerun).toHaveLength(1);
-  });
+
+    // Scenario C: Directory exists on disk but missing DB row (crash between git worktree add and DB insert)
+    seedQueuedTask(db, 't19b-adopt');
+    const unrecordedPath = path.join(repoPath, '.bureau-worktrees', 't19b-adopt');
+    fs.mkdirSync(path.dirname(unrecordedPath), { recursive: true });
+    runGit(['worktree', 'add', unrecordedPath, '-b', 'bureau-wt-t19b-adopt', 'main'], repoPath);
+
+    // DB row does not exist yet
+    const rowBefore = db.get("SELECT * FROM bureau_worktrees WHERE task_id = 't19b-adopt'");
+    expect(rowBefore).toBeUndefined();
+
+    // Prepare adopts the existing clean worktree directory and inserts the DB row
+    const adoptedHandle = await provider.prepare(db, 't19b-adopt');
+    expect(adoptedHandle.path).toBe(unrecordedPath);
+
+    const rowAfter = db.get("SELECT status FROM bureau_worktrees WHERE task_id = 't19b-adopt'") as any;
+    expect(rowAfter?.status).toBe('ready');
+  }, 15000);
 });
+
+

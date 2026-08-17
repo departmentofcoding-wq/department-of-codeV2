@@ -90,10 +90,11 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
       }
     });
 
-    // Execute state transitions & loop logic
-    handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION);
-
     // Atomically mark the job done inside finalization transaction (B-2 fix)
     completeJob(ctx.db, ctx.job.id);
   });
+
+  // Execute state transitions & loop logic (including async checkpointing)
+  await handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION);
 }
+
