@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { BureauJobRow, BureauTaskRow } from '../../engine/contract/index.ts';
+import type { AttributionTuple, BureauJobRow, BureauTaskRow } from '../../engine/contract/index.ts';
 import { setWorkspaceProvider } from '../../engine/contract/workspace-seam.ts';
 import { enqueueJob } from '../../engine/jobs/jobs.ts';
-import { transition } from '../../engine/state/machine.ts';
+import { rearmTask, transition } from '../../engine/state/machine.ts';
 import { executeVerifyRunJob } from '../../engine/verify/job.ts';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
 import { FakeWorkspaceProvider } from '../helpers/fake_workspace_provider.ts';
@@ -73,6 +73,10 @@ describe('T25: Exit Sentence Send-Back Loop & Re-arm Integration Test', () => {
       const queuedJobs2 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
       expect(queuedJobs2.length).toBeGreaterThanOrEqual(1);
 
+      // Assert send-back seam checkpoints were recorded on provider
+      const sendbackCheckpoints = provider.checkpoints.filter((c) => c.note === 'verify-failure-sendback');
+      expect(sendbackCheckpoints.length).toBe(2);
+
       // --- Run 3: Failure 3 (Ceiling reached: verify_fixes=2 >= ceiling=2) ---
       const job3 = queuedJobs2[0];
       await executeVerifyRunJob({ db, job: job3, payload: { taskId }, signal: new AbortController().signal });
@@ -101,14 +105,19 @@ describe('T25: Exit Sentence Send-Back Loop & Re-arm Integration Test', () => {
       // 1. Scripted fix: update verify_cmd to passing command
       db.run('UPDATE bureau_tasks SET verify_cmd = ? WHERE id = ?', 'node -e "process.exit(0);"', taskId);
 
-      // 2. Operator re-arms: blocked -> claimed with human-operator role
-      transition(db, taskId, 'claimed', { actor_role: 'human-operator', provider: 'deterministic', model: 'core', account: 'operator' });
+      // 2. Operator re-arms: blocked -> claimed with human-operator role via rearmTask single-writer
+      const humanAttr: AttributionTuple = { actor_role: 'human-operator', provider: 'deterministic', model: 'core', account: 'operator' };
+      rearmTask(db, taskId, humanAttr);
 
       let taskRearmed = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
       expect(taskRearmed?.state).toBe('claimed');
+      expect(taskRearmed?.verify_fixes).toBe(0);
 
-      // --- Run 4: Passing verify after re-arm reaches needs-review ---
-      const job4 = enqueueJob(db, { kind: 'verify.run', task_id: taskId, payload: { taskId } });
+      // --- Run 4: Execute auto-enqueued verify.run job created by rearmTask ---
+      const queuedJobsRearmed = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
+      expect(queuedJobsRearmed.length).toBeGreaterThanOrEqual(1);
+      const job4 = queuedJobsRearmed[0];
+
       await executeVerifyRunJob({ db, job: job4, payload: { taskId }, signal: new AbortController().signal });
 
       let taskFinal = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);

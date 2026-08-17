@@ -23,7 +23,8 @@ export function handleVerifyOutcome(
     'SELECT value FROM bureau_meta WHERE key = ?',
     'verify:fixes:ceiling'
   );
-  const ceiling = ceilingRow ? parseInt(ceilingRow.value, 10) : 2;
+  const rawCeiling = ceilingRow ? parseInt(ceilingRow.value, 10) : 2;
+  const ceiling = Number.isFinite(rawCeiling) ? rawCeiling : 2;
 
   const isSuccess = outcome.exitCode === 0 && !outcome.timedOut;
 
@@ -61,8 +62,16 @@ export function handleVerifyOutcome(
     // Seam checkpoint after transaction completes
     try {
       getWorkspaceProvider().checkpoint(db, taskId, attribution, 'verify-failure-sendback');
-    } catch {
-      // Seam checkpoint error logged/ignored if provider throws in test edge cases
+    } catch (err) {
+      journal(db, {
+        kind: 'system',
+        attribution,
+        taskId,
+        detail: {
+          action: 'checkpoint_failed',
+          error: err instanceof Error ? err.message : String(err)
+        }
+      });
     }
   } else {
     // Budget ceiling reached: block task and notify operator

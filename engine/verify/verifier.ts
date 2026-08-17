@@ -51,7 +51,8 @@ export async function runVerifier(
       'SELECT value FROM bureau_meta WHERE key = ?',
       'verify:timeout_ms'
     );
-    timeoutMs = metaRow ? parseInt(metaRow.value, 10) : 120000;
+    const rawTimeout = metaRow ? parseInt(metaRow.value, 10) : 120000;
+    timeoutMs = Number.isFinite(rawTimeout) ? rawTimeout : 120000;
   }
 
   const scrubbedEnv = scrubEnv(process.env);
