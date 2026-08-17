@@ -15,6 +15,8 @@ import {
 // Importing the registry registers the job handlers as a module side effect.
 import { getJobDefinition } from '../engine/jobs/registry.ts';
 
+import { notifyOperator as engineNotifyOperator } from '../engine/state/notifications.ts';
+
 // 1. Zod Environment Variable Config. BUREAU_DB_PATH has no default here on
 // purpose: the engine's boot door owns the one default, stated once.
 export const runnerConfigSchema = z.object({
@@ -32,7 +34,7 @@ export interface OperatorNotifier {
 
 export const defaultNotifier: OperatorNotifier = {
   notifyOperator(jobId: string, reason: string): void {
-    log('WARN', 'operator_notified', { jobId, reason });
+    engineNotifyOperator(jobId, reason);
   }
 };
 
