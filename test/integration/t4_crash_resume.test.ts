@@ -159,8 +159,8 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         ...process.env,
         BUREAU_DB_PATH: dbPath,
         BUREAU_POLL_MS: '10',
-        BUREAU_LEASE_MS: '150',
-        BUREAU_HEARTBEAT_MS: '1000'
+        BUREAU_LEASE_MS: '500',
+        BUREAU_HEARTBEAT_MS: '100'
       };
       const spawnChild = () =>
         spawn(process.execPath, ['--experimental-strip-types', path.join(repoRoot, 'runner', 'main.ts')], {
@@ -184,6 +184,10 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       killTree(child1.pid);
       await new Promise<void>((resolve) => child1.once('exit', () => resolve()));
 
+      // Wait for runner 1's lease (500ms) to expire so the watchdog in
+      // runner 2 will find an expired lease and journal 'lease-reaped'.
+      await new Promise((res) => setTimeout(res, 600));
+
       // Shorten the remaining sleeps so the resumed run is quick
       testDb.run(
         `UPDATE bureau_jobs SET payload = ? WHERE id LIKE 'kill-chain-1:sleep:%' AND state != 'done'`,
@@ -194,8 +198,8 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         ...process.env,
         BUREAU_DB_PATH: dbPath,
         BUREAU_POLL_MS: '10',
-        BUREAU_LEASE_MS: '5000',
-        BUREAU_HEARTBEAT_MS: '100'
+        BUREAU_LEASE_MS: '10000',
+        BUREAU_HEARTBEAT_MS: '500'
       };
       const spawnChild2 = () =>
         spawn(process.execPath, ['--experimental-strip-types', path.join(repoRoot, 'runner', 'main.ts')], {
@@ -222,8 +226,9 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       };
 
       // Under a busy test run (vitest parallel workers), spawning two Node
-      // processes can cost seconds — the budget is patience, not speed.
-      for (let i = 0; i < 1500; i++) {
+      // processes can cost several seconds — the budget must absorb that
+      // overhead and still give the resumed chain time to finish.
+      for (let i = 0; i < 3000; i++) {
         if (allDone()) break;
         await new Promise((res) => setTimeout(res, 10));
       }
@@ -233,7 +238,7 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         const force = setTimeout(() => {
           try { killTree(child2.pid); } catch { /* already gone */ }
           resolve();
-        }, 5000);
+        }, 10000);
         child2.once('exit', () => { clearTimeout(force); resolve(); });
         child2.kill('SIGINT');
       });

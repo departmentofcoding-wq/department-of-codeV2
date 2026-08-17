@@ -10,7 +10,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "smoke:llm": "node scripts/smoke_llm.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
