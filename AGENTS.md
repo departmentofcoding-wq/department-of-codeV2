@@ -15,6 +15,15 @@ Core rules, non-negotiable:
 - **Never work directly in main's working tree.** One branch per stream
   (`wt/junior-<x>-<stream>`), one PR per milestone; the Senior reviews, the
   Operator merges.
+- **Merge discipline (the Phase 2 law).** Nothing reaches `main` — no commit,
+  no merge, no fast-forward, docs and review artifacts included — until a
+  Senior verdict is posted for that exact commit hash. Junior work is
+  committed on the stream branch, never left uncommitted in a checked-out
+  tree. A ledger "done" row cites the hash that actually contains the work,
+  and walkthrough citations (branch, commit, test counts, demo output) must
+  match reality — the Senior re-runs them. Phase 2 recorded five violations
+  of this rule; every one was caught and repaired, and the rule is absolute
+  from Phase 3 on.
 - The invariant lives in the database: done requires verifier exit 0 AND human
   approval. No code path bypasses what the DB refuses.
 - Every asynchronous step is a row in `bureau_jobs`. Nothing fire-and-forget.
@@ -31,6 +40,8 @@ Core rules, non-negotiable:
   trusted.
 
 Key paths: `engine/` (contract, db, jobs, journal, ledger, models, llm,
-officers, intake, filing, state), `runner/main.ts` (job loop +
-`drainSingleJob`), `scripts/` (`intake.ts` CLI, `demo_phase1.ts`,
-`smoke_llm.ts`), `test/` (unit + integration, numbered T-records).
+officers, intake, filing, state, verify, worktrees), `runner/main.ts` (job
+loop + `drainSingleJob` + provider wiring), `scripts/` (`intake.ts` CLI,
+`demo_phase1.ts`, `demo_phase2.ts`, `smoke_llm.ts`), `test/` (unit +
+integration, numbered T-records; `test/helpers/` fakes; `test/fixtures/`
+db factory), `docs/reviews/` (peer-review artifacts).
