@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 2 — Worktrees + Verifier: planned, ready to start** |
-| Main | `cf0901f` — Phase 1 complete and merged (2026-08-17) |
-| Suite | 102/102 tests, 24 files, `npm run build` clean — verified on main |
-| In flight | Nothing. Clean handoff point. |
-| Next action | Operator assigns Phase 2 streams from `docs/phase-2-plan.md` |
+| **Phase** | **Phase 2 — Worktrees + Verifier: in progress** |
+| Main | `main` — Stream B (Verifier & Send-Back Loop) merged (2026-08-17) |
+| Suite | 120/120 tests, 31 files, `npm run build` clean — verified on main |
+| In flight | Stream A (Worktree Manager) in progress |
+| Next action | Junior A completes Stream A implementation & Senior review |
 
 ## Phase ledger
 
@@ -22,7 +22,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|---|
 | 0 — Foundation | Engine package, full schema (budgets as columns), jobs runner with claim/lease/reap, journal, migration door | ✅ done, merged |
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
-| 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | 📋 planned → `docs/phase-2-plan.md` |
+| 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | 🔄 in progress (W0 merged, Stream B merged, Stream A in flight) |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | pending |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | pending |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | pending |
