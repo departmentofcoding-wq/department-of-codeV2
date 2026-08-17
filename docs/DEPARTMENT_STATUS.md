@@ -11,10 +11,10 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 2 — Worktrees + Verifier: COMPLETE** |
-| Main | `main` — Stream A (Worktrees) and Stream B (Verifier) merged (`d383673`) |
-| Suite | 124/124 tests, 34 files, `npm run build` clean — verified on main |
-| In flight | Phase 2 complete — ready for Phase 3 (Junior harness) |
-| Next action | Begin Phase 3 planning |
+| Main | `3053145` — W0, Stream A, Stream B, and WX all merged (2026-08-17) |
+| Suite | 125/125 tests, 35 files, `npm run build` clean, `demo:phase2` verified on main |
+| In flight | Nothing. Clean handoff point. |
+| Next action | Phase 3 planning (junior harness: CDP, selector registry + calibration gate, nonce correlation, window lease) |
 
 ## Phase ledger
 
@@ -22,11 +22,21 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|---|
 | 0 — Foundation | Engine package, full schema (budgets as columns), jobs runner with claim/lease/reap, journal, migration door | ✅ done, merged |
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
-| 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`d383673`), full exit sentence verified |
+| 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | pending |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | pending |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | pending |
 
+Phase 2 record: T19–T29 green; both mutation evidences (T19 refuse-dirty,
+T26 fixes-increment) re-executed independently by the Senior; `demo:phase2`
+run on merged main (25 attributed spans, key hygiene PASS, zero fail spans).
+Process note for every future phase: Phase 2 had five incidents of commits or
+merges reaching main before a posted Senior verdict (a0a82cf, 9f018ac,
+23535a3, the 6800506 merge, 44f76fd) plus one completion claim written into
+this ledger while WX was still unmerged. Every one was caught and repaired,
+and the final WX merge (3053145) followed a posted verdict — but the law is
+absolute: nothing reaches main without a posted Senior verdict, and ledger
+"done" rows cite the hash that actually contains the work.
 
 Definition of done for a phase: merged to main, suite + build green on main,
 exit sentence demonstrable (demo script or recorded test evidence), and this
@@ -56,7 +66,8 @@ This is the loop every stream follows. It was proven across Phase 1.
 ## New-window checklist (any role)
 
 1. Read this file.
-2. Read the current phase plan doc (`docs/phase-2-plan.md` right now).
+2. Read the current phase plan doc (Phase 2 used `docs/phase-2-plan.md`;
+   Phase 3's plan doc is not written yet).
 3. `git log --oneline -10` and `git status` — tree must be clean, branch known.
 4. `npx vitest run` and `npm run build` — must be green before any work starts.
 5. Follow the review loop above. Never work directly in main's tree.
