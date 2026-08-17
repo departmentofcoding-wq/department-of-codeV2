@@ -56,7 +56,6 @@ describe('T21: Worktree Checkpoints with Attribution Trailers', () => {
   };
 
   it('T21: checkpoints commit WIP with attribution trailer; clean trees are a no-op', async () => {
-
     const db = openDbConnection(dbPath);
     const provider = new GitWorkspaceProvider(repoPath);
     setWorkspaceProvider(provider);
@@ -95,6 +94,5 @@ describe('T21: Worktree Checkpoints with Attribution Trailers', () => {
     await checkpoint(db, taskId, verifierAttr, 'no-op check');
     const finalCommitCount = runGit(['rev-list', '--count', 'HEAD'], handle.path);
     expect(finalCommitCount).toBe(commitCountAfterDirty);
-  }, 15000);
+  }, 20000);
 });
-

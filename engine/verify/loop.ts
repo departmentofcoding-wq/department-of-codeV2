@@ -1,18 +1,26 @@
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/index.ts';
 import { VERIFIER_ATTRIBUTION } from '../contract/constants.ts';
-import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import type { VerifyRunResult } from './verifier.ts';
 
-export async function handleVerifyOutcome(
+export interface VerifyOutcomeResult {
+  isSuccess: boolean;
+  isSendback: boolean;
+}
+
+/**
+ * Executes all synchronous database state transitions and job enqueues for a verifier run outcome.
+ * MUST be invoked inside the finalization transaction in executeVerifyRunJob.
+ */
+export function handleVerifyOutcome(
   db: DbConnection,
   taskId: string,
   outcome: VerifyRunResult,
   attribution: AttributionTuple = VERIFIER_ATTRIBUTION
-): Promise<void> {
+): VerifyOutcomeResult {
   const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
   if (!task) {
     throw new Error(`Task ${taskId} not found for verification outcome handling`);
@@ -29,74 +37,54 @@ export async function handleVerifyOutcome(
   const isSuccess = outcome.exitCode === 0 && !outcome.timedOut;
 
   if (isSuccess) {
-    db.execTransaction(() => {
-      db.run('UPDATE bureau_tasks SET verifier_exit_code = 0 WHERE id = ?', taskId);
-      transition(db, taskId, 'needs-review', attribution, {
-        action: 'verify_passed',
-        duration_ms: outcome.durationMs
-      });
+    db.run('UPDATE bureau_tasks SET verifier_exit_code = 0 WHERE id = ?', taskId);
+    transition(db, taskId, 'needs-review', attribution, {
+      action: 'verify_passed',
+      duration_ms: outcome.durationMs
     });
-    return;
+    return { isSuccess: true, isSendback: false };
   }
 
   // Failure path: check verify_fixes budget ceiling
   if (task.verify_fixes < ceiling) {
     // Send-back loop: atomic increment, transition to claimed, and re-enqueue verify.run
     const newFixes = task.verify_fixes + 1;
-    db.execTransaction(() => {
-      db.run('UPDATE bureau_tasks SET verify_fixes = ? WHERE id = ?', newFixes, taskId);
-      transition(db, taskId, 'claimed', attribution, {
-        action: 'verify_failed_sendback',
-        verify_fixes: newFixes,
-        ceiling,
-        exit_code: outcome.exitCode,
-        timed_out: outcome.timedOut
-      });
-      enqueueJob(db, {
-        kind: 'verify.run',
-        task_id: taskId,
-        payload: { taskId }
-      });
+    db.run('UPDATE bureau_tasks SET verify_fixes = ? WHERE id = ?', newFixes, taskId);
+    transition(db, taskId, 'claimed', attribution, {
+      action: 'verify_failed_sendback',
+      verify_fixes: newFixes,
+      ceiling,
+      exit_code: outcome.exitCode,
+      timed_out: outcome.timedOut
+    });
+    enqueueJob(db, {
+      kind: 'verify.run',
+      task_id: taskId,
+      payload: { taskId }
+    });
+    return { isSuccess: false, isSendback: true };
+  } else {
+    // Budget ceiling reached: block task and notify operator
+    transition(db, taskId, 'blocked', attribution, {
+      action: 'verify_ceiling_reached',
+      verify_fixes: task.verify_fixes,
+      ceiling,
+      exit_code: outcome.exitCode,
+      timed_out: outcome.timedOut
     });
 
-    // Seam checkpoint after transaction completes
-    try {
-      await getWorkspaceProvider().checkpoint(db, taskId, attribution, 'verify-failure-sendback');
-    } catch (err) {
-      journal(db, {
-        kind: 'system',
-        attribution,
-        taskId,
-        detail: {
-          action: 'checkpoint_failed',
-          error: err instanceof Error ? err.message : String(err)
-        }
-      });
-    }
-  } else {
-
-    // Budget ceiling reached: block task and notify operator
-    db.execTransaction(() => {
-      transition(db, taskId, 'blocked', attribution, {
-        action: 'verify_ceiling_reached',
+    journal(db, {
+      kind: 'guardrail',
+      attribution,
+      taskId,
+      detail: {
+        reason: 'verify_fixes ceiling reached',
         verify_fixes: task.verify_fixes,
-        ceiling,
-        exit_code: outcome.exitCode,
-        timed_out: outcome.timedOut
-      });
-
-      journal(db, {
-        kind: 'guardrail',
-        attribution,
-        taskId,
-        detail: {
-          reason: 'verify_fixes ceiling reached',
-          verify_fixes: task.verify_fixes,
-          ceiling
-        }
-      });
+        ceiling
+      }
     });
 
     notifyOperator(taskId, 'verify_fixes ceiling reached');
+    return { isSuccess: false, isSendback: false };
   }
 }
