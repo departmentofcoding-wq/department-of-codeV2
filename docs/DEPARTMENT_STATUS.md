@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 2 — Worktrees + Verifier: COMPLETE** |
-| Main | `3053145` — W0, Stream A, Stream B, and WX all merged (2026-08-17) |
+| **Phase** | **Phase 3 — Junior Harness: planned, ready to start** |
+| Main | `3853f0a` — Phase 2 complete and merged (2026-08-17); planning docs added |
 | Suite | 125/125 tests, 35 files, `npm run build` clean, `demo:phase2` verified on main |
 | In flight | Nothing. Clean handoff point. |
-| Next action | Phase 3 planning (junior harness: CDP, selector registry + calibration gate, nonce correlation, window lease) |
+| Next action | Operator assigns Phase 3 streams from `docs/phase-3-plan.md` (C0 freeze first) |
 
 ## Phase ledger
 
@@ -23,9 +23,9 @@ phase plan, then git. Nothing important lives only in a chat window.
 | 0 — Foundation | Engine package, full schema (budgets as columns), jobs runner with claim/lease/reap, journal, migration door | ✅ done, merged |
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
-| 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | pending |
-| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | pending |
-| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | pending |
+| 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | 📋 planned → `docs/phase-3-plan.md` |
+| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | 📋 rough outline → `docs/phase-4-rough.md` |
+| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 rough outline → `docs/phase-5-rough.md` |
 
 Phase 2 record: T19–T29 green; both mutation evidences (T19 refuse-dirty,
 T26 fixes-increment) re-executed independently by the Senior; `demo:phase2`
@@ -66,8 +66,9 @@ This is the loop every stream follows. It was proven across Phase 1.
 ## New-window checklist (any role)
 
 1. Read this file.
-2. Read the current phase plan doc (Phase 2 used `docs/phase-2-plan.md`;
-   Phase 3's plan doc is not written yet).
+2. Read the current phase plan doc (`docs/phase-3-plan.md` right now;
+   Phases 4–5 exist as rough outlines in `docs/phase-4-rough.md` /
+   `docs/phase-5-rough.md`).
 3. `git log --oneline -10` and `git status` — tree must be clean, branch known.
 4. `npx vitest run` and `npm run build` — must be green before any work starts.
 5. Follow the review loop above. Never work directly in main's tree.
