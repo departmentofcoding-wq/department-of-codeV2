@@ -246,57 +246,69 @@ export function applyBootMigrations(db: DatabaseSync): void {
   const tableMaster = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='bureau_tasks'`).get() as { sql?: string } | undefined;
   if (tableMaster?.sql && !tableMaster.sql.includes("'blocked'")) {
     db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      db.exec('BEGIN IMMEDIATE;');
+      db.exec(`
+        CREATE TABLE bureau_tasks_new (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          intent TEXT, spec TEXT, acceptance TEXT,
+          verify_cmd TEXT, setup_cmd TEXT,
+          state TEXT NOT NULL DEFAULT 'intake'
+            CHECK (state IN ('intake','queued','claimed','verifying','needs-review','done','failed','blocked')),
+          verifier_exit_code INTEGER,
+          approved_at TEXT, approved_by TEXT,
+          merged_at TEXT, merged_by TEXT,
+          priority INTEGER NOT NULL DEFAULT 1,
+          work_uuid TEXT NOT NULL,
+          work_title TEXT,
+          plan_rounds INTEGER NOT NULL DEFAULT 0,
+          verify_fixes INTEGER NOT NULL DEFAULT 0,
+          cycles INTEGER NOT NULL DEFAULT 0,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          pull_request_url TEXT,
+          intake_session_id TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          CHECK (state <> 'done'
+                 OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
+          CHECK (merged_at IS NULL OR state = 'done')
+        );
 
-    db.exec(`
-      CREATE TABLE bureau_tasks_new (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        intent TEXT, spec TEXT, acceptance TEXT,
-        verify_cmd TEXT, setup_cmd TEXT,
-        state TEXT NOT NULL DEFAULT 'intake'
-          CHECK (state IN ('intake','queued','claimed','verifying','needs-review','done','failed','blocked')),
-        verifier_exit_code INTEGER,
-        approved_at TEXT, approved_by TEXT,
-        merged_at TEXT, merged_by TEXT,
-        priority INTEGER NOT NULL DEFAULT 1,
-        work_uuid TEXT NOT NULL,
-        work_title TEXT,
-        plan_rounds INTEGER NOT NULL DEFAULT 0,
-        verify_fixes INTEGER NOT NULL DEFAULT 0,
-        cycles INTEGER NOT NULL DEFAULT 0,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        pull_request_url TEXT,
-        intake_session_id TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        CHECK (state <> 'done'
-               OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
-        CHECK (merged_at IS NULL OR state = 'done')
-      );
+        INSERT INTO bureau_tasks_new (
+          id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+          verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
+          priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
+          attempts, pull_request_url, intake_session_id, created_at, updated_at
+        )
+        SELECT
+          id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+          verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
+          priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
+          attempts, pull_request_url, intake_session_id, created_at, updated_at
+        FROM bureau_tasks;
 
-      INSERT INTO bureau_tasks_new (
-        id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
-        verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
-        priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
-        attempts, pull_request_url, intake_session_id, created_at, updated_at
-      )
-      SELECT
-        id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
-        verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
-        priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
-        attempts, pull_request_url, intake_session_id, created_at, updated_at
-      FROM bureau_tasks;
+        DROP TABLE bureau_tasks;
+        ALTER TABLE bureau_tasks_new RENAME TO bureau_tasks;
+      `);
 
-      DROP TABLE bureau_tasks;
-      ALTER TABLE bureau_tasks_new RENAME TO bureau_tasks;
-    `);
+      const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
+      if (fkViolations.length > 0) {
+        throw new Error(`Foreign key check failed after bureau_tasks rebuild: ${JSON.stringify(fkViolations)}`);
+      }
 
-    const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
-    if (fkViolations.length > 0) {
-      throw new Error(`Foreign key check failed after bureau_tasks rebuild: ${JSON.stringify(fkViolations)}`);
+      db.exec('COMMIT;');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // Ignored if transaction already aborted
+      }
+      throw err;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON;');
     }
-
-    db.exec('PRAGMA foreign_keys = ON;');
   }
+
 
   // 3. Indices built after table rebuild completes
   db.exec(`
