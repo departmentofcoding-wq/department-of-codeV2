@@ -281,7 +281,9 @@ async function main(): Promise<void> {
   runner.start();
 }
 
-const isCli = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isCli =
+  process.argv[1] !== undefined &&
+  import.meta.url.toLowerCase() === pathToFileURL(process.argv[1]).href.toLowerCase();
 if (isCli) {
   log('INFO', 'runner_main_cli_start');
   void main();

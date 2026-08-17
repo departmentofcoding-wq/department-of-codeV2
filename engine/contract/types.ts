@@ -1,4 +1,4 @@
-import type { ActorRole, JobState, SpanKind, TaskState } from './constants.ts';
+import type { ActorRole, IntakeMessageRole, IntakeSessionState, JobState, SpanKind, TaskState } from './constants.ts';
 
 export interface AttributionTuple {
   actor_role: ActorRole;
@@ -140,8 +140,6 @@ export interface BureauDispatchRow {
   task_id: string;
   work_uuid: string;
   job_id: string | null;
-  // Nullable: a dispatch must not fail because a label in the IDE moved, and
-  // "we could not tell which model did the work" is an honest value.
   ide_model: string | null;
   ide_account: string | null;
   actor_role: string;
@@ -151,6 +149,99 @@ export interface BureauDispatchRow {
   status: string;
   created_at: string;
   finished_at: string | null;
+}
+
+export interface BureauIntakeSessionRow {
+  id: string;
+  state: IntakeSessionState;
+  title: string | null;
+  intent: string | null;
+  spec: string | null;
+  acceptance: string | null;
+  verify_cmd: string | null;
+  verify_confirmed_at: string | null;
+  verify_confirmed_by: string | null;
+  idempotency_key: string | null;
+  model_calls: number;
+  created_at: string;
+  updated_at: string;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+}
+
+export interface BureauIntakeMessageRow {
+  id: string;
+  session_id: string;
+  role: IntakeMessageRole;
+  content: string;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  latency_ms: number | null;
+  created_at: string;
+}
+
+export interface LlmToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export type LlmMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string | null; toolCalls: LlmToolCall[] }
+  | { role: 'tool'; toolCallId: string; content: string };
+
+export interface LlmToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface LlmCompletionRequest {
+  modelId: string;
+  messages: LlmMessage[];
+  tools?: LlmToolDefinition[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export interface LlmCompletionResponse {
+  text?: string | null;
+  toolCalls?: LlmToolCall[];
+  tokensIn: number;
+  tokensOut: number;
+  latencyMs: number;
+  costUsd: number | null;
+  finishReason: 'stop' | 'tool_calls' | 'length' | 'content_filter';
+  truncated: boolean;
+}
+
+export type LlmErrorKind = 'rate-limited' | 'auth' | 'timeout' | 'network' | 'invalid';
+
+export class LlmError extends Error {
+  public readonly kind: LlmErrorKind;
+  public readonly retryAfterMs?: number;
+
+  constructor(kind: LlmErrorKind, message: string, retryAfterMs?: number) {
+    super(message);
+    this.name = 'LlmError';
+    this.kind = kind;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export interface LlmClient {
+  complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse>;
 }
 
 export interface TimelineQueryFilters {

@@ -50,7 +50,8 @@ export type SpanKind = typeof SPAN_KINDS[number];
 export const JOB_KINDS = [
   'demo.sleep',
   'demo.chain',
-  'demo.fail'
+  'demo.fail',
+  'intake.turn'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});
@@ -64,6 +65,36 @@ export const JOB_STATES = [
 ] as const;
 
 export type JobState = typeof JOB_STATES[number];
+
+export const INTAKE_SESSION_STATES = [
+  'open',
+  'filed',
+  'abandoned'
+] as const;
+
+export type IntakeSessionState = typeof INTAKE_SESSION_STATES[number];
+
+export const INTAKE_MESSAGE_ROLES = [
+  'human',
+  'officer',
+  'tool'
+] as const;
+
+export type IntakeMessageRole = typeof INTAKE_MESSAGE_ROLES[number];
+
+export const BUDGET_META_KEYS = {
+  ROLLING_24H_TOKENS_CEILING: 'budget:rolling_24h_tokens:ceiling',
+  ROLLING_24H_REQUESTS_CEILING: 'budget:rolling_24h_requests:ceiling'
+} as const;
+
+export const VACUOUS_VERIFY_COMMANDS = [
+  'exit 0',
+  'true',
+  ':',
+  'echo ok',
+  'echo',
+  'pass'
+] as const;
 
 export const DETERMINISTIC_ATTRIBUTION = {
   provider: 'deterministic',

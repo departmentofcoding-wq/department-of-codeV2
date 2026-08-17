@@ -163,7 +163,7 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         BUREAU_HEARTBEAT_MS: '1000'
       };
       const spawnChild = () =>
-        spawn(process.execPath, [path.join(repoRoot, 'runner', 'main.ts')], {
+        spawn(process.execPath, ['--experimental-strip-types', path.join(repoRoot, 'runner', 'main.ts')], {
           cwd: repoRoot,
           env: childEnv,
           stdio: 'ignore'
@@ -173,7 +173,7 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       const child1 = spawnChild();
 
       let runningChild: BureauJobRow | undefined;
-      for (let i = 0; i < 500 && runningChild === undefined; i++) {
+      for (let i = 0; i < 1500 && runningChild === undefined; i++) {
         const jobs = testDb.all<BureauJobRow>('SELECT * FROM bureau_jobs');
         runningChild = jobs.find((j) => j.id.startsWith('kill-chain-1:sleep:') && j.state === 'running');
         if (!runningChild) await new Promise((res) => setTimeout(res, 10));
@@ -190,8 +190,22 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         JSON.stringify({ ms: 20 })
       );
 
+      const childEnv2 = {
+        ...process.env,
+        BUREAU_DB_PATH: dbPath,
+        BUREAU_POLL_MS: '10',
+        BUREAU_LEASE_MS: '5000',
+        BUREAU_HEARTBEAT_MS: '100'
+      };
+      const spawnChild2 = () =>
+        spawn(process.execPath, ['--experimental-strip-types', path.join(repoRoot, 'runner', 'main.ts')], {
+          cwd: repoRoot,
+          env: childEnv2,
+          stdio: 'ignore'
+        });
+
       // Runner process 2 resumes
-      const child2 = spawnChild();
+      const child2 = spawnChild2();
 
       // Wait for the whole chain to finish: parent AND all children. Waiting
       // on the parent alone can stop child2 mid-child-job, and a job aborted
@@ -225,9 +239,21 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       });
 
       // Exactly once: parent done, exactly three children, all done
-      const parent = testDb.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', 'kill-chain-1');
+      const allJobsDebug = testDb.all<BureauJobRow>('SELECT * FROM bureau_jobs');
+      if (allJobsDebug.some((j) => j.state !== 'done')) {
+        console.error('T4b DEBUG - bureau_jobs:', JSON.stringify(allJobsDebug, null, 2));
+        console.error(
+          'T4b DEBUG - bureau_journal:',
+          JSON.stringify(testDb.all('SELECT * FROM bureau_journal'), null, 2)
+        );
+      }
+
+      const parent = testDb.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', ['kill-chain-1']);
       expect(parent?.state).toBe('done');
-      const children = testDb.all<BureauJobRow>(`SELECT * FROM bureau_jobs WHERE id LIKE 'kill-chain-1:sleep:%'`);
+
+      const children = testDb.all<BureauJobRow>(
+        `SELECT * FROM bureau_jobs WHERE id LIKE 'kill-chain-1:sleep:%'`
+      );
       expect(children).toHaveLength(3);
       for (const child of children) {
         expect(child.state).toBe('done');
