@@ -225,6 +225,8 @@ export interface LlmCompletionResponse {
   costUsd: number | null;
   finishReason: 'stop' | 'tool_calls' | 'length' | 'content_filter';
   truncated: boolean;
+  provider?: string;
+  model?: string;
 }
 
 export type LlmErrorKind = 'rate-limited' | 'auth' | 'timeout' | 'network' | 'invalid';

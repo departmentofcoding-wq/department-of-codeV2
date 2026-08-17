@@ -51,7 +51,7 @@ export function seedPhase1OfficerRoster(db: DbConnection): void {
     display: 'Gemini 2.5 Flash (Free)',
     price_in_usd_per_mtok: null,
     price_out_usd_per_mtok: null,
-    enabled: 1,
+    enabled: process.env.GOOGLE_API_KEY ? 1 : 0,
     notes: 'Google Gemini free-tier model'
   });
 

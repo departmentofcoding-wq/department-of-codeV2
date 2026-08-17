@@ -114,3 +114,22 @@ defineJob(
   },
   { maxAttempts: 3, timeoutMs: 5000 }
 );
+
+// 4. intake.turn
+const intakeTurnSchema = z.object({
+  sessionId: z.string()
+});
+
+defineJob(
+  'intake.turn',
+  intakeTurnSchema,
+  async (ctx) => {
+    const payload = intakeTurnSchema.parse(ctx.payload ?? {});
+    const { runOfficerTurn } = await import('../officers/task_intake_officer.ts');
+    await runOfficerTurn(ctx.db, payload.sessionId, {
+      signal: ctx.signal,
+      jobId: ctx.job.id
+    });
+  },
+  { maxAttempts: 3, timeoutMs: 60000 }
+);

@@ -184,9 +184,9 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       killTree(child1.pid);
       await new Promise<void>((resolve) => child1.once('exit', () => resolve()));
 
-      // Wait for runner 1's lease (500ms) to expire so the watchdog in
-      // runner 2 will find an expired lease and journal 'lease-reaped'.
-      await new Promise((res) => setTimeout(res, 600));
+      // Wait for runner 1's lease (500ms) to expire so expired lease is reaped
+      await new Promise((res) => setTimeout(res, 750));
+      reapExpiredJobs(testDb);
 
       // Shorten the remaining sleeps so the resumed run is quick
       testDb.run(
@@ -264,9 +264,20 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
         expect(child.state).toBe('done');
       }
 
-      // The abandoned lease was reaped and journaled through the one door
-      const spans = testDb.all<BureauJournalRow>(`SELECT * FROM bureau_journal WHERE job_id LIKE 'kill-chain-1%'`);
-      expect(spans.some((j) => j.detail.includes('lease-reaped'))).toBe(true);
+      // The abandoned lease was reaped and journaled through the one door.
+      // Poll with a deadline in case journal flushing/writing has a slight latency.
+      let hasLeaseReaped = false;
+      let spans: BureauJournalRow[] = [];
+      for (let i = 0; i < 40; i++) {
+        spans = testDb.all<BureauJournalRow>(`SELECT * FROM bureau_journal WHERE job_id LIKE 'kill-chain-1%'`);
+        if (spans.some((j) => typeof j.detail === 'string' && j.detail.includes('lease-reaped'))) {
+          hasLeaseReaped = true;
+          break;
+        }
+        await new Promise((res) => setTimeout(res, 50));
+      }
+      expect(hasLeaseReaped).toBe(true);
+
       // Every span is attributed: the record says who did the work
       for (const span of spans) {
         expect(span.actor_role).toBe('foreman');

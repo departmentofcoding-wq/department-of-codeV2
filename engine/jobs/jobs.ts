@@ -141,6 +141,47 @@ export function claimJob(db: DbConnection, leaseOwner: string, leaseDurationMs: 
   });
 }
 
+export function claimJobById(
+  db: DbConnection,
+  jobId: string,
+  leaseOwner: string,
+  leaseDurationMs: number
+): BureauJobRow | null {
+  const now = new Date().toISOString();
+  const leaseExpiresAt = new Date(Date.now() + leaseDurationMs).toISOString();
+
+  return db.execTransaction(() => {
+    const claimed = db.all<BureauJobRow>(
+      `UPDATE bureau_jobs
+       SET state = 'running',
+           lease_owner = ?,
+           lease_expires_at = ?,
+           started_at = COALESCE(started_at, ?)
+       WHERE id = ? AND state = 'pending'
+       RETURNING *`,
+      leaseOwner,
+      leaseExpiresAt,
+      now,
+      jobId
+    );
+
+    if (!claimed || claimed.length === 0) {
+      return null;
+    }
+
+    const job = claimed[0];
+    journal(db, {
+      kind: 'system',
+      attribution: FOREMAN_ATTRIBUTION,
+      taskId: job.task_id,
+      jobId: job.id,
+      detail: { action: 'claim', lease_owner: leaseOwner, lease_expires_at: leaseExpiresAt }
+    });
+
+    return job;
+  });
+}
+
 export function heartbeatJob(db: DbConnection, jobId: string, leaseOwner: string, leaseDurationMs: number): boolean {
   const leaseExpiresAt = new Date(Date.now() + leaseDurationMs).toISOString();
   const res = db.run(

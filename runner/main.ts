@@ -6,6 +6,7 @@ import { openDbConnection } from '../engine/db/index.ts';
 import { journal } from '../engine/journal/writer.ts';
 import {
   claimJob,
+  claimJobById,
   completeJob,
   failJob,
   heartbeatJob,
@@ -203,7 +204,7 @@ export class Runner {
     }
   }
 
-  private async executeJob(job: BureauJobRow): Promise<void> {
+  public async executeJob(job: BureauJobRow): Promise<void> {
     this.runningJobIds.add(job.id);
     log('INFO', 'job_started', { jobId: job.id, kind: job.kind });
 
@@ -257,6 +258,20 @@ export class Runner {
       this.runningJobIds.delete(job.id);
     }
   }
+}
+
+export async function drainSingleJob(db: DbConnection, jobId: string): Promise<void> {
+  const runnerId = `runner-cli-${crypto.randomUUID()}`;
+  const claimedJob = claimJobById(db, jobId, runnerId, 60000);
+
+  if (!claimedJob) {
+    const job = db.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', jobId);
+    if (job?.state === 'done') return;
+    throw new Error(`Job ${jobId} could not be claimed (state=${job?.state ?? 'not_found'})`);
+  }
+
+  const runner = new Runner(db);
+  await runner.executeJob(claimedJob);
 }
 
 // --- Standalone process entrypoint ---------------------------------------
