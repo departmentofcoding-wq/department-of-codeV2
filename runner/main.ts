@@ -53,6 +53,9 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, data?: Record<string
 /** A stuck handler must not be able to hang shutdown forever. */
 const STOP_TIMEOUT_MS = 10_000;
 
+import { getWorkspaceProviderOverride, setWorkspaceProvider } from '../engine/contract/workspace-seam.ts';
+import { GitWorkspaceProvider } from '../engine/worktrees/manager.ts';
+
 export class Runner {
   public readonly id: string;
   private db: DbConnection;
@@ -76,7 +79,12 @@ export class Runner {
       ...(config ?? {})
     });
     this.notifier = notifier ?? defaultNotifier;
+
+    if (!getWorkspaceProviderOverride()) {
+      setWorkspaceProvider(new GitWorkspaceProvider());
+    }
   }
+
 
   public start(): void {
     log('INFO', 'runner_started', { runnerId: this.id, config: this.config });

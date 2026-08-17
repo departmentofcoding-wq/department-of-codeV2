@@ -149,3 +149,19 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 180000 }
 );
 
+// 6. worktree.prepare
+const worktreePrepareSchema = z.object({
+  taskId: z.string()
+});
+
+defineJob(
+  'worktree.prepare',
+  worktreePrepareSchema,
+  async (ctx) => {
+    const { handleWorktreePrepare } = await import('../worktrees/job.ts');
+    await handleWorktreePrepare(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 60000 }
+);
+
+

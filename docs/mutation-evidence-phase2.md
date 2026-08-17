@@ -38,3 +38,48 @@ AssertionError: expected +0 to be 1 // Object.is equality
 - Mutation caught cleanly by `T25` assertion on `verify_fixes`.
 - Restored `engine/verify/loop.ts` to `task.verify_fixes + 1`.
 - Verified `test/integration/t25_exit_sentence_loop.test.ts` passed 100% green.
+
+---
+
+## T19 — Worktree Manager Refuse-Dirty Guard Mutation (Stream A)
+
+- **Guard Tested**: Refuse-dirty guard (`!isClean`) in `GitWorkspaceProvider.prepare()` inside `engine/worktrees/manager.ts`.
+- **Target File**: [`engine/worktrees/manager.ts`](file:///d:/Dept%20of%20code%20v2/engine/worktrees/manager.ts#L80)
+- **Test File**: [`test/integration/t19_worktree_idempotency.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t19_worktree_idempotency.test.ts#L92)
+
+### Mutation Applied
+```diff
+- const clean = await this.isClean(db, taskId);
+- if (!clean) {
+-   throw new Error(`Worktree for task ${taskId} is dirty at ${existingRow.path}; refusing to reuse or force-delete`);
+- }
++ // Guard removed for mutation test
+```
+
+### Vitest Failure Output
+```text
+ FAIL  test/integration/t19_worktree_idempotency.test.ts > T19 & T19b: Worktree Idempotency, Refuse-Dirty Invariant & Crash-Resume > T19: Worktree create is idempotent per task; reuse-if-clean; dirty tree is refused and never force-deleted
+AssertionError: promise resolved "{ taskId: 't19-idempotent', ... }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "baseCommit": "e021f2e37ecce2da0160a5dfd6ba827b3e38da79",
++   "path": "...\\.bureau-worktrees\\t19-idempotent",
++   "taskId": "t19-idempotent",
+  }
+
+ ❯ test/integration/t19_worktree_idempotency.test.ts:92:56
+     90| 
+     91|     // 4. Prepare on dirty tree -> throws Error, worktree remains intact
+     92|     await expect(provider.prepare(db, 't19-idempotent')).rejects.toThrow(/refusing to reuse or force-delete/);
+```
+
+### Result & Restoration
+- Mutation caught cleanly by `T19` assertion on promise rejection.
+- Restored `engine/worktrees/manager.ts` refuse-dirty guard.
+- Verified `test/integration/t19_worktree_idempotency.test.ts` passed 100% green.
+
