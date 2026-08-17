@@ -133,3 +133,19 @@ defineJob(
   },
   { maxAttempts: 3, timeoutMs: 60000 }
 );
+
+// 5. verify.run
+const verifyRunSchema = z.object({
+  taskId: z.string()
+});
+
+defineJob(
+  'verify.run',
+  verifyRunSchema,
+  async (ctx) => {
+    const { executeVerifyRunJob } = await import('../verify/job.ts');
+    await executeVerifyRunJob(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 180000 }
+);
+

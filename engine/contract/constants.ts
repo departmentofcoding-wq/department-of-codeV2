@@ -108,3 +108,9 @@ export const DETERMINISTIC_ATTRIBUTION = {
   model: 'core',
   account: null
 } as const;
+
+export const VERIFIER_ATTRIBUTION = {
+  actor_role: 'verifier',
+  ...DETERMINISTIC_ATTRIBUTION
+} as const;
+

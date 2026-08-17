@@ -9,20 +9,14 @@ import { createSession, updateSessionDraft } from '../../engine/intake/index.ts'
 import { enqueueJob } from '../../engine/jobs/jobs.ts';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
 
+import { killTree } from '../../engine/verify/tree_kill.ts';
+
 describe('T14: Durability — Mid-Turn Process Kill & Resume (real node:sqlite)', () => {
   it('resumes conversation from store after process kill with no duplicated messages and turn budget intact', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bureau-t14-'));
     const dbPath = path.join(tmpDir, 'test.db');
     const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
     const testDb = createRealSqliteDb(dbPath);
-
-    const killTree = (pid: number | undefined) => {
-      if (process.platform === 'win32') {
-        try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F']); } catch {}
-      } else if (pid !== undefined) {
-        try { process.kill(pid, 'SIGKILL'); } catch {}
-      }
-    };
 
     try {
       const session = createSession(testDb, {

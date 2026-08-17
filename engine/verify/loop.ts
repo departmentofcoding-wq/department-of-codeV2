@@ -1,0 +1,92 @@
+import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/index.ts';
+import { VERIFIER_ATTRIBUTION } from '../contract/constants.ts';
+import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
+import { enqueueJob } from '../jobs/jobs.ts';
+import { journal } from '../journal/writer.ts';
+import { transition } from '../state/machine.ts';
+import { notifyOperator } from '../state/notifications.ts';
+import type { VerifyRunResult } from './verifier.ts';
+
+export function handleVerifyOutcome(
+  db: DbConnection,
+  taskId: string,
+  outcome: VerifyRunResult,
+  attribution: AttributionTuple = VERIFIER_ATTRIBUTION
+): void {
+  const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
+  if (!task) {
+    throw new Error(`Task ${taskId} not found for verification outcome handling`);
+  }
+
+  // Ceiling read with fallback 2
+  const ceilingRow = db.get<{ value: string }>(
+    'SELECT value FROM bureau_meta WHERE key = ?',
+    'verify:fixes:ceiling'
+  );
+  const ceiling = ceilingRow ? parseInt(ceilingRow.value, 10) : 2;
+
+  const isSuccess = outcome.exitCode === 0 && !outcome.timedOut;
+
+  if (isSuccess) {
+    db.execTransaction(() => {
+      db.run('UPDATE bureau_tasks SET verifier_exit_code = 0 WHERE id = ?', taskId);
+      transition(db, taskId, 'needs-review', attribution, {
+        action: 'verify_passed',
+        duration_ms: outcome.durationMs
+      });
+    });
+    return;
+  }
+
+  // Failure path: check verify_fixes budget ceiling
+  if (task.verify_fixes < ceiling) {
+    // Send-back loop: atomic increment, transition to claimed, and re-enqueue verify.run
+    const newFixes = task.verify_fixes + 1;
+    db.execTransaction(() => {
+      db.run('UPDATE bureau_tasks SET verify_fixes = ? WHERE id = ?', newFixes, taskId);
+      transition(db, taskId, 'claimed', attribution, {
+        action: 'verify_failed_sendback',
+        verify_fixes: newFixes,
+        ceiling,
+        exit_code: outcome.exitCode,
+        timed_out: outcome.timedOut
+      });
+      enqueueJob(db, {
+        kind: 'verify.run',
+        task_id: taskId,
+        payload: { taskId }
+      });
+    });
+
+    // Seam checkpoint after transaction completes
+    try {
+      getWorkspaceProvider().checkpoint(db, taskId, attribution, 'verify-failure-sendback');
+    } catch {
+      // Seam checkpoint error logged/ignored if provider throws in test edge cases
+    }
+  } else {
+    // Budget ceiling reached: block task and notify operator
+    db.execTransaction(() => {
+      transition(db, taskId, 'blocked', attribution, {
+        action: 'verify_ceiling_reached',
+        verify_fixes: task.verify_fixes,
+        ceiling,
+        exit_code: outcome.exitCode,
+        timed_out: outcome.timedOut
+      });
+
+      journal(db, {
+        kind: 'guardrail',
+        attribution,
+        taskId,
+        detail: {
+          reason: 'verify_fixes ceiling reached',
+          verify_fixes: task.verify_fixes,
+          ceiling
+        }
+      });
+    });
+
+    notifyOperator(taskId, 'verify_fixes ceiling reached');
+  }
+}
