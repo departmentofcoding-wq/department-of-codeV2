@@ -38,6 +38,8 @@ function wrapStatement(stmt: ReturnType<DatabaseSync['prepare']>): Statement {
 }
 
 export function wrapDatabaseSync(sqlite: DatabaseSync): DbConnection & { close: () => void } {
+  let inTransaction = false;
+
   return {
     prepare(sql: string): Statement {
       return wrapStatement(sqlite.prepare(sql));
@@ -56,6 +58,10 @@ export function wrapDatabaseSync(sqlite: DatabaseSync): DbConnection & { close: 
       sqlite.exec(sql);
     },
     execTransaction<T>(fn: () => T): T {
+      if (inTransaction) {
+        return fn();
+      }
+      inTransaction = true;
       sqlite.exec('BEGIN IMMEDIATE');
       try {
         const result = fn();
@@ -68,6 +74,8 @@ export function wrapDatabaseSync(sqlite: DatabaseSync): DbConnection & { close: 
           // Transaction already aborted; the original error is the story.
         }
         throw err;
+      } finally {
+        inTransaction = false;
       }
     },
     close() {
@@ -75,6 +83,7 @@ export function wrapDatabaseSync(sqlite: DatabaseSync): DbConnection & { close: 
     }
   };
 }
+
 
 /**
  * Open the department's database through the boot door (schema, migrations)

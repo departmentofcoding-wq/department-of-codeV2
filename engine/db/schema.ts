@@ -8,7 +8,7 @@ export function applySchema(db: DatabaseSync): void {
       intent TEXT, spec TEXT, acceptance TEXT,
       verify_cmd TEXT, setup_cmd TEXT,
       state TEXT NOT NULL DEFAULT 'intake'
-        CHECK (state IN ('intake','queued','claimed','verifying','needs-review','done','failed')),
+        CHECK (state IN ('intake','queued','claimed','verifying','needs-review','done','failed','blocked')),
       verifier_exit_code INTEGER,
       approved_at TEXT, approved_by TEXT,
       merged_at TEXT, merged_by TEXT,
@@ -25,6 +25,32 @@ export function applySchema(db: DatabaseSync): void {
       CHECK (state <> 'done'
              OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
       CHECK (merged_at IS NULL OR state = 'done')
+    );
+
+    CREATE TABLE IF NOT EXISTS bureau_worktrees (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL UNIQUE REFERENCES bureau_tasks(id),
+      path TEXT NOT NULL,
+      base_commit TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('ready','dirty','stale','removed')),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+      model TEXT NOT NULL, account TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS bureau_verify_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES bureau_tasks(id),
+      exit_code INTEGER,
+      signal TEXT,
+      timed_out INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL,
+      verify_fixes_before INTEGER NOT NULL,
+      stdout_tail TEXT,
+      stderr_tail TEXT,
+      started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
+      actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+      model TEXT NOT NULL, account TEXT
     );
 
     CREATE TABLE IF NOT EXISTS bureau_jobs (
@@ -198,14 +224,14 @@ export function applyAddedColumns(
  * no-op against a live database, so a column that arrives after first boot has
  * to be ALTERed in — and SQLite has no ADD COLUMN IF NOT EXISTS, so pragma
  * table_info does the idempotency. Every entry must be nullable or carry a
- * constant DEFAULT (SQLite refuses otherwise). Empty until the first one is
- * needed; applyBootMigrations is the wiring so it has an obvious home.
+ * constant DEFAULT (SQLite refuses otherwise).
  */
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {
+  // 1. ADDED_COLUMNS runs first so schema shape is up to date before table rebuild
   const byTable = new Map<string, Array<{ name: string; definition: string }>>();
   for (const { table, name, definition } of ADDED_COLUMNS) {
     const cols = byTable.get(table) ?? [];
@@ -216,9 +242,67 @@ export function applyBootMigrations(db: DatabaseSync): void {
     applyAddedColumns(db, table, columns);
   }
 
+  // 2. Table Rebuild: Check if existing bureau_tasks DDL lacks 'blocked'
+  const tableMaster = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='bureau_tasks'`).get() as { sql?: string } | undefined;
+  if (tableMaster?.sql && !tableMaster.sql.includes("'blocked'")) {
+    db.exec('PRAGMA foreign_keys = OFF;');
+
+    db.exec(`
+      CREATE TABLE bureau_tasks_new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        intent TEXT, spec TEXT, acceptance TEXT,
+        verify_cmd TEXT, setup_cmd TEXT,
+        state TEXT NOT NULL DEFAULT 'intake'
+          CHECK (state IN ('intake','queued','claimed','verifying','needs-review','done','failed','blocked')),
+        verifier_exit_code INTEGER,
+        approved_at TEXT, approved_by TEXT,
+        merged_at TEXT, merged_by TEXT,
+        priority INTEGER NOT NULL DEFAULT 1,
+        work_uuid TEXT NOT NULL,
+        work_title TEXT,
+        plan_rounds INTEGER NOT NULL DEFAULT 0,
+        verify_fixes INTEGER NOT NULL DEFAULT 0,
+        cycles INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        pull_request_url TEXT,
+        intake_session_id TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        CHECK (state <> 'done'
+               OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
+        CHECK (merged_at IS NULL OR state = 'done')
+      );
+
+      INSERT INTO bureau_tasks_new (
+        id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+        verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
+        priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
+        attempts, pull_request_url, intake_session_id, created_at, updated_at
+      )
+      SELECT
+        id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+        verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
+        priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
+        attempts, pull_request_url, intake_session_id, created_at, updated_at
+      FROM bureau_tasks;
+
+      DROP TABLE bureau_tasks;
+      ALTER TABLE bureau_tasks_new RENAME TO bureau_tasks;
+    `);
+
+    const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
+    if (fkViolations.length > 0) {
+      throw new Error(`Foreign key check failed after bureau_tasks rebuild: ${JSON.stringify(fkViolations)}`);
+    }
+
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
+
+  // 3. Indices built after table rebuild completes
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_intake_session
     ON bureau_tasks (intake_session_id)
     WHERE intake_session_id IS NOT NULL;
   `);
 }
+

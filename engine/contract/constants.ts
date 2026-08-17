@@ -5,7 +5,8 @@ export const STATES = [
   'verifying',
   'needs-review',
   'done',
-  'failed'
+  'failed',
+  'blocked'
 ] as const;
 
 export type TaskState = typeof STATES[number];
@@ -14,8 +15,9 @@ export const TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
   'intake': ['queued'],
   'queued': ['claimed'],
   'claimed': ['queued', 'verifying'],
-  'verifying': ['needs-review', 'failed'],
+  'verifying': ['needs-review', 'failed', 'claimed', 'blocked'],
   'failed': ['claimed'],
+  'blocked': ['claimed'],
   'needs-review': ['done'],
   'done': []
 };
@@ -52,7 +54,9 @@ export const JOB_KINDS = [
   'demo.sleep',
   'demo.chain',
   'demo.fail',
-  'intake.turn'
+  'intake.turn',
+  'worktree.prepare',
+  'verify.run'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});
@@ -85,7 +89,9 @@ export type IntakeMessageRole = typeof INTAKE_MESSAGE_ROLES[number];
 
 export const BUDGET_META_KEYS = {
   ROLLING_24H_TOKENS_CEILING: 'budget:rolling_24h_tokens:ceiling',
-  ROLLING_24H_REQUESTS_CEILING: 'budget:rolling_24h_requests:ceiling'
+  ROLLING_24H_REQUESTS_CEILING: 'budget:rolling_24h_requests:ceiling',
+  VERIFY_FIXES_CEILING: 'verify:fixes:ceiling',
+  VERIFY_TIMEOUT_MS: 'verify:timeout_ms'
 } as const;
 
 export const VACUOUS_VERIFY_COMMANDS = [

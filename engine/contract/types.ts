@@ -289,3 +289,49 @@ export interface JobDefinition {
     timeoutMs: number;
   };
 }
+
+export interface BureauWorktreeRow {
+  id: string;
+  task_id: string;
+  path: string;
+  base_commit: string;
+  status: 'ready' | 'dirty' | 'stale' | 'removed';
+  created_at: string;
+  updated_at: string;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+}
+
+export interface BureauVerifyRunRow {
+  id: string;
+  task_id: string;
+  exit_code: number | null;
+  signal: string | null;
+  timed_out: number;
+  duration_ms: number;
+  verify_fixes_before: number;
+  stdout_tail: string | null;
+  stderr_tail: string | null;
+  started_at: string;
+  finished_at: string;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+}
+
+export interface WorkspaceHandle {
+  taskId: string;
+  path: string;
+  baseCommit: string;
+}
+
+export interface WorkspaceProvider {
+  prepare(db: DbConnection, taskId: string): Promise<WorkspaceHandle>;
+  getWorkspaceHandle(db: DbConnection, taskId: string): Promise<WorkspaceHandle>;
+  checkpoint(db: DbConnection, taskId: string, attribution: AttributionTuple, note?: string): Promise<void>;
+  isClean(db: DbConnection, taskId: string): Promise<boolean>;
+}
+

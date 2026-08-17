@@ -1,14 +1,24 @@
 import { TRANSITIONS, type ActorRole, type TaskState } from '../contract/constants.ts';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
 import { formatActor } from '../contract/validation.ts';
+import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
+
+const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
+  'verifying->claimed': ['verifier'],
+  'verifying->blocked': ['verifier'],
+  'blocked->claimed': ['human-operator'],
+  'needs-review->done': ['human-operator']
+};
 
 export function canTransition(fromState: TaskState, toState: TaskState, actorRole: ActorRole): boolean {
   const allowed = TRANSITIONS[fromState];
   if (!allowed || !allowed.includes(toState)) {
     return false;
   }
-  if (toState === 'done' && actorRole !== 'human-operator') {
+  const key = `${fromState}->${toState}`;
+  const requiredRoles = ROLE_GATED_TRANSITIONS[key];
+  if (requiredRoles && !requiredRoles.includes(actorRole)) {
     return false;
   }
   return true;
@@ -108,3 +118,59 @@ export function approveTask(
     return updatedTask;
   });
 }
+
+/**
+ * rearmTask is the single-writer for re-arming fix budgets on blocked tasks.
+ * Resets verify_fixes counter to 0, transitions state blocked -> claimed,
+ * enqueues verify.run job, and writes human journal span inside a single transaction.
+ */
+export function rearmTask(
+  db: DbConnection,
+  taskId: string,
+  attribution: AttributionTuple
+): BureauTaskRow {
+  if (attribution.actor_role !== 'human-operator') {
+    throw new Error('Task re-arm requires human-operator role');
+  }
+
+  const now = new Date().toISOString();
+  const rearmedBy = formatActor(attribution);
+
+  return db.execTransaction(() => {
+    const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    if (task.state !== 'blocked') {
+      throw new Error(`Task ${taskId} cannot be re-armed from state ${task.state} (must be blocked)`);
+    }
+
+    const updatedTask = db.get<BureauTaskRow>(`
+      UPDATE bureau_tasks
+      SET state = 'claimed', verify_fixes = 0, updated_at = ?
+      WHERE id = ? AND state = 'blocked'
+      RETURNING *
+    `, now, taskId);
+
+    if (!updatedTask) {
+      throw new Error(`Task ${taskId} changed state concurrently; refusing to re-arm twice`);
+    }
+
+    enqueueJob(db, {
+      kind: 'verify.run',
+      task_id: taskId,
+      payload: { taskId }
+    });
+
+    journal(db, {
+      kind: 'human',
+      attribution,
+      taskId,
+      detail: { action: 'rearm', rearmedBy }
+    });
+
+    return updatedTask;
+  });
+}
+
