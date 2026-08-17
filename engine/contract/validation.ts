@@ -39,3 +39,7 @@ export function taskGaps(draft: Partial<BureauIntakeSessionRow>): TaskGap[] {
 
   return gaps;
 }
+
+export function formatActor(attribution: { actor_role: string; account?: string | null }): string {
+  return attribution.account ? `${attribution.actor_role}:${attribution.account}` : attribution.actor_role;
+}

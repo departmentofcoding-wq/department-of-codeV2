@@ -1,5 +1,6 @@
 import { TRANSITIONS, type ActorRole, type TaskState } from '../contract/constants.ts';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
+import { formatActor } from '../contract/validation.ts';
 import { journal } from '../journal/writer.ts';
 
 export function canTransition(fromState: TaskState, toState: TaskState, actorRole: ActorRole): boolean {
@@ -71,7 +72,7 @@ export function approveTask(
   }
 
   const now = new Date().toISOString();
-  const approvedBy = attribution.account ? `${attribution.actor_role}:${attribution.account}` : attribution.actor_role;
+  const approvedBy = formatActor(attribution);
 
   return db.execTransaction(() => {
     // State re-checked inside the write-locked transaction, and the UPDATE is

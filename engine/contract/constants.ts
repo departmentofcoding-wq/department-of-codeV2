@@ -42,7 +42,8 @@ export const SPAN_KINDS = [
   'guardrail',
   'transition',
   'human',
-  'system'
+  'system',
+  'task-filed'
 ] as const;
 
 export type SpanKind = typeof SPAN_KINDS[number];

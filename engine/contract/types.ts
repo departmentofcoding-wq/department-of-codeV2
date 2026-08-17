@@ -29,6 +29,7 @@ export interface BureauTaskRow {
   cycles: number;
   attempts: number;
   pull_request_url: string | null;
+  intake_session_id: string | null;
   created_at: string;
   updated_at: string;
 }
