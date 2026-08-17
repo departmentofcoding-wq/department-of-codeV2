@@ -82,7 +82,11 @@ export function appendIntakeMessage(db: DbConnection, sessionId: string, input: 
       throw new Error(`Session ${sessionId} not found`);
     }
     if (session.state !== 'open') {
-      throw new Error(`Cannot append message to session ${sessionId} in state ${session.state}`);
+      if (session.state === 'filed' && input.role === 'tool') {
+        // Allow tool-result appends to filed sessions to complete open tool calls on filing
+      } else {
+        throw new Error(`Cannot append message to session ${sessionId} in state ${session.state}`);
+      }
     }
 
     const countRow = db.get<{ count: number }>(

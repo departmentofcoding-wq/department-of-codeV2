@@ -135,6 +135,22 @@ describe.each(testImplementations)('T13: Full Happy Path on Mocks ($name)', ({ c
     expect(task?.work_uuid).toBeDefined();
     expect(task?.work_title).toBe('Fix authentication login bug');
 
+    // Assert final intake.turn job state is 'done' (not failed)
+    const finalJob = db.get<{ state: string; last_error: string | null }>(
+      'SELECT state, last_error FROM bureau_jobs WHERE id = ?',
+      job3.id
+    );
+    expect(finalJob?.state).toBe('done');
+    expect(finalJob?.last_error).toBeNull();
+
+    // Assert file_task tool-result message exists in intake message history
+    const sessionRes = getSessionWithMessages(db, session.id);
+    expect(sessionRes).toBeDefined();
+    const fileTaskResultMsg = sessionRes!.messages.find(
+      (m) => m.role === 'tool' && m.content.includes('"status":"filed"')
+    );
+    expect(fileTaskResultMsg).toBeDefined();
+
     // 6. Verify journal tells the story in order with every span attributed
     const journalSpans = db.all<BureauJournalRow>('SELECT * FROM bureau_journal ORDER BY id ASC');
     expect(journalSpans.length).toBeGreaterThan(0);
