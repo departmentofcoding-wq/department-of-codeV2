@@ -28,7 +28,8 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
 
       INSERT INTO bureau_jobs (id, kind, task_id, state, created_at)
       VALUES ('job-t37', 'junior.dispatch', 'task-t37', 'running', '${now}'),
-             ('job-t37-2', 'junior.dispatch', 'task-t37', 'running', '${now}');
+             ('job-t37-2', 'junior.dispatch', 'task-t37', 'running', '${now}'),
+             ('job-t37-fail', 'junior.dispatch', 'task-t37', 'running', '${now}');
     `);
   });
 
@@ -46,7 +47,7 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
     }
   });
 
-  it('handles mid-dispatch crash, reaps stale lease, and re-drives safely', async () => {
+  it('handles mid-dispatch crash, reaps stale lease, re-drives safely, and releases lease on completion and failure', async () => {
     const mockDriver: IdeDriver = {
       launch: async () => {},
       navigate: async () => {},
@@ -65,12 +66,16 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
       signal: new AbortController().signal
     };
 
-    // 1. Initial execution completes
+    // 1. Initial execution completes cleanly
     await handleJuniorDispatch(jobContext);
 
     const dispAfter1 = db.get<BureauDispatchRow>('SELECT * FROM bureau_dispatches WHERE id = ?', 'disp-t37');
     expect(dispAfter1?.status).toBe('completed');
     expect(dispAfter1?.attempts).toBe(1);
+
+    // Assert that handleJuniorDispatch released its window lease upon completion
+    const leaseAfter1 = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ?', 'disp-t37');
+    expect(leaseAfter1?.status).toBe('released');
 
     const dispatchSpans = db.all<BureauJournalRow>(
       `SELECT * FROM bureau_journal WHERE kind = 'dispatch'`
@@ -110,5 +115,33 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
     const dispAfter2 = db.get<BureauDispatchRow>('SELECT * FROM bureau_dispatches WHERE id = ?', 'disp-t37-crash');
     expect(dispAfter2?.status).toBe('completed');
     expect(dispAfter2?.attempts).toBe(1);
+
+    // Assert that re-driven dispatch released its new lease upon completion
+    const leaseAfter2 = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ? AND status = \'released\'', 'disp-t37-crash');
+    expect(leaseAfter2?.status).toBe('released');
+
+    // 5. Test failure path: verify lease is released even when driver throws an error
+    const failingDriver: IdeDriver = {
+      ...mockDriver,
+      navigate: async () => { throw new Error('Driver network failure'); }
+    };
+    setIdeDriverOverride(failingDriver);
+
+    db.exec(`
+      INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, status, attempts, created_at)
+      VALUES ('disp-t37-fail', 'task-t37', 'uuid-t37', 'junior-engineer', 'ollama', 'qwen', 'pending', 0, '${now}');
+    `);
+
+    const failContext: any = {
+      db,
+      job: { id: 'job-t37-fail', task_id: 'task-t37' },
+      payload: { dispatchId: 'disp-t37-fail', windowTarget: 'window-t37-fail', url: 'http://fail' },
+      signal: new AbortController().signal
+    };
+
+    await expect(handleJuniorDispatch(failContext)).rejects.toThrow('Driver network failure');
+
+    const failedLease = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ?', 'disp-t37-fail');
+    expect(failedLease?.status).toBe('released');
   });
 });
