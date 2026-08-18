@@ -10,11 +10,22 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 6 — Operator Console: IN PROGRESS. Milestone D0-C (contract freeze) merged. Streams A & B cleared to cut.** |
-| Main | `11cfdaa` — D0-C console contract freeze merged (`59acc69`, Senior verdict reproduced: build clean, 206/206, manifest test token-auth on all 7 endpoints, M-D0-C reproduced). Prior: Phase 5 complete at `8974b0f`. |
-| Suite | 206/206 tests, 61 files, `npm run build` clean on merged main. |
-| In flight | Nothing. Clean handoff point. |
-| Next action | Cut `wt/junior-a-console` (backend API + action door, brief `docs/console-junior-a-brief.md`) and `wt/junior-b-console` (frontend + desktop launcher, brief `docs/console-junior-b-brief.md`) from `main` (`11cfdaa`). Plan: `docs/console-plan.md`. Streams run in parallel; B develops against fixtures until A2 lands. |
+| **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
+| Suite | 232/232 tests, 67 files, `npm run build` clean on merged main (green twice). Console verified live: 401 without token, 200 HealthDTO with token, static UI + dashboard API on 127.0.0.1. |
+| In flight | Nothing. Clean handoff point. Pushed to origin/main. |
+| Next action | Phase 6 done. Candidate next: Phase 7 (live operation — first real LLM-driven task end-to-end) or the carried debt (retire `fileParallelism:false`, `[llm]` provider doubling). See "Beyond Phase 5". |
+
+**Phase 6 note:** the console streams were each unit-tested but not wired end-to-end
+— `scripts/console.ts` minted the token and opened the browser but never started
+`createConsoleServer`, so the desktop shortcut opened a dead port. Caught at
+Operator integration (not a milestone Senior review, since neither stream owned
+the seam), fixed in `eb39d36` (launcher starts the server, gated behind
+`opts.serve` so B3 unit tests don't bind), and verified with a live HTTP round-trip.
+Desktop + Start-Menu shortcut ("Department Console.lnk") installed via
+`scripts/install_console_shortcut.ps1`. The "unit-green but never integrated"
+gap is the same lesson as Phase 5's "never driven end-to-end" — carried to
+Phase 7's live-operation scope.
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
@@ -38,7 +49,7 @@ polls) remains Phase 5 scope.
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team, flake fix | ✅ **done** — D0-5 (`9a56b8e`); Stream A A1–A3 (`ea4ff0a`); Stream B B1 backup (`23a5a8f`), B2 dashboards, B3 red-team, B4 deterministic-wait (`wt/junior-b-hardening-2`). Exit sentence demonstrated via `scripts/demo_phase5.ts`. |
-| 6 — Operator Console | Local web control panel + desktop shortcut: dashboards, findings, task states, approve/trigger actions | 🔄 **in progress** — D0-C contract freeze merged (`59acc69`); plan `docs/console-plan.md`; Streams A (backend) & B (frontend) to cut |
+| 6 — Operator Console | Local web control panel + desktop shortcut: dashboards, findings, task states, approve/trigger actions | ✅ **done** — D0-C (`59acc69`), Stream A backend (`fc97549`), Stream B frontend+launcher (`8944670`), live-server wiring (`eb39d36`). Verified live; desktop shortcut installed. |
 
 Phase 5 progress record (as of 2026-08-18): D0-5 contract freeze, Stream A
 (A1–A3), and Stream B B1 merged; suite 196/196 across 58 files, green twice on
