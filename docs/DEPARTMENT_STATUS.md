@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Stream A complete (watchdog + secretary); Stream B milestone B1 (backup push) merged. B2/B3/B4 remain.** |
-| Main | `4e3d0dd` — Stream B B1 merged (`23a5a8f`). Stream A merged (A1 `c671778`, A2 `ac3d5da`, A3 `ea4ff0a`). D0-5 freeze at `9a56b8e`. All Senior-verified. |
-| Suite | 196/196 tests, 58 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~70s). |
+| **Phase** | **Phase 5 — Hardening: COMPLETE. All milestones merged; exit sentence demonstrated.** |
+| Main | Stream B B2/B3/B4 + exit demo (`wt/junior-b-hardening-2`). Prior: B1 `23a5a8f`, Stream A `ea4ff0a`, D0-5 `9a56b8e`. |
+| Suite | 202/202 tests, 60 files, `npm run build` clean. `npm run demo:phase5` exits 0 (exit sentence demonstrated). Suite runs deterministically green twice (~70s). |
 | In flight | Nothing. Clean handoff point. |
-| Next action | Phase 5 is **not yet complete**: Stream B still owes **B2 (dashboards)**, **B3 (red-team sweep)**, **B4 (deterministic flake fix)** per `docs/phase-5-plan.md`. Cut a fresh `wt/junior-b-hardening` round from `main` (`4e3d0dd`) for B2→B4, then demonstrate the Phase 5 exit sentence (`scripts/demo_phase5.ts`) before marking the phase done. |
+| Next action | Phase 5 done. Phase 6 is not yet scoped — see "Beyond Phase 5" below. Residual debt: retire `fileParallelism:false` by converting the browser tests (t28/t38) to browser-event waits (B4 converted only the T4b poll). |
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
@@ -37,7 +37,8 @@ polls) remains Phase 5 scope.
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
-| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 🔄 **in progress** — D0-5 freeze (`9a56b8e`); Stream A merged (`c671778` A1, `ac3d5da` A2, `ea4ff0a` A3); Stream B **B1** backup push merged (`23a5a8f`). Remaining: B2 dashboards, B3 red-team, B4 deterministic flake fix, then exit-sentence demo. |
+| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team, flake fix | ✅ **done** — D0-5 (`9a56b8e`); Stream A A1–A3 (`ea4ff0a`); Stream B B1 backup (`23a5a8f`), B2 dashboards, B3 red-team, B4 deterministic-wait (`wt/junior-b-hardening-2`). Exit sentence demonstrated via `scripts/demo_phase5.ts`. |
+| 6 — (unscoped) | Not yet planned — see "Beyond Phase 5" | ⬜ not started |
 
 Phase 5 progress record (as of 2026-08-18): D0-5 contract freeze, Stream A
 (A1–A3), and Stream B B1 merged; suite 196/196 across 58 files, green twice on
@@ -58,8 +59,41 @@ fake/greenwashed-claim pattern — walkthroughs are re-built and re-run, never
 trusted. Repaired by reverting the block to its D0-5 stub (`23a5a8f`) and
 re-verified. Minor debt: the M-B1 evidence log still cites the pre-rename test
 path `backup_push.test.ts` (now `t48_backup_push.test.ts`) — a stale reference,
-not a functional defect. Phase 5 is **not complete**: B2 (dashboards), B3
-(red-team sweep), B4 (deterministic flake fix), and the exit-sentence demo remain.
+not a functional defect.
+
+Phase 5 closing record: all milestones merged; suite 202/202 across 60 files,
+green twice, build clean, `demo:phase5` exit 0. B2 dashboards (`engine/dashboards/`,
+`scripts/dashboard.ts`, T49 read-only proof), B3 standing red-team suite (T50:
+env-scrub/output-redaction, selector-spoof gate refusal, verify-command tampering),
+B4 deterministic-wait helper (`test/helpers/wait.ts`, T4b converted). Mutation
+evidence M-B2/M-B3/M-B4 recorded and reproduced. Residual debt carried forward:
+`fileParallelism:false` remains because the browser tests (t28/t38) still use
+wall-clock waits — B4 converted only the T4b poll; retiring the band-aid needs
+those two moved to browser-event synchronization.
+
+## Beyond Phase 5 — candidate next phases (not yet frozen)
+
+Phase 5 completes the "survive its own failures" arc. Nothing beyond it is
+recorded yet; these are the honest candidates, to be turned into a real plan the
+same way (rough → frozen plan → D0 contract freeze → streams):
+
+- **Phase 6 — Live operation / control loop.** The pieces exist as jobs but have
+  never been driven end-to-end by a real LLM against a real IDE on a real task.
+  A supervised "one real task, start to merge" run: intake → plan → junior
+  dispatch → verify → senior review → operator approve → PR → merge → backup,
+  with the watchdog and dashboards live. This is the gap between "the machine is
+  built and unit-proven" and "the department has actually shipped a change."
+- **Phase 7 — Provider hardening & cost.** The `[llm]` provider-doubling
+  attribution bug is still open; real runs will surface token/cost accounting,
+  ret/timeout tuning, and model-selection policy. Budgets exist as columns but
+  have not met a real bill.
+- **Phase 8 — Multi-task / concurrency at scale.** Today's proofs are one or two
+  tasks. Running many concurrent tasks/windows exercises the Secretary, lease
+  contention, and the watchdog under real load — and is where the retained
+  `fileParallelism` debt and the t28 browser-contention flake actually bite.
+- **Cross-cutting debt to clear first:** retire `fileParallelism:false`
+  (browser-event waits for t28/t38); fix `[llm]` provider doubling; the stale
+  M-B1 evidence path.
 
 Phase 3 closing record: T30–T38 green on main; nine mutation evidences
 recorded (C0 ×4, Stream A ×3, Stream B ×2, CX ×3) with the Senior
