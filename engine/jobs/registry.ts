@@ -164,4 +164,37 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 60000 }
 );
 
+// 7. junior.dispatch
+const juniorDispatchSchema = z.object({
+  dispatchId: z.string(),
+  windowTarget: z.string().optional(),
+  url: z.string().optional(),
+  actions: z.array(z.object({ selectorKey: z.string(), action: z.string(), value: z.string().optional() })).optional()
+});
+
+defineJob(
+  'junior.dispatch',
+  juniorDispatchSchema,
+  async (ctx) => {
+    const { handleJuniorDispatch } = await import('../harness/dispatch-job.ts');
+    await handleJuniorDispatch(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 120000 }
+);
+
+// 8. lease.reap
+const leaseReapSchema = z.object({});
+
+defineJob(
+  'lease.reap',
+  leaseReapSchema,
+  async (ctx) => {
+    const { handleLeaseReap } = await import('../harness/lease-reap-job.ts');
+    await handleLeaseReap(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
+
+
+
 
