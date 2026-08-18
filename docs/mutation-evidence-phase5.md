@@ -22,3 +22,29 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   Error: no such table: bureau_ownership
   ```
 - **Verification**: Mutation caught by unit test. Restored code passes 3/3 tests cleanly.
+
+---
+
+## M-B1: Milestone B1 — Backup Push Remote Tip Verification Guard (T48)
+
+- **Branch / Milestone**: `wt/junior-b-hardening` (Milestone B1)
+- **Guard Broken**: Remote tip mismatch validation in `engine/durability/backup_push.ts`
+- **Mutation Applied**: Changed `if (remoteTip !== localTip)` to `if (false && remoteTip !== localTip)` to bypass remote tip verification and force trust of local push.
+- **Test Command**: `npx vitest run test/unit/backup_push.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/backup_push.test.ts > T48 — Backup Push Automation & Remote Tip Verification (Milestone B1) > T48: refuses to claim success on a remote-tip mismatch (fails closed with guardrail span)
+  AssertionError: promise resolved "undefined" instead of rejecting
+
+  - Expected: 
+  Error {
+    "message": "rejected promise",
+  }
+
+  + Received: 
+  undefined
+
+   ❯ test/unit/backup_push.test.ts:97:39
+  ```
+- **Verification**: Mutation caught by test T48. Restored code passes 2/2 tests cleanly.
+

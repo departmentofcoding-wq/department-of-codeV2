@@ -275,13 +275,17 @@ defineJob(
 
 // 14. watchdog.sweep
 const watchdogSweepSchema = z.object({
-  limit: z.number().optional()
+  limit: z.number().optional(),
+  cadenceMs: z.number().optional()
 });
 
 defineJob(
   'watchdog.sweep',
   watchdogSweepSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleWatchdogSweep } = await import('../watchdog/sweep.ts');
+    await handleWatchdogSweep(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
@@ -307,7 +311,10 @@ const backupPushSchema = z.object({
 defineJob(
   'backup.push',
   backupPushSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleBackupPush } = await import('../durability/backup_push.ts');
+    await handleBackupPush(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 60000 }
 );
 
