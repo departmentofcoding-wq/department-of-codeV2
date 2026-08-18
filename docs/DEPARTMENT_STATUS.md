@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 3 — Junior Harness: Stream A & B active** |
-| Main | `c0102e6` — Milestone C0 merged (2026-08-18); contract frozen (Senior verified `63e760b`) |
-| Suite | 135/135 tests, 36 files, `npm run build` clean |
-| In flight | Stream A (`wt/junior-a-cdp`) drafting plan for CDP client & window lease |
-| Next action | Junior A implements Stream A (A1-A3), Junior B implements Stream B (B1-B3) |
+| **Phase** | **Phase 3 — Junior Harness: A & B merged, CX remains** |
+| Main | `8081661` — Streams A (`df4e29d`) and B (`bb54bf3`) merged (2026-08-18), both behind posted Senior verdicts |
+| Suite | 148/148 tests, 44 files, `npm run build` clean (verified twice post-merge) |
+| In flight | Milestone CX: T36 end-to-end, T38 `demo:phase3`, T37 nonce-orphan assertion, Runner default wiring swap to `GatedIdeDriver(CdpIdeDriver)` per ruling X3 |
+| Next action | Assign CX (both juniors) per `docs/phase-3-plan.md` §5; real driver + real gate, fake retired |
 
 ## Phase ledger
 
@@ -23,9 +23,23 @@ phase plan, then git. Nothing important lives only in a chat window.
 | 0 — Foundation | Engine package, full schema (budgets as columns), jobs runner with claim/lease/reap, journal, migration door | ✅ done, merged |
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
-| 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | 📋 planned → `docs/phase-3-plan.md` |
+| 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | 🔧 in progress — C0 (`63e760b`), Stream A (`df4e29d`), Stream B (`bb54bf3`) merged; CX (T36/T38) remains |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | 📋 rough outline → `docs/phase-4-rough.md` |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 rough outline → `docs/phase-5-rough.md` |
+
+Phase 3 record so far: C0 frozen and merged clean. Stream A and B each
+required one defect-repair round before verdict: A shipped a non-reproducing
+mutation record (removing the `finally` lease release did not fail any test
+until T37 was extended) and three false suite citations (claimed 36/135 then
+41/145; reality 39/138 both times — the second set copied from B's walkthrough);
+B claimed registry registration that did not exist and rewrote C0's mutation
+evidence instead of appending. One cross-stream contamination: B's repair
+commit (`8dd95f3`) landed on A's branch and was reset off by the Senior
+(content lives properly at `bb54bf3`; recoverable via reflog). All caught at
+Senior verification, none reached main. Known flake: `t28_crash_safety`
+failed once in three post-merge full-suite runs under parallel load from
+T30's browser launch; passes in isolation and in both clean runs — revisit
+if it recurs at CX.
 
 Phase 2 record: T19–T29 green; both mutation evidences (T19 refuse-dirty,
 T26 fixes-increment) re-executed independently by the Senior; `demo:phase2`
