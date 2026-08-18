@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 3 — Junior Harness: COMPLETE** |
-| Main | `6618608` — CX merged (2026-08-18, Senior verified at `e259032`); all Phase 3 milestones behind posted verdicts |
-| Suite | 150/150 tests, 46 files, `npm run build` clean, `demo:phase3` verified on main (exit 0, zero guardrail spans, zero leaked browser processes) |
+| **Phase** | **Phase 4 — Review Gates & Delivery: planned, D0 ready to assign** |
+| Main | `908be34` — Phase 3 complete (`6618608`); Phase 4 plan merged (2026-08-18, Senior sign-off at `35dddc4`) |
+| Suite | 150/150 tests, 46 files, `npm run build` clean, `demo:phase3` verified on main |
 | In flight | Nothing. Clean handoff point. |
-| Next action | Operator plans Phase 4 from `docs/phase-4-rough.md` (Senior review gates, operator approval, PR creation, merge) |
+| Next action | Operator assigns Milestone D0 (contract freeze) from `docs/phase-4-plan.md` — both juniors review, then streams `wt/junior-a-review` / `wt/junior-b-delivery` cut from post-D0 main |
 
 ## Phase ledger
 
@@ -24,7 +24,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
-| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | 📋 rough outline → `docs/phase-4-rough.md` |
+| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | 📋 planned → `docs/phase-4-plan.md` |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 rough outline → `docs/phase-5-rough.md` |
 
 Phase 3 closing record: T30–T38 green on main; nine mutation evidences
