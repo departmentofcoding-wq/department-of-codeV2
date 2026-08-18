@@ -148,6 +148,7 @@ export interface BureauDispatchRow {
   model: string;
   account: string | null;
   status: string;
+  attempts: number;
   created_at: string;
   finished_at: string | null;
 }
@@ -334,4 +335,84 @@ export interface WorkspaceProvider {
   checkpoint(db: DbConnection, taskId: string, attribution: AttributionTuple, note?: string): Promise<void>;
   isClean(db: DbConnection, taskId: string): Promise<boolean>;
 }
+
+export interface BureauSelectorRow {
+  id: string;
+  key: string;
+  css: string;
+  status: 'draft' | 'calibrating' | 'calibrated' | 'failed';
+  match_count: number;
+  last_calibrated_at: string | null;
+  attempts: number;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BureauWindowLeaseRow {
+  id: string;
+  window_target: string;
+  dispatch_id: string;
+  status: 'active' | 'released' | 'expired' | 'reaped';
+  acquired_at: string;
+  expires_at: string;
+  heartbeats: number;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BureauObservationRow {
+  id: string;
+  dispatch_id: string;
+  nonce: string;
+  selector_key: string;
+  observed: string;
+  actor_role: string;
+  provider: string;
+  model: string;
+  account: string | null;
+  created_at: string;
+}
+
+export type IdeDriverAction = 'click' | 'type' | 'clear' | 'press' | 'select' | (string & {});
+
+export interface IdeDriverLaunchOptions {
+  targetWindow?: string;
+  headless?: boolean;
+  userDir?: string;
+  port?: number;
+}
+
+export interface IdeDriverReadResult {
+  matchCount: number;
+  text?: string;
+  attrs?: Record<string, string>;
+  nonceEcho?: string;
+}
+
+export interface IdeDriverActResult {
+  success: boolean;
+  nonceEcho?: string;
+}
+
+export interface IdeDriverSnapshotResult {
+  outline: string;
+}
+
+export interface IdeDriver {
+  launch(opts?: IdeDriverLaunchOptions): Promise<void>;
+  navigate(url: string): Promise<void>;
+  read(selectorKey: string): Promise<IdeDriverReadResult>;
+  act(selectorKey: string, action: IdeDriverAction, value?: string): Promise<IdeDriverActResult>;
+  snapshot(): Promise<IdeDriverSnapshotResult>;
+  close(): Promise<void>;
+}
+
 
