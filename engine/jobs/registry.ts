@@ -211,36 +211,6 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
-// 10. senior.review-plan
-const seniorReviewPlanSchema = z.object({
-  taskId: z.string(),
-  planId: z.string().optional()
-});
-
-defineJob(
-  'senior.review-plan',
-  seniorReviewPlanSchema,
-  async (ctx) => {
-    const { handleSeniorReviewPlan } = await import('../review/plan_review_job.ts');
-    await handleSeniorReviewPlan(ctx);
-  },
-  { maxAttempts: 3, timeoutMs: 60000 }
-);
-
-// 11. senior.review-work
-const seniorReviewWorkSchema = z.object({
-  taskId: z.string()
-});
-
-defineJob(
-  'senior.review-work',
-  seniorReviewWorkSchema,
-  async (ctx) => {
-    const { handleSeniorReviewWork } = await import('../review/work_review_job.ts');
-    await handleSeniorReviewWork(ctx);
-  },
-  { maxAttempts: 3, timeoutMs: 90000 }
-);
 
 // 12. pr.create
 const prCreateSchema = z.object({
