@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 4 — Review Gates & Delivery: COMPLETE. Streams A (review gates) and B (delivery) merged to `main`. Ready for Phase 5.** |
-| Main | `a8711e9` — Stream B (delivery: approval door, `pr.create`, `pr.merge`) merged; Stream A (review gates A1–A3) merged at `732fbbe`; D0 contract freeze at `e0efd42` |
-| Suite | 175/175 tests, 53 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~68s) after the flake fix below. |
-| In flight | Nothing. Clean handoff point. |
-| Next action | Freeze the Phase 5 plan (`docs/phase-5-plan.md`), then cut streams `wt/junior-a-hardening` (Junior A: watchdog + secretary) and `wt/junior-b-hardening` (Junior B: backup push + dashboards + red-team) from `main` (`a8711e9`) |
+| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Milestone D0-5 (contract freeze) merged to `main`. Streams A & B cleared to cut.** |
+| Main | `9a56b8e` — D0-5 contract freeze merged (2026-08-18, Senior verdict posted and reproduced at `9a56b8e`; fast-forward over `4de44b4`). Prior: Phase 4 complete at `a8711e9` |
+| Suite | 178/178 tests, 54 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~70s). |
+| In flight | Nothing. Clean handoff point. Junior B held at the D0-5 gate and has now been cleared. |
+| Next action | Cut `wt/junior-a-hardening` (Junior A: watchdog + secretary, brief `docs/phase-5-junior-a-brief.md`) and `wt/junior-b-hardening` (Junior B: backup push + dashboards + red-team + deep flake fix, brief `docs/phase-5-junior-b-brief.md`) from `main` (`9a56b8e`). Streams run in parallel; no cross-stream blocker. |
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
