@@ -12,9 +12,25 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 232/232 tests, 67 files, `npm run build` clean on merged main (green twice). Console verified live: 401 without token, 200 HealthDTO with token, static UI + dashboard API on 127.0.0.1. |
-| In flight | Nothing. Clean handoff point. Pushed to origin/main. |
-| Next action | **Phase 7 plan frozen → `docs/phase-7-plan.md`** (live operation: first real LLM-driven task end-to-end). A fresh window executes it: confirm Operator decisions with the human, verify preconditions, merge D0-7, cut Streams A (provider reality) & B (IDE reality), converge at C1 (the supervised live run). Prefer local Ollama (free) for the first run. |
+| Suite | 235/235 tests, 68 files, `npm run build` clean on merged main. Antigravity junior integration verified live (agent answered a command sent by dept code). Prior: 232/232 at console completion. |
+| In flight | Nothing. Clean handoff point. |
+| Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Antigravity junior drive-layer landed (`9447e7e`) — a Stream B down-payment. Remaining: real LLM provider wiring + the two live findings (role→model fallback to Google when Ollama is down; seed model id `gemini-2.5-flash` 404s but `gemini-flash-latest` works), then the C1 supervised end-to-end run. Gemini key is live (`.env`, gitignored). |
+
+**Antigravity junior integration (`9447e7e`):** the department can now drive its
+junior (the Antigravity IDE agent) from code — `engine/harness/antigravity.ts`
+detects a live CDP endpoint or launches Antigravity with `--remote-debugging-port`,
+attaches to the workbench window, and types+submits a command into the agent chat
+("Message input" contenteditable). CLI `scripts/run_junior.ts` / `npm run junior`.
+Verified live against Antigravity 2.8.1 (Electron 41 / Chrome 146): the agent
+received and answered a command sent entirely by dept code. Two runtime scars
+recorded: (1) `node --experimental-strip-types` forbids TS **parameter
+properties** (`tsc` accepts them, the runtime does not) — use explicit field
+assignment; (2) the main window's page title reflects the active chat, so match
+the workbench by its `https://127.0.0.1` URL, not the title. Rate limit (Google
+free tier) is an operational matter, not a code bug — the engine already handles
+429 via model cooldown; the operator should pick a model with quota headroom
+(Gemini 2.5/3.7 Flash were green; Antigravity Agents tier has 60 RPM) or enable
+billing.
 
 **Phase 6 note:** the console streams were each unit-tested but not wired end-to-end
 — `scripts/console.ts` minted the token and opened the browser but never started
