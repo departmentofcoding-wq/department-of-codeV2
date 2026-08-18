@@ -7,6 +7,7 @@ import { notifyOperator } from '../state/notifications.ts';
 import { DeliveryError } from './types.ts';
 import { formatActor } from '../contract/validation.ts';
 import { getBranchTipCommit } from './pr_create.ts';
+import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
   actor_role: 'system',
@@ -121,6 +122,15 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
       taskId,
       'done'
     );
+
+    // Enqueue backup.push job after successful merge (Milestone B1) — keyed to merge commit hash for deduplication
+    enqueueJobIfAbsent(db, {
+      id: `backup.push:${currentTip}`,
+      kind: 'backup.push',
+      task_id: taskId,
+      payload: { target: 'origin/main' },
+      max_attempts: 3
+    });
   });
 
   // 4. Step B-4: Prune strictly POST-COMMIT

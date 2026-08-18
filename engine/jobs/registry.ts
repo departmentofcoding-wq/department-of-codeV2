@@ -310,7 +310,10 @@ const backupPushSchema = z.object({
 defineJob(
   'backup.push',
   backupPushSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleBackupPush } = await import('../durability/backup_push.ts');
+    await handleBackupPush(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 60000 }
 );
 
