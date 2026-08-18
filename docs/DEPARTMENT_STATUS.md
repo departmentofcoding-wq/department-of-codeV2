@@ -10,11 +10,23 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 4 — Review Gates & Delivery: D0 contract freeze merged (`e0efd42`), ready for streams A & B** |
-| Main | `e0efd42` — Milestone D0 contract freeze merged (2026-08-18, Senior sign-off on branch `wt/junior-a-d0` at `33433c6`) |
-| Suite | 159/159 tests, 47 files, `npm run build` clean on merged main |
+| **Phase** | **Phase 4 — Review Gates & Delivery: COMPLETE. Streams A (review gates) and B (delivery) merged to `main`. Ready for Phase 5.** |
+| Main | `a8711e9` — Stream B (delivery: approval door, `pr.create`, `pr.merge`) merged; Stream A (review gates A1–A3) merged at `732fbbe`; D0 contract freeze at `e0efd42` |
+| Suite | 175/175 tests, 53 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~68s) after the flake fix below. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | Cut streams `wt/junior-a-review` (Junior A: review gates A1-A3) and `wt/junior-b-delivery` (Junior B: delivery engine B1-B3) from post-D0 main (`e0efd42`) |
+| Next action | Freeze the Phase 5 plan (`docs/phase-5-plan.md`), then cut streams `wt/junior-a-hardening` (Junior A: watchdog + secretary) and `wt/junior-b-hardening` (Junior B: backup push + dashboards + red-team) from `main` (`a8711e9`) |
+
+**Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
+full suite was non-deterministically red — 4 heavy integration tests
+(`t4_crash_resume` T4b, `t28_crash_safety`, `t38_demo_phase3`, `t44_pr_merge`)
+failed under full-suite parallel load and passed in isolation. Root cause was
+cross-file parallelism: tests that spawn real child processes (crash-kill) and
+real browsers contend for CPU/process slots, breaking exactly-once and timing
+assertions ("expected 1 to be +0", lease-reap timeout). Fix in
+`vitest.config.ts`: `fileParallelism: false` plus `testTimeout`/`hookTimeout`
+20s. This is the Phase 5 "Flake hardening" item paid down early; the deeper
+move (deterministic sync on DB rows/browser events instead of wall-clock
+polls) remains Phase 5 scope.
 
 ## Phase ledger
 
@@ -24,8 +36,8 @@ phase plan, then git. Nothing important lives only in a chat window.
 | 1 — Intake | Filing door, intake sessions, Task Intake Officer over Ollama/Gemini, `intake.turn` job, CLI, durability, T9–T18 | ✅ done, merged (`cf0901f`), exit demo verified |
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
-| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ⏳ in progress — Milestone D0 merged (`e0efd42`) |
-| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 rough outline → `docs/phase-5-rough.md` |
+| 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
+| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 **plan frozen → `docs/phase-5-plan.md`** (D0-5 freeze, Stream A resilience/coordination, Stream B durability/visibility/red-team) |
 
 Phase 3 closing record: T30–T38 green on main; nine mutation evidences
 recorded (C0 ×4, Stream A ×3, Stream B ×2, CX ×3) with the Senior

@@ -5,6 +5,19 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['engine/**/*.test.ts', 'test/**/*.test.ts'],
-    isolate: true
+    isolate: true,
+    // Determinism over speed. Several integration tests spawn real child
+    // processes (crash-kill scenarios: t4, t28) and real browsers (t36, t38)
+    // and then assert on exactly-once state and timing. When 37+ files run
+    // concurrently these contend for CPU and OS process slots, producing
+    // load-dependent failures ("expected 1 to be +0", lease-reap timeouts)
+    // that pass in isolation. A red suite must never look green and a green
+    // suite must never look red, so the heavy tests do not race each other.
+    // See docs/DEPARTMENT_STATUS.md "Scars" and phase-5 "Flake hardening".
+    fileParallelism: false,
+    // Timing-sensitive integration tests assume an unloaded machine; give
+    // them headroom so a slow-but-correct run is not scored as a failure.
+    testTimeout: 20000,
+    hookTimeout: 20000
   }
 });
