@@ -187,10 +187,14 @@ export class CdpIdeDriver implements IdeDriver {
     await this.sendCdpCommand('Runtime.enable');
   }
 
-  public async navigate(url: string): Promise<void> {
+  private async ensureConnected(): Promise<void> {
     if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
+      await this.launch();
     }
+  }
+
+  public async navigate(url: string): Promise<void> {
+    await this.ensureConnected();
     const result = await this.sendCdpCommand('Page.navigate', { url });
     if (result.errorText) {
       throw new HarnessError(`Page.navigate failed: ${result.errorText}`, url, 'Page.navigate');
@@ -198,9 +202,7 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async read(selectorKey: string): Promise<IdeDriverReadResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const css = this.resolveSelector(selectorKey);
     const nonce = mintNonce();
@@ -244,9 +246,7 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async act(selectorKey: string, action: IdeDriverAction, value?: string): Promise<IdeDriverActResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const css = this.resolveSelector(selectorKey);
     const nonce = mintNonce();
@@ -297,14 +297,12 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async snapshot(): Promise<IdeDriverSnapshotResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const script = `
       (() => {
         if (!document.body) return '';
-        return document.body.innerText || document.body.outerHTML || '';
+        return document.body.outerHTML || document.body.innerText || '';
       })()
     `;
 

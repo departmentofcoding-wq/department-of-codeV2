@@ -62,7 +62,7 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
     const jobContext: any = {
       db,
       job: { id: 'job-t37', task_id: 'task-t37' },
-      payload: { dispatchId: 'disp-t37', windowTarget: 'window-t37' },
+      payload: { dispatchId: 'disp-t37', windowTarget: 'window-t37', actions: [] },
       signal: new AbortController().signal
     };
 
@@ -106,7 +106,7 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
     const jobContext2: any = {
       db,
       job: { id: 'job-t37-2', task_id: 'task-t37' },
-      payload: { dispatchId: 'disp-t37-crash', windowTarget: 'window-t37-crash' },
+      payload: { dispatchId: 'disp-t37-crash', windowTarget: 'window-t37-crash', actions: [] },
       signal: new AbortController().signal
     };
 
@@ -135,7 +135,7 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
     const failContext: any = {
       db,
       job: { id: 'job-t37-fail', task_id: 'task-t37' },
-      payload: { dispatchId: 'disp-t37-fail', windowTarget: 'window-t37-fail', url: 'http://fail' },
+      payload: { dispatchId: 'disp-t37-fail', windowTarget: 'window-t37-fail', url: 'http://fail', actions: [] },
       signal: new AbortController().signal
     };
 
@@ -143,5 +143,14 @@ describe('T37: Crash Safety Integration Test (Stream A3)', () => {
 
     const failedLease = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ?', 'disp-t37-fail');
     expect(failedLease?.status).toBe('released');
+
+    // 6. Assert orphan direction: every observation row has a matching span via isCorrelated
+    const { isCorrelated } = await import('../../engine/contract/index.ts');
+    const observations = db.all<any>('SELECT * FROM bureau_observations');
+    const spans = db.all<any>("SELECT * FROM bureau_journal WHERE kind = 'dispatch'");
+    for (const obs of observations) {
+      const hasSpan = spans.some((s: any) => isCorrelated(s, obs));
+      expect(hasSpan).toBe(true);
+    }
   });
 });

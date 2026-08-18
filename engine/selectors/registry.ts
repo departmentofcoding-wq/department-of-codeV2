@@ -10,6 +10,7 @@ import {
 import { getIdeDriver } from '../contract/ide-driver-seam.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
+import { GatedIdeDriver } from './gate.ts';
 
 export interface RegisterSelectorInput {
   key: string;
@@ -82,7 +83,10 @@ export async function selectorCalibrateHandler(ctx: JobContext): Promise<void> {
     throw new Error(`Selector key "${key}" not found in bureau_selectors.`);
   }
 
-  const driver = getIdeDriver();
+  // Calibration is the bureau's measurement act entitled to raw reads;
+  // unwrap GatedIdeDriver to prevent deadlock when calibrating from draft status.
+  const d = getIdeDriver();
+  const driver = d instanceof GatedIdeDriver ? d.innerDriver : d;
   let consistentOneMatch = true;
   let lastObservedMatchCount = 0;
 

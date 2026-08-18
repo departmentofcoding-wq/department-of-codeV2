@@ -134,3 +134,49 @@ This document records mutation testing evidence for Phase 3 milestones per stand
    ❯ test/integration/t33_calibration_fail.test.ts:86:31
       86|     expect(selector?.status).toBe('failed');
   ```
+
+---
+
+## Milestone CX — Integration & Phase 3 Demo (`wt/junior-a-cx`)
+
+### Mutation CX-a: Revert Runner Composite to Raw Driver
+- **Guard Modified:** Reverted default driver seam wiring in [`runner/main.ts`](file:///d:/Dept%20of%20code%20v2/runner/main.ts) from `GatedIdeDriver(new CdpIdeDriver(...))` to raw `new CdpIdeDriver(...)`.
+- **Test Caught:** [`test/integration/t36_end_to_end.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t36_end_to_end.test.ts) > `runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t36_end_to_end.test.ts > T36: End-to-End Integration Test (Milestone CX) > runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation
+  AssertionError: promise resolved "{ success: true, …(1) }" instead of rejecting
+   ❯ test/integration/t36_end_to_end.test.ts:91:58
+      89|     // 2. Live Gate Beat (CX-2): Attempt action on uncalibrated selector
+      90|     await expect(driver.act('task.uncalibrated', 'click')).rejects.toThrow(UncalibratedSelectorError);
+  ```
+
+---
+
+### Mutation CX-b: Remove `recordCorrelatedObservation` from Dispatch Loop
+- **Guard Modified:** Commented out `recordCorrelatedObservation(...)` invocation in [`engine/harness/dispatch-job.ts`](file:///d:/Dept%20of%20code%20v2/engine/harness/dispatch-job.ts).
+- **Test Caught:** [`test/integration/t36_end_to_end.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t36_end_to_end.test.ts) > `runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t36_end_to_end.test.ts > T36: End-to-End Integration Test (Milestone CX) > runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation
+  AssertionError: expected 0 to be greater than 0
+   ❯ test/integration/t36_end_to_end.test.ts:138:32
+      136|     // 7. Nonce Correlation Assertion (CX-1): Query correlated chain and verify triple equality
+      137|     const chain = queryCorrelatedChain(db, 'disp-t36');
+      138|     expect(chain.pairs.length).toBeGreaterThan(0);
+  ```
+
+---
+
+### Mutation CX-c: Remove Mock Model Decision Loop
+- **Guard Modified:** Removed LLM decision loop block in [`engine/harness/dispatch-job.ts`](file:///d:/Dept%20of%20code%20v2/engine/harness/dispatch-job.ts).
+- **Test Caught:** [`test/integration/t36_end_to_end.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t36_end_to_end.test.ts) > `runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t36_end_to_end.test.ts > T36: End-to-End Integration Test (Milestone CX) > runs dispatch under GatedIdeDriver with live gate beat, mock LLM loop, and exact nonce correlation
+  AssertionError: expected 'running' to be 'completed' // Object.is equality
+   ❯ test/integration/t36_end_to_end.test.ts:131:29
+      129|     // 6. Assert dispatch completed status & window lease released status
+      130|     const dispRow = db.get<{ status: string }>('SELECT status FROM bureau_dispatches WHERE id = ?', 'disp-t36');
+      131|     expect(dispRow?.status).toBe('completed');
+  ```

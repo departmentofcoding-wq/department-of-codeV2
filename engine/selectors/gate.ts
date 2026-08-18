@@ -25,10 +25,13 @@ export class UncalibratedSelectorError extends Error {
 }
 
 export class GatedIdeDriver implements IdeDriver {
-  constructor(
-    private readonly innerDriver: IdeDriver,
-    private readonly db: DbConnection
-  ) {}
+  public readonly innerDriver: IdeDriver;
+  private readonly db: DbConnection;
+
+  constructor(innerDriver: IdeDriver, db: DbConnection) {
+    this.innerDriver = innerDriver;
+    this.db = db;
+  }
 
   private checkGate(selectorKey: string, action: string): void {
     const row = this.db.get<{ status: string }>('SELECT status FROM bureau_selectors WHERE key = ?', selectorKey);

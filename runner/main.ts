@@ -57,6 +57,7 @@ import { getWorkspaceProviderOverride, setWorkspaceProvider } from '../engine/co
 import { GitWorkspaceProvider } from '../engine/worktrees/manager.ts';
 import { getIdeDriverOverride, setIdeDriverOverride } from '../engine/contract/ide-driver-seam.ts';
 import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
+import { GatedIdeDriver } from '../engine/selectors/gate.ts';
 import { reapExpiredWindowLeases } from '../engine/harness/lease-manager.ts';
 
 function getSelectorCss(db: DbConnection, key: string): string {
@@ -96,7 +97,7 @@ export class Runner {
     }
 
     if (!getIdeDriverOverride()) {
-      setIdeDriverOverride(new CdpIdeDriver((key) => getSelectorCss(this.db, key)));
+      setIdeDriverOverride(new GatedIdeDriver(new CdpIdeDriver((key) => getSelectorCss(this.db, key)), this.db));
     }
   }
 
