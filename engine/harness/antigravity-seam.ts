@@ -42,7 +42,7 @@ class RealAntigravityDriver implements AntigravityDriver {
     try {
       await session.sendPrompt(prompt);
       await new Promise(r => setTimeout(r, opts.waitMs ?? 9000));
-      const transcript = await session.readTranscript(14);
+      const transcript = await session.readAgentReply(prompt);
       return { transcript, launched: ensured.launched };
     } finally {
       session.close();

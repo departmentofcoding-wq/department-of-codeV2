@@ -135,6 +135,55 @@ export async function findMainWindowWs(port: number = ANTIGRAVITY_DEFAULT_PORT):
   return page.webSocketDebuggerUrl;
 }
 
+/** Lines that are IDE chrome, not conversation content. */
+const CHROME_PATTERNS: RegExp[] = [
+  /Ask anything/i,
+  /^(Gemini|Claude|GPT-OSS|GPT|Gemma|Deep Research|Lyria|Nano)/i,
+  /^(Medium|Fast|Low|High|Thinking)$/i,
+  /View Usage/i,
+  /^Open IDE$/i,
+  /No more older messages/i,
+  /^\d{1,2}:\d{2}\s?(AM|PM)$/i // bare timestamps
+];
+
+function isChrome(line: string): boolean {
+  return CHROME_PATTERNS.some(p => p.test(line.trim()));
+}
+
+/**
+ * Isolate the agent's reply from a full conversation-text capture, version-
+ * resiliently: take the content that appears AFTER the last occurrence of the
+ * prompt we sent, dropping bare timestamps and trailing IDE chrome (input
+ * placeholder, model-name label, effort toggles, "View Usage", etc.). Falls
+ * back to the last non-chrome lines when the prompt is not located.
+ *
+ * Pure and deterministic — unit-tested against captured Antigravity 2.8.1 text.
+ */
+export function extractAgentReply(fullText: string, prompt: string): string {
+  const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
+  const needle = prompt.trim();
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i] === needle || lines[i].includes(needle)) {
+      start = i + 1;
+      break;
+    }
+  }
+  const after = start >= 0 ? lines.slice(start) : lines.slice(-12);
+  const reply: string[] = [];
+  for (const line of after) {
+    if (isChrome(line)) {
+      // Stop at the first chrome marker once we've collected some reply;
+      // otherwise skip leading timestamps/labels.
+      if (reply.length > 0) break;
+      continue;
+    }
+    if (line === needle) continue; // skip an echoed prompt
+    reply.push(line);
+  }
+  return reply.join('\n').trim();
+}
+
 /** Minimal CDP session over the built-in WebSocket. */
 export class AntigravitySession {
   private ws: WebSocket | null = null;
@@ -182,8 +231,23 @@ export class AntigravitySession {
     return r?.result?.value;
   }
 
+  private async pressKey(key: string, code: string, vk: number): Promise<void> {
+    for (const type of ['keyDown', 'keyUp'] as const) {
+      await this.send('Input.dispatchKeyEvent', {
+        type,
+        key,
+        code,
+        windowsVirtualKeyCode: vk,
+        nativeVirtualKeyCode: vk
+      });
+    }
+  }
+
   /** Focus the agent chat input, type the command, and submit it. */
   async sendPrompt(prompt: string): Promise<void> {
+    // Dismiss any stray open menu (e.g. the model picker) so it can't swallow
+    // focus or keystrokes, then land focus on the chat input.
+    await this.pressKey('Escape', 'Escape', 27);
     const focused = await this.evaluate(`(() => {
       const el = [...document.querySelectorAll('[contenteditable="true"],textarea')]
         .find(e => (e.getAttribute('aria-label')||e.getAttribute('placeholder')) === ${JSON.stringify(ANTIGRAVITY_INPUT_LABEL)});
@@ -192,24 +256,22 @@ export class AntigravitySession {
     if (!focused) throw new HarnessError(`Chat input ('${ANTIGRAVITY_INPUT_LABEL}') not found`);
     await this.send('Input.insertText', { text: prompt });
     await new Promise(r => setTimeout(r, 300));
-    for (const type of ['keyDown', 'keyUp'] as const) {
-      await this.send('Input.dispatchKeyEvent', {
-        type,
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13
-      });
-    }
+    await this.pressKey('Enter', 'Enter', 13);
   }
 
-  /** Best-effort transcript read: the last N non-empty visible lines. */
-  async readTranscript(lastLines = 12): Promise<string> {
+  /** Raw visible-text capture (last N non-empty lines). */
+  async readTranscript(lastLines = 40): Promise<string> {
     return (
       (await this.evaluate(
         `document.body.innerText.split('\\n').map(l=>l.trim()).filter(Boolean).slice(-${lastLines}).join('\\n')`
       )) || ''
     );
+  }
+
+  /** The agent's reply to a specific prompt, isolated from IDE chrome. */
+  async readAgentReply(prompt: string): Promise<string> {
+    const full = await this.readTranscript(60);
+    return extractAgentReply(full, prompt);
   }
 
   close(): void {

@@ -56,8 +56,8 @@ async function main(): Promise<void> {
   await session.sendPrompt(prompt);
   console.log('[junior] submitted. waiting for the agent to respond...');
   await new Promise(r => setTimeout(r, 9000));
-  console.log('--- transcript tail ---');
-  console.log(await session.readTranscript(14));
+  console.log('--- agent reply ---');
+  console.log(await session.readAgentReply(prompt));
   session.close();
 }
 
