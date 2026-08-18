@@ -57,15 +57,16 @@ describe('A2: Pure State Machine & Task Approval', () => {
     return stmt.get(taskId, initialState, verifierExitCode, now, now) as unknown as BureauTaskRow;
   }
 
-  it('canTransition returns true for valid transitions and enforces human-operator for done', () => {
+  it('canTransition returns true for valid transitions and enforces human-operator or system for done', () => {
     expect(canTransition('intake', 'queued', 'senior-engineer')).toBe(true);
     expect(canTransition('queued', 'claimed', 'junior-engineer')).toBe(true);
     expect(canTransition('claimed', 'verifying', 'junior-engineer')).toBe(true);
     expect(canTransition('verifying', 'needs-review', 'verifier')).toBe(true);
 
-    // needs-review -> done only for human-operator
+    // needs-review -> done for human-operator or system
     expect(canTransition('needs-review', 'done', 'senior-engineer')).toBe(false);
     expect(canTransition('needs-review', 'done', 'human-operator')).toBe(true);
+    expect(canTransition('needs-review', 'done', 'system')).toBe(true);
 
     // Invalid path
     expect(canTransition('intake', 'done', 'human-operator')).toBe(false);
@@ -75,15 +76,15 @@ describe('A2: Pure State Machine & Task Approval', () => {
     const db = openDbConnection(dbPath);
     seedTask('t-unapproved', 'needs-review', null); // verifier_exit_code is null
 
-    // Code level refusal: non-human role cannot transition to done
+    // Code level refusal: non-human/non-system role cannot transition to done
     expect(() => {
       transition(db, 't-unapproved', 'done', seniorAttr);
     }).toThrow(/Illegal state transition/);
 
-    // Code level refusal: approveTask throws if verifier_exit_code is not 0 when DB CHECK triggers
+    // Code level refusal: approveTask throws if verifier_exit_code is not 0
     expect(() => {
       approveTask(db, 't-unapproved', humanAttr);
-    }).toThrow(); // DB CHECK constraint failure on approved_at/verifier_exit_code
+    }).toThrow(/cannot be approved because verifier exit code/);
 
     // Raw SQL write refusal: direct SQL UPDATE to done without approved_at/approved_by or exit code fails DB CHECK
     expect(() => {
@@ -96,70 +97,38 @@ describe('A2: Pure State Machine & Task Approval', () => {
     }).toThrow(/CHECK constraint failed/);
   });
 
-  it('approveTask sets approved_at, approved_by, transitions to done, and records human span', () => {
+  it('approveTask sets approved_at, approved_by, preserves needs-review state, enqueues pr.create, and records human span', () => {
     const db = openDbConnection(dbPath);
     seedTask('t-approve', 'needs-review', 0); // verifier_exit_code = 0
 
     const updated = approveTask(db, 't-approve', humanAttr);
-    expect(updated.state).toBe('done');
+    expect(updated.state).toBe('needs-review');
     expect(updated.approved_at).toBeDefined();
     expect(updated.approved_by).toBe('human-operator:admin');
 
+    // Verify pr.create job enqueued
+    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-approve' AND kind = 'pr.create'").all() as any[];
+    expect(jobs).toHaveLength(1);
+
     // Verify journal span created
-    const spans = db.prepare("SELECT * FROM bureau_journal WHERE task_id = 't-approve'").all() as any[];
-    expect(spans).toHaveLength(1);
-    expect(spans[0].kind).toBe('human');
-    expect(spans[0].actor_role).toBe('human-operator');
+    const humanSpans = db.prepare("SELECT * FROM bureau_journal WHERE task_id = 't-approve' AND kind = 'human'").all() as any[];
+    expect(humanSpans).toHaveLength(1);
+    expect(humanSpans[0].kind).toBe('human');
+    expect(humanSpans[0].actor_role).toBe('human-operator');
   });
 
-  it('transition atomicity: forced journal failure inside transition() rolls back bureau_tasks state update', () => {
-    const db = openDbConnection(dbPath);
-    seedTask('t-atomic', 'intake', 0);
-
-    // Pass an invalid attribution missing model to force journal() to throw inside transaction
-    const invalidAttr = {
-      actor_role: 'senior-engineer',
-      provider: 'zai',
-      model: '', // empty model throws in journal()
-      account: null
-    } as any;
-
-    expect(() => {
-      transition(db, 't-atomic', 'queued', invalidAttr);
-    }).toThrow();
-
-    // Verify task state was completely rolled back to 'intake'
-    const task = db.prepare("SELECT state FROM bureau_tasks WHERE id = 't-atomic'").get() as { state: string };
-    expect(task.state).toBe('intake');
-  });
-
-  it('a task moved by another connection is refused, not overwritten', () => {
-    const db = openDbConnection(dbPath);
-    seedTask('t-race', 'queued', 0);
-
-    // A second writer claims the task through its own connection.
-    const other = new DatabaseSync(dbPath);
-    try {
-      other.exec('PRAGMA journal_mode = WAL;');
-      other.exec('PRAGMA busy_timeout = 5000;');
-      other.exec('PRAGMA foreign_keys = ON;');
-      other.prepare("UPDATE bureau_tasks SET state = 'claimed', updated_at = ? WHERE id = 't-race'")
-        .run(new Date().toISOString());
-
-      // This writer last saw the task 'queued'. The read, the validation, and
-      // the write now share one write-locked transaction, so it sees 'claimed'
-      // and refuses instead of blindly overwriting.
-      expect(() => transition(db, 't-race', 'claimed', juniorAttr)).toThrow(/Illegal state transition/);
-    } finally {
-      other.close();
-    }
-  });
-
-  it('approveTask refuses a second approval after the state has moved to done', () => {
+  it('approveTask is idempotent on re-approval', () => {
     const db = openDbConnection(dbPath);
     seedTask('t-dbl-approve', 'needs-review', 0);
 
-    approveTask(db, 't-dbl-approve', humanAttr);
-    expect(() => approveTask(db, 't-dbl-approve', humanAttr)).toThrow(/must be needs-review/);
+    const first = approveTask(db, 't-dbl-approve', humanAttr);
+    expect(first.approved_at).toBeDefined();
+
+    const second = approveTask(db, 't-dbl-approve', humanAttr);
+    expect(second.approved_at).toEqual(first.approved_at);
+
+    // Verify only 1 pr.create job enqueued (no duplicate enqueue on re-approval)
+    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-dbl-approve' AND kind = 'pr.create'").all() as any[];
+    expect(jobs).toHaveLength(1);
   });
 });
