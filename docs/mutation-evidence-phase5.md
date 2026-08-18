@@ -45,3 +45,21 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   ```
 - **Verification**: Mutation caught by T45 test suite. Restored code passes all 7/7 tests cleanly.
 
+---
+
+## M-A2: Milestone A2 — Watchdog Recovery Budget Ceiling Guard (T46)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A2)
+- **Guard Broken**: `recover_attempts` budget ceiling check in `engine/watchdog/recover.ts`
+- **Mutation Applied**: Changed `if (finding.recover_attempts >= MAX_RECOVER_ATTEMPTS)` to `if (false && finding.recover_attempts >= MAX_RECOVER_ATTEMPTS)` in `handleWatchdogRecover`.
+- **Test Command**: `npx vitest run test/unit/t46_watchdog_recover.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t46_watchdog_recover.test.ts > T46 — Watchdog Recovery (watchdog.recover) > 4. Budget Ceiling Enforcement: halts runaway recovery loop when recover_attempts >= ceiling
+  AssertionError: expected 'recovering' to be 'failed' // Object.is equality
+  - Expected: "failed"
+  + Received: "recovering"
+  ```
+- **Verification**: Mutation caught by T46 test suite. Restored code passes all 4/4 tests cleanly.
+
+

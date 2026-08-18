@@ -295,7 +295,10 @@ const watchdogRecoverSchema = z.object({
 defineJob(
   'watchdog.recover',
   watchdogRecoverSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleWatchdogRecover } = await import('../watchdog/recover.ts');
+    await handleWatchdogRecover(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
