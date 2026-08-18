@@ -30,3 +30,11 @@ real Antigravity: dispatch transitioned to `completed` and journaled an
 `observation` span with `source: 'antigravity'`. (Transcript read is best-effort
 `document.body.innerText` tail — can capture transient menus; robustly targeting
 the conversation container is a calibration follow-up.)
+
+## M-AG3: Agent-reply chrome isolation (`engine/harness/antigravity.ts`)
+
+- **Guard Broken**: `isChrome` filtering in `extractAgentReply`, which strips IDE chrome (timestamps, model-name label, input placeholder) from the captured reply.
+- **Mutation Applied**: `isChrome` always returns `false` (no chrome stripped).
+- **Test Command**: `npx vitest run test/unit/tc_antigravity.test.ts`
+- **Result**: `1 failed` — the reply now includes timestamps/chrome instead of just `PIPELINE OK`.
+- **Verification**: Restored code passes 7/7.
