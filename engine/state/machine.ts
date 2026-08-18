@@ -1,4 +1,4 @@
-import { TRANSITIONS, type ActorRole, type TaskState } from '../contract/constants.ts';
+import { TRANSITIONS, type ActorRole, type JobKind, type TaskState } from '../contract/constants.ts';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
 import { formatActor } from '../contract/validation.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
@@ -128,7 +128,8 @@ export function approveTask(
 export function rearmTask(
   db: DbConnection,
   taskId: string,
-  attribution: AttributionTuple
+  attribution: AttributionTuple,
+  options?: { reenqueueKind?: JobKind }
 ): BureauTaskRow {
   if (attribution.actor_role !== 'human-operator') {
     throw new Error('Task re-arm requires human-operator role');
@@ -136,6 +137,7 @@ export function rearmTask(
 
   const now = new Date().toISOString();
   const rearmedBy = formatActor(attribution);
+  const reenqueueKind = options?.reenqueueKind ?? 'verify.run';
 
   return db.execTransaction(() => {
     const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
@@ -159,16 +161,21 @@ export function rearmTask(
     }
 
     enqueueJob(db, {
-      kind: 'verify.run',
+      kind: reenqueueKind,
       task_id: taskId,
       payload: { taskId }
     });
+
+    const detail: Record<string, unknown> = { action: 'rearm', rearmedBy };
+    if (options?.reenqueueKind) {
+      detail.reenqueueKind = options.reenqueueKind;
+    }
 
     journal(db, {
       kind: 'human',
       attribution,
       taskId,
-      detail: { action: 'rearm', rearmedBy }
+      detail
     });
 
     return updatedTask;

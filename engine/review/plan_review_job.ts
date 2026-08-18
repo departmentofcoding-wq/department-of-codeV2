@@ -9,7 +9,8 @@ import type {
   JobContext
 } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
-import { callModel } from '../llm/call_model.ts';
+import { callModel, getCandidateModels } from '../llm/call_model.ts';
+import { getAssignment, getModel } from '../models/registry.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
@@ -220,24 +221,23 @@ export async function handleSeniorReviewPlan(ctx: JobContext): Promise<void> {
       signal: ctx.signal
     }
   );
-
+  const reviewId = crypto.randomUUID();
   let verdict: 'approved' | 'amend' = 'amend';
-  let feedback = 'Default senior plan review response';
+  let feedback = 'Unparseable Senior model response; defaulting to amend';
 
   try {
     const parsed = JSON.parse(completion.text ?? '{}');
-    if (parsed.verdict === 'approved' || parsed.verdict === 'amend') {
-      verdict = parsed.verdict;
+    if (parsed.verdict === 'approved') {
+      verdict = 'approved';
+    } else if (parsed.verdict === 'amend') {
+      verdict = 'amend';
     }
     if (typeof parsed.feedback === 'string' && parsed.feedback.length > 0) {
       feedback = parsed.feedback;
     }
   } catch {
-    if (completion.text) {
+    if (completion.text && completion.text.length > 0) {
       feedback = completion.text;
-      if (completion.text.toLowerCase().includes('approved')) {
-        verdict = 'approved';
-      }
     }
   }
 
@@ -248,18 +248,15 @@ export async function handleSeniorReviewPlan(ctx: JobContext): Promise<void> {
     account: (completion as any).account ?? null
   };
 
-  const reviewId = crypto.randomUUID();
-
   ctx.db.execTransaction(() => {
     ctx.db.run(
       `INSERT INTO bureau_plan_reviews (id, plan_id, task_id, verdict, feedback, actor_role, provider, model, account, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'senior-engineer', ?, ?, ?, ?)`,
       reviewId,
-      plan.id,
+      plan?.id ?? null,
       task.id,
       verdict,
       feedback,
-      modelAttribution.actor_role,
       modelAttribution.provider,
       modelAttribution.model,
       modelAttribution.account,
@@ -272,34 +269,39 @@ export async function handleSeniorReviewPlan(ctx: JobContext): Promise<void> {
       task.id
     );
 
-    ctx.db.run(
-      `UPDATE bureau_plans SET status = ?, updated_at = ? WHERE id = ?`,
-      verdict,
-      nowIso,
-      plan.id
-    );
-
     journal(ctx.db, {
       kind: 'review',
       attribution: modelAttribution,
       taskId: task.id,
       jobId: ctx.job.id,
       detail: {
+        action: 'senior_plan_review',
         verdict,
-        feedback,
         plan_rounds: task.plan_rounds + 1
       }
     });
 
-    // A-7a: Enqueue junior.dispatch on plan approval
+    // A-7a: Enqueue junior.dispatch on plan approval with accurate model provenance (Finding 4)
     if (verdict === 'approved') {
+      const juniorAssignment = getAssignment(ctx.db, 'junior-engineer');
+      let juniorModelRow = juniorAssignment?.model_id ? getModel(ctx.db, juniorAssignment.model_id) : null;
+      if (!juniorModelRow) {
+        const candidates = getCandidateModels(ctx.db, 'junior-engineer');
+        juniorModelRow = candidates[0] ?? null;
+      }
+
+      const juniorProvider = juniorModelRow?.provider ?? 'ollama';
+      const juniorModel = juniorModelRow?.id ?? 'qwen2.5-coder';
+
       let dispatchId = crypto.randomUUID();
       ctx.db.run(
         `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
-         VALUES (?, ?, ?, 'junior-engineer', 'ollama', 'qwen2.5-coder', NULL, 'pending', ?)`,
+         VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
         dispatchId,
         task.id,
         task.work_uuid,
+        juniorProvider,
+        juniorModel,
         nowIso
       );
 

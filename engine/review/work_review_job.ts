@@ -214,19 +214,21 @@ export async function handleSeniorReviewWork(ctx: JobContext): Promise<void> {
     }
   );
 
-  let verdict: 'approved' | 'amend' = 'approved';
-  let comments = 'Work review approved by Senior Engineer';
+  let verdict: 'approved' | 'amend' = 'amend';
+  let comments = 'Unparseable Senior model response; defaulting to amend';
 
   try {
     const parsed = JSON.parse(completion.text ?? '{}');
-    if (parsed.verdict === 'approved' || parsed.verdict === 'amend') {
-      verdict = parsed.verdict;
+    if (parsed.verdict === 'approved') {
+      verdict = 'approved';
+    } else if (parsed.verdict === 'amend') {
+      verdict = 'amend';
     }
     if (typeof parsed.comments === 'string' && parsed.comments.length > 0) {
       comments = parsed.comments;
     }
   } catch {
-    if (completion.text) {
+    if (completion.text && completion.text.length > 0) {
       comments = completion.text;
     }
   }
