@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 5 — Hardening: COMPLETE. All milestones merged; exit sentence demonstrated.** |
-| Main | Stream B B2/B3/B4 + exit demo (`wt/junior-b-hardening-2`). Prior: B1 `23a5a8f`, Stream A `ea4ff0a`, D0-5 `9a56b8e`. |
-| Suite | 202/202 tests, 60 files, `npm run build` clean. `npm run demo:phase5` exits 0 (exit sentence demonstrated). Suite runs deterministically green twice (~70s). |
+| **Phase** | **Phase 6 — Operator Console: IN PROGRESS. Milestone D0-C (contract freeze) merged. Streams A & B cleared to cut.** |
+| Main | `11cfdaa` — D0-C console contract freeze merged (`59acc69`, Senior verdict reproduced: build clean, 206/206, manifest test token-auth on all 7 endpoints, M-D0-C reproduced). Prior: Phase 5 complete at `8974b0f`. |
+| Suite | 206/206 tests, 61 files, `npm run build` clean on merged main. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | Phase 5 done. Phase 6 is not yet scoped — see "Beyond Phase 5" below. Residual debt: retire `fileParallelism:false` by converting the browser tests (t28/t38) to browser-event waits (B4 converted only the T4b poll). |
+| Next action | Cut `wt/junior-a-console` (backend API + action door, brief `docs/console-junior-a-brief.md`) and `wt/junior-b-console` (frontend + desktop launcher, brief `docs/console-junior-b-brief.md`) from `main` (`11cfdaa`). Plan: `docs/console-plan.md`. Streams run in parallel; B develops against fixtures until A2 lands. |
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
@@ -38,7 +38,7 @@ polls) remains Phase 5 scope.
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team, flake fix | ✅ **done** — D0-5 (`9a56b8e`); Stream A A1–A3 (`ea4ff0a`); Stream B B1 backup (`23a5a8f`), B2 dashboards, B3 red-team, B4 deterministic-wait (`wt/junior-b-hardening-2`). Exit sentence demonstrated via `scripts/demo_phase5.ts`. |
-| 6 — (unscoped) | Not yet planned — see "Beyond Phase 5" | ⬜ not started |
+| 6 — Operator Console | Local web control panel + desktop shortcut: dashboards, findings, task states, approve/trigger actions | 🔄 **in progress** — D0-C contract freeze merged (`59acc69`); plan `docs/console-plan.md`; Streams A (backend) & B (frontend) to cut |
 
 Phase 5 progress record (as of 2026-08-18): D0-5 contract freeze, Stream A
 (A1–A3), and Stream B B1 merged; suite 196/196 across 58 files, green twice on
