@@ -22,3 +22,26 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   Error: no such table: bureau_ownership
   ```
 - **Verification**: Mutation caught by unit test. Restored code passes 3/3 tests cleanly.
+
+---
+
+## M-A1: Milestone A1 — Watchdog Detection Guard (T45)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A1)
+- **Guard Broken**: `verifying_no_verify_run` detection query in `engine/watchdog/sweep.ts`
+- **Mutation Applied**: Changed `WHERE state = 'verifying'` to `WHERE state = 'MUTATION_BROKEN'` in `detectWatchdogFindings`.
+- **Test Command**: `npx vitest run test/unit/t45_watchdog_sweep.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t45_watchdog_sweep.test.ts > T45 — Watchdog Detection (watchdog.sweep) > 2. Detects verifying_no_verify_run (Class 1)
+  AssertionError: expected +0 to be 1 // Object.is equality
+  - Expected: 1
+  + Received: 0
+
+  FAIL  test/unit/t45_watchdog_sweep.test.ts > T45 — Watchdog Detection (watchdog.sweep) > 6. Idempotency & Unique Index: second sweep on same state produces zero duplicate active findings
+  AssertionError: expected +0 to be 1 // Object.is equality
+  - Expected: 1
+  + Received: 0
+  ```
+- **Verification**: Mutation caught by T45 test suite. Restored code passes all 7/7 tests cleanly.
+

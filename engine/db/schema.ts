@@ -298,7 +298,10 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' }
+  { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' },
+  { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
+  { table: 'bureau_watchdog_findings', name: 'subject_id', definition: 'TEXT' },
+  { table: 'bureau_watchdog_findings', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {
@@ -382,7 +385,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
   }
 
 
-  // 3. Indices built after table rebuild completes
+  // 3. Indices built after table rebuild completes and ADDED_COLUMNS have been applied
   const hasTasks = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bureau_tasks'`).get();
   if (hasTasks) {
     db.exec(`
@@ -398,6 +401,15 @@ export function applyBootMigrations(db: DatabaseSync): void {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_window_leases_active
       ON bureau_window_leases (window_target)
       WHERE status = 'active';
+    `);
+  }
+
+  const hasWatchdogFindings = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bureau_watchdog_findings'`).get();
+  if (hasWatchdogFindings) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_watchdog_findings_subject_active
+      ON bureau_watchdog_findings (subject_kind, subject_id, finding_class)
+      WHERE status IN ('detected', 'recovering');
     `);
   }
 }

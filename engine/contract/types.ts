@@ -452,9 +452,12 @@ export type OwnershipRow = BureauOwnershipRow;
 export interface BureauWatchdogFindingRow {
   id: string;
   task_id: string | null;
+  subject_kind: string | null;
+  subject_id: string | null;
   finding_class: string;
   status: string;
   recovery_job_id: string | null;
+  recover_attempts: number;
   detail: string | null;
   detected_at: string;
   resolved_at: string | null;
