@@ -83,7 +83,7 @@ export async function callModel(
   options?: CallModelOptions
 ): Promise<LlmCompletionResponse> {
   let candidates = getCandidateModels(db, role);
-  if (candidates.length === 0 && options?.customClient && listModels(db).length === 0) {
+  if (candidates.length === 0 && (options?.customClient || getMockClientOverride()) && listModels(db).length === 0) {
     candidates = [{
       id: 'mock-model',
       provider: 'mock',

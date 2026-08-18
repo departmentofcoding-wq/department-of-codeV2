@@ -14,7 +14,7 @@ export type TaskState = typeof STATES[number];
 export const TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
   'intake': ['queued'],
   'queued': ['claimed'],
-  'claimed': ['queued', 'verifying'],
+  'claimed': ['queued', 'verifying', 'blocked'],
   'verifying': ['needs-review', 'failed', 'claimed', 'blocked'],
   'failed': ['claimed'],
   'blocked': ['claimed'],

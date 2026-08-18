@@ -5,6 +5,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 
 const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
+  'claimed->blocked': ['senior-engineer'],
   'verifying->claimed': ['verifier'],
   'verifying->blocked': ['verifier'],
   'blocked->claimed': ['human-operator'],
