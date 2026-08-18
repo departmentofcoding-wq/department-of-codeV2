@@ -242,6 +242,28 @@ export function applySchema(db: DatabaseSync): void {
       model TEXT NOT NULL, account TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS bureau_ownership (
+      key TEXT PRIMARY KEY,
+      holder_id TEXT NOT NULL,
+      holder_role TEXT NOT NULL,
+      leased_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bureau_watchdog_findings (
+      id TEXT PRIMARY KEY,
+      task_id TEXT REFERENCES bureau_tasks(id),
+      finding_class TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'detected',
+      recovery_job_id TEXT REFERENCES bureau_jobs(id),
+      detail TEXT,
+      detected_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
   `);
 }
 
@@ -274,6 +296,7 @@ export function applyAddedColumns(
  */
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' }
 ];
@@ -314,6 +337,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           verify_fixes INTEGER NOT NULL DEFAULT 0,
           cycles INTEGER NOT NULL DEFAULT 0,
           attempts INTEGER NOT NULL DEFAULT 0,
+          recover_attempts INTEGER NOT NULL DEFAULT 0,
           pull_request_url TEXT,
           intake_session_id TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,

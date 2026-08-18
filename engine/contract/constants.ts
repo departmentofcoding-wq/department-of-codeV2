@@ -66,7 +66,12 @@ export const JOB_KINDS = [
   'senior.review-plan',
   'senior.review-work',
   'pr.create',
-  'pr.merge'
+  'pr.merge',
+  'watchdog.sweep',
+  'watchdog.recover',
+  'backup.push',
+  'secretary.claim',
+  'secretary.release'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});

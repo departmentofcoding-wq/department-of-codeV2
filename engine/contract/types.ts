@@ -28,6 +28,7 @@ export interface BureauTaskRow {
   verify_fixes: number;
   cycles: number;
   attempts: number;
+  recover_attempts: number;
   pull_request_url: string | null;
   intake_session_id: string | null;
   created_at: string;
@@ -434,5 +435,32 @@ export interface IdeDriver {
   snapshot(): Promise<IdeDriverSnapshotResult>;
   close(): Promise<void>;
 }
+
+export interface BureauOwnershipRow {
+  key: string;
+  holder_id: string;
+  holder_role: string;
+  leased_at: string;
+  expires_at: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OwnershipRow = BureauOwnershipRow;
+
+export interface BureauWatchdogFindingRow {
+  id: string;
+  task_id: string | null;
+  finding_class: string;
+  status: string;
+  recovery_job_id: string | null;
+  detail: string | null;
+  detected_at: string;
+  resolved_at: string | null;
+}
+
+export type WatchdogFinding = BureauWatchdogFindingRow;
+
 
 

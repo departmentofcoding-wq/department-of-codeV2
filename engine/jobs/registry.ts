@@ -272,3 +272,70 @@ defineJob(
   },
   { maxAttempts: 3, timeoutMs: 90000 }
 );
+
+// 14. watchdog.sweep
+const watchdogSweepSchema = z.object({
+  limit: z.number().optional()
+});
+
+defineJob(
+  'watchdog.sweep',
+  watchdogSweepSchema,
+  async (_ctx) => {},
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
+
+// 15. watchdog.recover
+const watchdogRecoverSchema = z.object({
+  findingId: z.string(),
+  taskId: z.string().optional(),
+  action: z.string().optional()
+});
+
+defineJob(
+  'watchdog.recover',
+  watchdogRecoverSchema,
+  async (_ctx) => {},
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
+
+// 16. backup.push
+const backupPushSchema = z.object({
+  target: z.string().optional()
+});
+
+defineJob(
+  'backup.push',
+  backupPushSchema,
+  async (_ctx) => {},
+  { maxAttempts: 3, timeoutMs: 60000 }
+);
+
+// 17. secretary.claim
+const secretaryClaimSchema = z.object({
+  key: z.string(),
+  holderId: z.string(),
+  holderRole: z.string(),
+  leaseMs: z.number().optional(),
+  notes: z.string().optional()
+});
+
+defineJob(
+  'secretary.claim',
+  secretaryClaimSchema,
+  async (_ctx) => {},
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
+
+// 18. secretary.release
+const secretaryReleaseSchema = z.object({
+  key: z.string(),
+  holderId: z.string()
+});
+
+defineJob(
+  'secretary.release',
+  secretaryReleaseSchema,
+  async (_ctx) => {},
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
