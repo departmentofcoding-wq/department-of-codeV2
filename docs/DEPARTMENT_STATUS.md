@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Milestone D0-5 (contract freeze) merged to `main`. Streams A & B cleared to cut.** |
-| Main | `9a56b8e` — D0-5 contract freeze merged (2026-08-18, Senior verdict posted and reproduced at `9a56b8e`; fast-forward over `4de44b4`). Prior: Phase 4 complete at `a8711e9` |
-| Suite | 178/178 tests, 54 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~70s). |
-| In flight | Nothing. Clean handoff point. Junior B held at the D0-5 gate and has now been cleared. |
-| Next action | Cut `wt/junior-a-hardening` (Junior A: watchdog + secretary, brief `docs/phase-5-junior-a-brief.md`) and `wt/junior-b-hardening` (Junior B: backup push + dashboards + red-team + deep flake fix, brief `docs/phase-5-junior-b-brief.md`) from `main` (`9a56b8e`). Streams run in parallel; no cross-stream blocker. |
+| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Stream A (watchdog + secretary) merged to `main`.** |
+| Main | Stream A merged (Milestones A1 `c671778`, A2 `ac3d5da`, A3 `ea4ff0a` verified by Senior). Prior: D0-5 contract freeze at `9a56b8e`. |
+| Suite | 194/194 tests, 57 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~71s). |
+| In flight | Nothing for Stream A. Stream B in flight. |
+| Next action | Merge Stream B milestones as Senior verdicts land. |
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
@@ -37,7 +37,7 @@ polls) remains Phase 5 scope.
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
-| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 📋 **plan frozen → `docs/phase-5-plan.md`** (D0-5 freeze, Stream A resilience/coordination, Stream B durability/visibility/red-team) |
+| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 🔄 **in progress** — D0-5 freeze (`9a56b8e`), Stream A merged (`c671778` A1, `ac3d5da` A2, `ea4ff0a` A3) |
 
 Phase 3 closing record: T30–T38 green on main; nine mutation evidences
 recorded (C0 ×4, Stream A ×3, Stream B ×2, CX ×3) with the Senior
