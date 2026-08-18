@@ -24,10 +24,11 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
   const target = payload?.target;
   if (typeof target === 'string' && target.trim().length > 0) {
     const trimmed = target.trim();
-    if (trimmed.includes('/')) {
-      const parts = trimmed.split('/');
-      remote = parts[0];
-      branch = parts.slice(1).join('/');
+    const slashIdx = trimmed.indexOf('/');
+    if (slashIdx !== -1) {
+      remote = trimmed.slice(0, slashIdx);
+      // Note: split on first '/' only. Slash-bearing branch names (e.g. wt/feature-name) are not supported in target strings; department backs up 'main'.
+      branch = trimmed.slice(slashIdx + 1);
     } else {
       remote = trimmed;
     }

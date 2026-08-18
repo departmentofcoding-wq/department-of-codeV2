@@ -123,9 +123,9 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
       'done'
     );
 
-    // Enqueue backup.push job after successful merge (Milestone B1)
+    // Enqueue backup.push job after successful merge (Milestone B1) — keyed to merge commit hash for deduplication
     enqueueJobIfAbsent(db, {
-      id: `backup:push:${taskId}:${Date.now()}`,
+      id: `backup.push:${currentTip}`,
       kind: 'backup.push',
       task_id: taskId,
       payload: { target: 'origin/main' },
