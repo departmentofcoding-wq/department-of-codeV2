@@ -14,7 +14,22 @@ phase plan, then git. Nothing important lives only in a chat window.
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
 | Suite | 238/238 tests, 69 files, `npm run build` clean on merged main. Antigravity junior driven from code AND via the `junior.dispatch` pipeline; agent-reply capture hardened (clean reply verified live). Full manual: `docs/antigravity-integration.md`. Prior: 232/232 at console completion. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Antigravity junior drive-layer landed (`9447e7e`) — a Stream B down-payment. Remaining: real LLM provider wiring + the two live findings (role→model fallback to Google when Ollama is down; seed model id `gemini-2.5-flash` 404s but `gemini-flash-latest` works), then the C1 supervised end-to-end run. Gemini key is live (`.env`, gitignored). |
+| Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Remaining for C1: add delivery (PR/merge/backup) against a sandbox *remote*, and the LLM-officer findings (role→model fallback when Ollama is down; seed id `gemini-2.5-flash` 404s, `gemini-flash-latest` works). Gemini key live (`.env`, gitignored). |
+
+**Pipeline verification (live, 2026-08-18):** a real task was driven end-to-end
+against the dept machinery on the sandbox repo, in an isolated temp DB —
+**intake → worktree.prepare → junior.dispatch → verify.run → needs-review** — and
+**every act journaled**. 12 attributed spans across 5 kinds recorded the whole
+run: `system`/`transition` (foreman/deterministic), `dispatch` + `observation`
+(junior-engineer/**antigravity** — the real agent answered "return a - b;" on
+Gemini 3.7 Flash), `tool`+`transition` (verifier/deterministic, `verifier_exit_code=0`,
+env scrubbed, one `bureau_verify_runs` row). The task advanced to `needs-review`
+— the exact gate the Operator Console's approve action serves. Junior step kept
+safe (agent *consulted*, not turned loose on an uncontrolled workspace); the
+controlled edit was applied in the worktree. Finding: `GitWorkspaceProvider`
+hardcodes the `main` base branch — a repo on `master` fails `worktree add`
+(`fatal: invalid reference: main`); normalize the base ref or document the
+`main` requirement.
 
 **Antigravity junior integration (`9447e7e`):** the department can now drive its
 junior (the Antigravity IDE agent) from code — `engine/harness/antigravity.ts`
