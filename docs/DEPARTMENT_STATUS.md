@@ -14,7 +14,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
 | Suite | 232/232 tests, 67 files, `npm run build` clean on merged main (green twice). Console verified live: 401 without token, 200 HealthDTO with token, static UI + dashboard API on 127.0.0.1. |
 | In flight | Nothing. Clean handoff point. Pushed to origin/main. |
-| Next action | Phase 6 done. Candidate next: Phase 7 (live operation — first real LLM-driven task end-to-end) or the carried debt (retire `fileParallelism:false`, `[llm]` provider doubling). See "Beyond Phase 5". |
+| Next action | **Phase 7 plan frozen → `docs/phase-7-plan.md`** (live operation: first real LLM-driven task end-to-end). A fresh window executes it: confirm Operator decisions with the human, verify preconditions, merge D0-7, cut Streams A (provider reality) & B (IDE reality), converge at C1 (the supervised live run). Prefer local Ollama (free) for the first run. |
 
 **Phase 6 note:** the console streams were each unit-tested but not wired end-to-end
 — `scripts/console.ts` minted the token and opened the browser but never started
@@ -50,6 +50,7 @@ polls) remains Phase 5 scope.
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
 | 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team, flake fix | ✅ **done** — D0-5 (`9a56b8e`); Stream A A1–A3 (`ea4ff0a`); Stream B B1 backup (`23a5a8f`), B2 dashboards, B3 red-team, B4 deterministic-wait (`wt/junior-b-hardening-2`). Exit sentence demonstrated via `scripts/demo_phase5.ts`. |
 | 6 — Operator Console | Local web control panel + desktop shortcut: dashboards, findings, task states, approve/trigger actions | ✅ **done** — D0-C (`59acc69`), Stream A backend (`fc97549`), Stream B frontend+launcher (`8944670`), live-server wiring (`eb39d36`). Verified live; desktop shortcut installed. |
+| 7 — Live operation | First real LLM-driven task end-to-end (real model + real IDE + sandbox repo, supervised) | 🔄 **plan frozen → `docs/phase-7-plan.md`** — D0-7 harness freeze, Stream A provider reality, Stream B IDE reality, C1 supervised live run. To be executed by a fresh window. |
 
 Phase 5 progress record (as of 2026-08-18): D0-5 contract freeze, Stream A
 (A1–A3), and Stream B B1 merged; suite 196/196 across 58 files, green twice on
