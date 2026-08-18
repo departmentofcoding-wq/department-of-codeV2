@@ -47,7 +47,8 @@ export const SPAN_KINDS = [
   'system',
   'task-filed',
   'dispatch',
-  'observation'
+  'observation',
+  'review'
 ] as const;
 
 export type SpanKind = typeof SPAN_KINDS[number];
@@ -61,7 +62,11 @@ export const JOB_KINDS = [
   'verify.run',
   'junior.dispatch',
   'selector.calibrate',
-  'lease.reap'
+  'lease.reap',
+  'senior.review-plan',
+  'senior.review-work',
+  'pr.create',
+  'pr.merge'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});
@@ -103,6 +108,14 @@ export const HARNESS_META_KEYS = {
   LEASE_MS: 'harness:lease_ms',
   LEASE_HEARTBEATS_CEILING: 'harness:lease:heartbeats'
 } as const;
+
+export const REVIEW_PR_META_KEYS = {
+  REVIEW_PLAN_ROUNDS_CEILING: 'review:plan_rounds_ceiling',
+  PR_BASE_BRANCH: 'pr:base_branch'
+} as const;
+
+export const DEFAULT_PLAN_ROUNDS_CEILING = 3;
+export const DEFAULT_PR_BASE_BRANCH = 'main';
 
 export const DEFAULT_LEASE_MS = 120_000;
 

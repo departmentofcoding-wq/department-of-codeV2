@@ -282,7 +282,8 @@ describe('Milestone W0 — Contract Freeze Unit Tests', () => {
         async checkpoint(_db, _taskId, _attribution, _note) {},
         async isClean(_db, _taskId) {
           return true;
-        }
+        },
+        async prune(_db, _taskId) {}
       };
 
       setWorkspaceProvider(fakeProvider);
