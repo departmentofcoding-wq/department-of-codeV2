@@ -22,3 +22,62 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   Error: no such table: bureau_ownership
   ```
 - **Verification**: Mutation caught by unit test. Restored code passes 3/3 tests cleanly.
+
+---
+
+## M-A1: Milestone A1 — Watchdog Detection Guard (T45)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A1)
+- **Guard Broken**: `verifying_no_verify_run` detection query in `engine/watchdog/sweep.ts`
+- **Mutation Applied**: Changed `WHERE state = 'verifying'` to `WHERE state = 'MUTATION_BROKEN'` in `detectWatchdogFindings`.
+- **Test Command**: `npx vitest run test/unit/t45_watchdog_sweep.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t45_watchdog_sweep.test.ts > T45 — Watchdog Detection (watchdog.sweep) > 2. Detects verifying_no_verify_run (Class 1)
+  AssertionError: expected +0 to be 1 // Object.is equality
+  - Expected: 1
+  + Received: 0
+
+  FAIL  test/unit/t45_watchdog_sweep.test.ts > T45 — Watchdog Detection (watchdog.sweep) > 6. Idempotency & Unique Index: second sweep on same state produces zero duplicate active findings
+  AssertionError: expected +0 to be 1 // Object.is equality
+  - Expected: 1
+  + Received: 0
+  ```
+- **Verification**: Mutation caught by T45 test suite. Restored code passes all 7/7 tests cleanly.
+
+---
+
+## M-A2: Milestone A2 — Watchdog Recovery Budget Ceiling Guard (T46)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A2)
+- **Guard Broken**: `recover_attempts` budget ceiling check in `engine/watchdog/recover.ts`
+- **Mutation Applied**: Changed `if (finding.recover_attempts >= MAX_RECOVER_ATTEMPTS)` to `if (false && finding.recover_attempts >= MAX_RECOVER_ATTEMPTS)` in `handleWatchdogRecover`.
+- **Test Command**: `npx vitest run test/unit/t46_watchdog_recover.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t46_watchdog_recover.test.ts > T46 — Watchdog Recovery (watchdog.recover) > 4. Budget Ceiling Enforcement: halts runaway recovery loop when recover_attempts >= ceiling
+  AssertionError: expected 'recovering' to be 'failed' // Object.is equality
+  - Expected: "failed"
+  + Received: "recovering"
+  ```
+- **Verification**: Mutation caught by T46 test suite. Restored code passes all 4/4 tests cleanly.
+
+---
+
+## M-A3: Milestone A3 — Secretary Fail-Closed Double-Claim Refusal Guard (T47)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A3)
+- **Guard Broken**: `expires_at > now` active lease refusal check in `engine/secretary/ownership.ts`
+- **Mutation Applied**: Changed `if (existing.expires_at > now)` to `if (false && existing.expires_at > now)` in `claimOwnership`.
+- **Test Command**: `npx vitest run test/unit/t47_secretary_ownership.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t47_secretary_ownership.test.ts > T47 — Secretary Authoritative Ownership (secretary.claim / secretary.release) > 2. Double-Claim Refusal (Fail-Closed): second claim on held unexpired key is refused
+  AssertionError: expected [Function] to throw an error
+  - Expected: null
+  + Received: undefined
+  ```
+- **Verification**: Mutation caught by T47 test suite. Restored code passes all 5/5 tests cleanly.
+
+
+

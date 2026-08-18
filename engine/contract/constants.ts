@@ -144,3 +144,8 @@ export const VERIFIER_ATTRIBUTION = {
   ...DETERMINISTIC_ATTRIBUTION
 } as const;
 
+export const WATCHDOG_ATTRIBUTION = {
+  actor_role: 'system',
+  ...DETERMINISTIC_ATTRIBUTION
+} as const;
+
