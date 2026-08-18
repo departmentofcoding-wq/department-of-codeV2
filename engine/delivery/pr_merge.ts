@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import type { AttributionTuple, BureauTaskRow, BureauWorkReviewRow, JobContext } from '../contract/types.ts';
 import { getPrProvider } from '../contract/pr-seam.ts';
 import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
@@ -7,6 +6,7 @@ import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { DeliveryError } from './types.ts';
 import { formatActor } from '../contract/validation.ts';
+import { getBranchTipCommit } from './pr_create.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
   actor_role: 'system',
@@ -44,12 +44,11 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
     throw new DeliveryError(reason, 'NO_PR_NUMBER', taskId);
   }
 
-  let refusalReason: string | null = null;
-  const prProvider = getPrProvider();
+  let currentTip = '';
 
+  // 1. Synchronous, atomic transaction for re-checking task state & tip hash preconditions
   try {
-    // Write-locked transaction for re-checking tip and updating DB
-    await db.execTransaction(async () => {
+    db.execTransaction(() => {
       const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
       if (!task) {
         throw new Error(`Task ${taskId} not found`);
@@ -65,17 +64,7 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
         throw new Error(`Task ${taskId} lacks operator approval`);
       }
 
-      let currentTip = '';
-      try {
-        const handle = await getWorkspaceProvider().getWorkspaceHandle(db, taskId);
-        currentTip = execSync('git rev-parse HEAD', {
-          cwd: handle.path,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore']
-        }).trim();
-      } catch (err: any) {
-        throw new Error(`Failed to read branch tip commit for task ${taskId}: ${err.message}`);
-      }
+      currentTip = getBranchTipCommit(db, taskId);
 
       const latestReview = db.get<BureauWorkReviewRow>(
         'SELECT * FROM bureau_work_reviews WHERE task_id = ? ORDER BY created_at DESC LIMIT 1',
@@ -88,25 +77,6 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
       if (!latestReview.reviewed_commit || latestReview.reviewed_commit !== currentTip) {
         throw new Error(`Task ${taskId} work review commit (${latestReview.reviewed_commit}) does not match current tip (${currentTip})`);
       }
-
-      // Step B-4 / B-11 ordering:
-      // 1. Call prProvider.mergePr (if fails, error thrown and transaction rolls back)
-      await prProvider.mergePr(prNumber);
-
-      // 2. Transition state needs-review -> done (writes transition journal span)
-      transition(db, taskId, 'done', SYSTEM_ATTRIBUTION, { action: 'merge', prNumber });
-
-      // 3. Update merged_at / merged_by (ordered AFTER state transition per B-11 schema CHECK)
-      const now = new Date().toISOString();
-      const mergedBy = formatActor(SYSTEM_ATTRIBUTION);
-      db.run(
-        'UPDATE bureau_tasks SET merged_at = ?, merged_by = ?, updated_at = ? WHERE id = ? AND state = ?',
-        now,
-        mergedBy,
-        now,
-        taskId,
-        'done'
-      );
     });
   } catch (err: any) {
     const refusalMsg = err?.message || String(err);
@@ -120,7 +90,40 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
     throw new DeliveryError(refusalMsg, 'PR_MERGE_REFUSED', taskId);
   }
 
-  // Step B-4: Prune strictly POST-COMMIT
+  // 2. Call PR provider merge operation (async seam call outside DB transaction)
+  const prProvider = getPrProvider();
+  try {
+    await prProvider.mergePr(prNumber);
+  } catch (err: any) {
+    const refusalMsg = err?.message || String(err);
+    journal(db, {
+      kind: 'guardrail',
+      attribution: SYSTEM_ATTRIBUTION,
+      taskId,
+      detail: { action: 'pr.merge', status: 'refused', reason: refusalMsg }
+    });
+    throw new DeliveryError(`PR merge provider call failed for task ${taskId}: ${refusalMsg}`, 'PR_MERGE_PROVIDER_FAILED', taskId);
+  }
+
+  // 3. Synchronous, atomic transaction for updating DB state (transition -> done, merged_at, merged_by)
+  db.execTransaction(() => {
+    // Step B-11: Transition state needs-review -> done (writes transition journal span)
+    transition(db, taskId, 'done', SYSTEM_ATTRIBUTION, { action: 'merge', prNumber });
+
+    // Step B-11: Update merged_at / merged_by (ordered AFTER state transition per B-11 schema CHECK)
+    const now = new Date().toISOString();
+    const mergedBy = formatActor(SYSTEM_ATTRIBUTION);
+    db.run(
+      'UPDATE bureau_tasks SET merged_at = ?, merged_by = ?, updated_at = ? WHERE id = ? AND state = ?',
+      now,
+      mergedBy,
+      now,
+      taskId,
+      'done'
+    );
+  });
+
+  // 4. Step B-4: Prune strictly POST-COMMIT
   try {
     const workspaceProvider = getWorkspaceProvider();
     await workspaceProvider.prune(db, taskId);
