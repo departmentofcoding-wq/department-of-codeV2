@@ -73,3 +73,45 @@ Every PR in the Operator Console track records the guard it broke and the test t
        → AssertionError: expected 'done' to be 'needs-review' // Object.is equality
   ```
 
+## M-B1: Render Core HTML Escaping / XSS Guard (`console/public/render.js`)
+
+- **Branch / Milestone**: `wt/junior-b-console` (Milestone B1)
+- **Guard Broken**: `escapeHtml` pass in `console/public/render.js:13`.
+- **Mutation Applied**: Removed string escaping in `escapeHtml`, returning raw unescaped string.
+- **Test Command**: `npx vitest run test/unit/tCONSOLE_b1_render.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tCONSOLE_b1_render.test.ts > Milestone B1 — UI Shell & Testable Render Core (T-C4) > 2. renderDashboardTileGrid: formats state populations, budget spend, failure rate, and guardrails
+  AssertionError: expected '\n    <div class="dashboard-grid">\n…' to contain '&lt;script&gt;alert(&#39;xss&#39;)&lt…'
+  ```
+- **Verification**: Mutation caught by `test/unit/tCONSOLE_b1_render.test.ts`. Restored code passes cleanly.
+
+---
+
+## M-B2: View Field Mapping & Error Envelope Guard (`console/public/render.js`)
+
+- **Branch / Milestone**: `wt/junior-b-console` (Milestone B2)
+- **Guard Broken**: `renderErrorToast` error envelope code formatting in `console/public/render.js:235`.
+- **Mutation Applied**: Changed `[${error.code}]` formatting to return empty string instead of error code.
+- **Test Command**: `npx vitest run test/unit/tCONSOLE_b2_views.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tCONSOLE_b2_views.test.ts > Milestone B2 — Views Wired to Read APIs (T-C5) > 3. Error Envelope Rendering: ApiErrorResponse renders structured error view, never blank screen
+  AssertionError: expected '<div class="toast toast-error">…' to contain 'UNVERIFIED_APPROVAL_REFUSED'
+  ```
+- **Verification**: Mutation caught by `test/unit/tCONSOLE_b2_views.test.ts`. Restored code passes cleanly.
+
+---
+
+## M-B3: Tokenized Launch URL Query Parameter Guard (`scripts/console.ts`)
+
+- **Branch / Milestone**: `wt/junior-b-console` (Milestone B3)
+- **Guard Broken**: `buildLaunchUrl` URL query parameter token format in `scripts/console.ts:24`.
+- **Mutation Applied**: Removed `?token=` parameter from constructed launch URL, returning `http://127.0.0.1:3100/`.
+- **Test Command**: `npx vitest run test/unit/tCONSOLE_b3_launcher_shortcut.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tCONSOLE_b3_launcher_shortcut.test.ts > Milestone B3 — Action UX & Desktop Shortcut Launcher (T-C6) > 1. Token Minting & URL Format: mints 32-byte hex token and formats localhost URL
+  AssertionError: expected 'http://127.0.0.1:3100/' to be 'http://127.0.0.1:3100/?token=e481827f…'
+  ```
+- **Verification**: Mutation caught by `test/unit/tCONSOLE_b3_launcher_shortcut.test.ts`. Restored code passes cleanly.

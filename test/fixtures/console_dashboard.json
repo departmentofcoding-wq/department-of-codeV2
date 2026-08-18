@@ -1,0 +1,42 @@
+{
+  "statePopulations": [
+    { "state": "intake", "count": 2 },
+    { "state": "planning", "count": 1 },
+    { "state": "dispatched", "count": 3 },
+    { "state": "verifying", "count": 1 },
+    { "state": "done", "count": 12 }
+  ],
+  "budgetSpend": [
+    {
+      "task_id": "task-101",
+      "title": "Fix memory leak in CDP client",
+      "state": "verifying",
+      "plan_rounds": 1,
+      "verify_fixes": 2,
+      "cycles": 3,
+      "attempts": 4,
+      "recover_attempts": 0
+    },
+    {
+      "task_id": "task-102",
+      "title": "<script>alert('xss')</script> Injection Test",
+      "state": "dispatched",
+      "plan_rounds": 2,
+      "verify_fixes": 0,
+      "cycles": 1,
+      "attempts": 1,
+      "recover_attempts": 1
+    }
+  ],
+  "verifyFailureRate": {
+    "total_runs": 25,
+    "failures": 3,
+    "failure_rate": 0.12
+  },
+  "spanKindCounts": [
+    { "kind": "llm", "count": 42 },
+    { "kind": "job", "count": 105 },
+    { "kind": "guardrail", "count": 2 }
+  ],
+  "guardrailCount": 2
+}

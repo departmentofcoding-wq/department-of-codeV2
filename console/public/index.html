@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Department of Code — Operator Console</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <span class="brand-logo">⚙️</span>
+      <span class="brand-title">Department Console</span>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-tab active" data-view="dashboard">Dashboard</button>
+      <button class="nav-tab" data-view="tasks">Tasks</button>
+      <button class="nav-tab" data-view="findings">Findings</button>
+      <button class="nav-tab" data-view="journal">Journal</button>
+    </nav>
+
+    <div class="controls">
+      <button id="pause-toggle" class="btn-icon" title="Pause auto-refresh">⏸️ Live</button>
+      <button id="theme-toggle" class="btn-icon" title="Toggle Light/Dark Theme">🌙 Theme</button>
+      <button id="trigger-sweep-btn" class="btn btn-secondary btn-sm">Trigger Sweep</button>
+      <button id="trigger-backup-btn" class="btn btn-secondary btn-sm">Trigger Backup</button>
+      <span id="last-updated" class="metric-sub">Updated just now</span>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div id="relaunch-view" class="view-section"></div>
+
+    <div id="view-dashboard" class="view-section active">
+      <div id="dashboard-container">
+        <div class="card empty-state">Loading dashboard data...</div>
+      </div>
+    </div>
+
+    <div id="view-tasks" class="view-section">
+      <div class="section-header">
+        <h2 class="section-title">Bureau Tasks</h2>
+      </div>
+      <div id="tasks-container">
+        <div class="card empty-state">Loading task list...</div>
+      </div>
+    </div>
+
+    <div id="view-findings" class="view-section">
+      <div class="section-header">
+        <h2 class="section-title">Watchdog Findings</h2>
+      </div>
+      <div id="findings-container">
+        <div class="card empty-state">Loading findings...</div>
+      </div>
+    </div>
+
+    <div id="view-journal" class="view-section">
+      <div class="section-header">
+        <h2 class="section-title">Journal Timeline</h2>
+      </div>
+      <div id="journal-container">
+        <div class="card empty-state">Loading journal timeline...</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal Container -->
+  <div id="confirm-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h3 id="modal-title">Confirm Action</h3>
+      <p id="modal-body" style="margin-top: 0.75rem; color: var(--text-muted);"></p>
+      <div class="modal-actions">
+        <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button id="modal-confirm-btn" class="btn btn-primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ES Module Script Entry Point (Senior B-2) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

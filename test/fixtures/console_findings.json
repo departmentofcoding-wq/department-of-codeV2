@@ -1,0 +1,28 @@
+[
+  {
+    "id": "find-101",
+    "task_id": "task-101",
+    "subject_kind": "bureau_tasks",
+    "subject_id": "task-101",
+    "finding_class": "lease_stale",
+    "status": "open",
+    "recovery_job_id": null,
+    "detail": "Runner lease expired after 15000ms",
+    "recover_attempts": 1,
+    "detected_at": "2026-08-18T10:14:00.000Z",
+    "resolved_at": null
+  },
+  {
+    "id": "find-102",
+    "task_id": null,
+    "subject_kind": "system",
+    "subject_id": "watchdog",
+    "finding_class": "xss_injection_test",
+    "status": "open",
+    "recovery_job_id": "job-rec-999",
+    "detail": "<img src=x onerror=alert('xss')> Finding detail",
+    "recover_attempts": 0,
+    "detected_at": "2026-08-18T11:15:00.000Z",
+    "resolved_at": null
+  }
+]
