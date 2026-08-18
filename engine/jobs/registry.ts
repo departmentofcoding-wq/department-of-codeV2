@@ -275,17 +275,13 @@ defineJob(
 
 // 14. watchdog.sweep
 const watchdogSweepSchema = z.object({
-  limit: z.number().optional(),
-  cadenceMs: z.number().optional()
+  limit: z.number().optional()
 });
 
 defineJob(
   'watchdog.sweep',
   watchdogSweepSchema,
-  async (ctx) => {
-    const { handleWatchdogSweep } = await import('../watchdog/sweep.ts');
-    await handleWatchdogSweep(ctx);
-  },
+  async (_ctx) => {},
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
