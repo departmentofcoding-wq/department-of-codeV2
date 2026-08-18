@@ -5,3 +5,5 @@ export * from './validation.ts';
 export * from './workspace-seam.ts';
 export * from './ide-driver-seam.ts';
 export * from './harness-pure.ts';
+export * from './llm-seam.ts';
+

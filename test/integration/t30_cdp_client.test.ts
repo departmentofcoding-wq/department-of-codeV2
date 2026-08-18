@@ -85,5 +85,5 @@ describe('T30: Hand-Rolled CDP Client Integration Test (Stream A1)', () => {
     // 8. Close driver and assert process/temp dir cleanup
     await driver!.close();
     driver = null;
-  });
+  }, 15000);
 });

@@ -318,6 +318,7 @@ export class CdpIdeDriver implements IdeDriver {
   public async close(): Promise<void> {
     if (this.ws) {
       try {
+        await this.sendCdpCommand('Browser.close').catch(() => {});
         this.ws.close();
       } catch {
         // Ignored
@@ -326,23 +327,16 @@ export class CdpIdeDriver implements IdeDriver {
     }
 
     if (this.proc && !this.proc.killed) {
-      const procRef = this.proc;
-      const exitPromise = new Promise<void>(resolve => {
-        procRef.once('exit', () => resolve());
-      });
-
-      try {
-        procRef.kill('SIGTERM');
-      } catch {
-        // Ignored
-      }
-
-      const timeoutPromise = new Promise<void>(resolve => setTimeout(resolve, 2000));
-      await Promise.race([exitPromise, timeoutPromise]);
-
-      if (!procRef.killed) {
+      const pid = this.proc.pid;
+      if (process.platform === 'win32' && pid) {
         try {
-          procRef.kill('SIGKILL');
+          child_process.execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
+        } catch {
+          // Ignored
+        }
+      } else {
+        try {
+          this.proc.kill('SIGKILL');
         } catch {
           // Ignored
         }
@@ -353,9 +347,8 @@ export class CdpIdeDriver implements IdeDriver {
     if (this.userDataDir && fs.existsSync(this.userDataDir)) {
       try {
         fs.rmSync(this.userDataDir, { recursive: true, force: true });
-      } catch (err) {
-        // On Windows file locks, re-attempt after short pause
-        await new Promise(r => setTimeout(r, 100));
+      } catch {
+        await new Promise(r => setTimeout(r, 200));
         try {
           fs.rmSync(this.userDataDir, { recursive: true, force: true });
         } catch {

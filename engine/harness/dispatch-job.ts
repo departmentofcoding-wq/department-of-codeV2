@@ -130,17 +130,11 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           throw new Error(`LLM decision step failed: ${err.message}`);
         }
 
-        let stepDecision: { action: string; selectorKey?: string; value?: string } = { action: 'done' };
+        let stepDecision: { action: string; selectorKey?: string; value?: string };
         try {
           stepDecision = JSON.parse(responseText);
-        } catch {
-          if (step === 1 && snapshot.outline.includes('task-input')) {
-            stepDecision = { action: 'type', selectorKey: 'task.input', value: 'Junior dispatch work' };
-          } else if (step === 2 && snapshot.outline.includes('submit-btn')) {
-            stepDecision = { action: 'click', selectorKey: 'task.submit' };
-          } else {
-            stepDecision = { action: 'done' };
-          }
+        } catch (err: any) {
+          throw new Error(`LLM decision step returned unparseable output '${responseText}': ${err.message}`);
         }
 
         if (stepDecision.action === 'done') {

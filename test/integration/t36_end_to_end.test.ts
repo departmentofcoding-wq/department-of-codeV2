@@ -11,7 +11,7 @@ import { drainSingleJob } from '../../runner/main.ts';
 import { registerSelector } from '../../engine/selectors/registry.ts';
 import { queryCorrelatedChain } from '../../engine/selectors/correlation.ts';
 import { UncalibratedSelectorError } from '../../engine/selectors/gate.ts';
-import { getIdeDriver, setIdeDriverOverride } from '../../engine/contract/ide-driver-seam.ts';
+import { getIdeDriver, setIdeDriverOverride, setMockClientOverride } from '../../engine/contract/index.ts';
 
 describe('T36: End-to-End Integration Test (Milestone CX)', () => {
   let tmpDir: string;
@@ -52,6 +52,7 @@ describe('T36: End-to-End Integration Test (Milestone CX)', () => {
 
   afterEach(async () => {
     delete process.env.BUREAU_MOCK_LLM;
+    setMockClientOverride(null);
     const driver = getIdeDriver();
     if (driver && typeof driver.close === 'function') {
       try {
@@ -112,7 +113,7 @@ describe('T36: End-to-End Integration Test (Milestone CX)', () => {
 
     // 4. Script Mock LLM decision loop (CX-4) over Phase 1 callModel seam
     const { MockClient } = await import('../../engine/llm/mock_client.ts');
-    new MockClient([
+    const mockClient = new MockClient([
       {
         text: JSON.stringify({ action: 'type', selectorKey: 'task.input', value: 'Hello T36' }),
         tokensIn: 20,
@@ -141,6 +142,7 @@ describe('T36: End-to-End Integration Test (Milestone CX)', () => {
         truncated: false
       }
     ]);
+    setMockClientOverride(mockClient);
     process.env.BUREAU_MOCK_LLM = 'true';
 
     // 5. Enqueue & Drain junior.dispatch job

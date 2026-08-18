@@ -10,7 +10,7 @@ import { drainSingleJob } from '../runner/main.ts';
 import { registerSelector } from '../engine/selectors/registry.ts';
 import { queryCorrelatedChain } from '../engine/selectors/correlation.ts';
 import { MockClient } from '../engine/llm/mock_client.ts';
-import { setIdeDriverOverride } from '../engine/contract/ide-driver-seam.ts';
+import { setIdeDriverOverride, setMockClientOverride } from '../engine/contract/index.ts';
 import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
 import { GatedIdeDriver } from '../engine/selectors/gate.ts';
 
@@ -48,6 +48,8 @@ export async function runDemoPhase3(): Promise<string> {
   const windowTarget = 'window-demo-p3';
   const now = new Date().toISOString();
 
+  let gatedDriver: GatedIdeDriver | null = null;
+
   try {
     // 1. Seed Task & Dispatch
     log('[1] Seeding task and dispatch in database...');
@@ -79,8 +81,9 @@ export async function runDemoPhase3(): Promise<string> {
       if (!row) throw new Error(`Selector key ${key} not found`);
       return row.css;
     });
-    const gatedDriver = new GatedIdeDriver(cdpDriver, db);
+    gatedDriver = new GatedIdeDriver(cdpDriver, db);
     setIdeDriverOverride(gatedDriver);
+    log(`[CDP] Profile Dir: ${tempDir}`);
 
     // 2. Register & Calibrate Selectors
     log('[2] Registering and calibrating CSS selectors...');
@@ -133,6 +136,7 @@ export async function runDemoPhase3(): Promise<string> {
       }
     ]);
 
+    setMockClientOverride(mockClient);
     process.env.BUREAU_MOCK_LLM = 'true';
 
     const dispatchJob = enqueueJob(db, {
@@ -175,6 +179,14 @@ export async function runDemoPhase3(): Promise<string> {
     return logs.join('\n');
   } finally {
     delete process.env.BUREAU_MOCK_LLM;
+    setMockClientOverride(null);
+    if (gatedDriver) {
+      try {
+        await gatedDriver.close();
+      } catch {
+        // Ignored
+      }
+    }
     setIdeDriverOverride(null);
     closeDatabase();
     if (fs.existsSync(tempDir)) {

@@ -1,5 +1,5 @@
 import { ACTOR_ROLES, BUDGET_META_KEYS } from '../contract/constants.ts';
-import { LlmError, type ActorRole } from '../contract/index.ts';
+import { getMockClientOverride, LlmError, type ActorRole } from '../contract/index.ts';
 import type { BureauAssignmentRow, BureauModelRow, DbConnection, LlmClient, LlmCompletionRequest, LlmCompletionResponse, LlmMessage, LlmToolDefinition } from '../contract/index.ts';
 import { journal } from '../journal/writer.ts';
 import { getAssignment, getModel, listModels } from '../models/registry.ts';
@@ -150,8 +150,11 @@ export async function callModel(
   let lastError: Error | null = null;
   for (const candidate of candidates) {
     let client: LlmClient;
+    const mockOverride = getMockClientOverride();
     if (options?.customClient) {
       client = options.customClient;
+    } else if (mockOverride) {
+      client = mockOverride;
     } else if (process.env.NODE_ENV !== 'production' && process.env.BUREAU_MOCK_LLM === 'true') {
       client = new MockClient();
     } else if (candidate.provider === 'google') {
