@@ -129,6 +129,7 @@ export interface BureauWorkReviewRow {
   round: number;
   verdict: string;
   comments: string | null;
+  reviewed_commit: string | null;
   actor_role: string;
   provider: string;
   model: string;
@@ -334,6 +335,25 @@ export interface WorkspaceProvider {
   getWorkspaceHandle(db: DbConnection, taskId: string): Promise<WorkspaceHandle>;
   checkpoint(db: DbConnection, taskId: string, attribution: AttributionTuple, note?: string): Promise<void>;
   isClean(db: DbConnection, taskId: string): Promise<boolean>;
+  prune(db: DbConnection, taskId: string): Promise<void>;
+}
+
+export interface CreatePrInput {
+  branch: string;
+  title: string;
+  body: string;
+  base: string;
+}
+
+export interface CreatePrResult {
+  url: string;
+  number: number;
+}
+
+export interface PrProvider {
+  pushBranch(branch: string): Promise<void>;
+  createPr(input: CreatePrInput): Promise<CreatePrResult>;
+  mergePr(number: number): Promise<void>;
 }
 
 export interface BureauSelectorRow {

@@ -144,6 +144,7 @@ export function applySchema(db: DatabaseSync): void {
       round INTEGER NOT NULL DEFAULT 0,
       verdict TEXT NOT NULL,
       comments TEXT,
+      reviewed_commit TEXT,
       actor_role TEXT NOT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
@@ -273,7 +274,8 @@ export function applyAddedColumns(
  */
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
-  { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' }
+  { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {

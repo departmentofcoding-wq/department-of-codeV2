@@ -61,6 +61,11 @@ export class GitWorkspaceProvider implements WorkspaceProvider {
     await runCheckpoint(db, taskId, attribution, note);
   }
 
+  public async prune(db: DbConnection, taskId: string): Promise<void> {
+    const { pruneWorktree } = await import('./prune.ts');
+    await pruneWorktree(db, taskId);
+  }
+
 
   public async getWorkspaceHandle(db: DbConnection, taskId: string): Promise<WorkspaceHandle> {
     const row = db.get<BureauWorktreeRow>(
