@@ -40,6 +40,7 @@ export class GhCliPrProvider implements PrProvider {
       '--body', input.body
     ]);
 
+    // gh pr create returns the PR URL (e.g., https://github.com/owner/repo/pull/123)
     const url = output.trim();
     const match = url.match(/\/pull\/(\d+)$/);
     const number = match ? parseInt(match[1], 10) : 0;

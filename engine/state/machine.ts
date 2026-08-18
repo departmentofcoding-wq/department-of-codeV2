@@ -9,7 +9,7 @@ const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
   'verifying->claimed': ['verifier'],
   'verifying->blocked': ['verifier'],
   'blocked->claimed': ['human-operator'],
-  'needs-review->done': ['human-operator']
+  'needs-review->done': ['human-operator', 'system']
 };
 
 export function canTransition(fromState: TaskState, toState: TaskState, actorRole: ActorRole): boolean {
@@ -98,16 +98,31 @@ export function approveTask(
       throw new Error(`Task ${taskId} cannot be approved from state ${task.state} (must be needs-review)`);
     }
 
+    if (task.verifier_exit_code !== 0) {
+      throw new Error(`Task ${taskId} cannot be approved because verifier exit code is ${task.verifier_exit_code} (must be 0)`);
+    }
+
+    // Idempotent re-approval: if already approved, return task without error or re-enqueue
+    if (task.approved_at !== null && task.approved_by !== null) {
+      return task;
+    }
+
     const updatedTask = db.get<BureauTaskRow>(`
       UPDATE bureau_tasks
-      SET state = 'done', approved_at = ?, approved_by = ?, updated_at = ?
-      WHERE id = ? AND state = 'needs-review'
+      SET approved_at = ?, approved_by = ?, updated_at = ?
+      WHERE id = ? AND state = 'needs-review' AND approved_at IS NULL
       RETURNING *
     `, now, approvedBy, now, taskId);
 
     if (!updatedTask) {
-      throw new Error(`Task ${taskId} changed state concurrently; refusing to approve twice`);
+      throw new Error(`Task ${taskId} changed state or was approved concurrently; refusing to approve twice`);
     }
+
+    enqueueJob(db, {
+      kind: 'pr.create',
+      task_id: taskId,
+      payload: { taskId }
+    });
 
     journal(db, {
       kind: 'human',
