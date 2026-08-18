@@ -2,12 +2,15 @@ import { getIdeDriver } from '../contract/ide-driver-seam.ts';
 import type { AttributionTuple, BureauDispatchRow, JobContext, JobDefinition } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
 import { acquireLease, releaseLease } from './lease-manager.ts';
+import { recordCorrelatedObservation } from '../selectors/correlation.ts';
+import { callModel } from '../llm/call_model.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
   windowTarget?: string;
   url?: string;
   actions?: Array<{ selectorKey: string; action: string; value?: string }>;
+  maxSteps?: number;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -69,8 +72,96 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
     }
 
     if (payload.actions && Array.isArray(payload.actions)) {
+      // Fallback static payload mode (for crash safety T37 tests)
       for (const actItem of payload.actions) {
-        await driver.act(actItem.selectorKey, actItem.action as any, actItem.value);
+        const actResult = await driver.act(actItem.selectorKey, actItem.action as any, actItem.value);
+        if (actResult && actResult.nonceEcho) {
+          recordCorrelatedObservation(ctx.db, {
+            dispatchId: dispatch.id,
+            selectorKey: actItem.selectorKey,
+            action: actItem.action,
+            nonceEcho: actResult.nonceEcho,
+            observed: { success: actResult.success },
+            attribution,
+            taskId: dispatch.task_id,
+            jobId: ctx.job.id
+          });
+        }
+      }
+    } else {
+      // Scripted mock model decision loop via Phase 1 callModel choke point (CX-4)
+      const maxSteps = payload.maxSteps ?? 10;
+      let step = 0;
+      let done = false;
+
+      while (!done && step < maxSteps) {
+        if (ctx.signal.aborted) {
+          throw new Error(`Dispatch '${dispatch.id}' aborted.`);
+        }
+        step++;
+
+        const snapshot = await driver.snapshot();
+
+        let responseText = '';
+        try {
+          const llmRes = await callModel(
+            ctx.db,
+            attribution.actor_role,
+            [
+              {
+                role: 'system',
+                content: 'You are a junior engineer agent operating a web IDE.'
+              },
+              {
+                role: 'user',
+                content: `DOM Snapshot:\n${snapshot.outline}\n\nStep ${step}/${maxSteps}. Output JSON action or done.`
+              }
+            ],
+            undefined,
+            {
+              taskId: dispatch.task_id,
+              workUuid: dispatch.work_uuid,
+              jobId: ctx.job.id,
+              signal: ctx.signal
+            }
+          );
+          responseText = llmRes.text ?? '';
+        } catch (err: any) {
+          throw new Error(`LLM decision step failed: ${err.message}`);
+        }
+
+        let stepDecision: { action: string; selectorKey?: string; value?: string };
+        try {
+          stepDecision = JSON.parse(responseText);
+        } catch (err: any) {
+          throw new Error(`LLM decision step returned unparseable output '${responseText}': ${err.message}`);
+        }
+
+        if (stepDecision.action === 'done') {
+          done = true;
+          break;
+        }
+
+        if (stepDecision.selectorKey && stepDecision.action) {
+          const actResult = await driver.act(
+            stepDecision.selectorKey,
+            stepDecision.action as any,
+            stepDecision.value
+          );
+
+          if (actResult && actResult.nonceEcho) {
+            recordCorrelatedObservation(ctx.db, {
+              dispatchId: dispatch.id,
+              selectorKey: stepDecision.selectorKey,
+              action: stepDecision.action,
+              nonceEcho: actResult.nonceEcho,
+              observed: { success: actResult.success, value: stepDecision.value },
+              attribution,
+              taskId: dispatch.task_id,
+              jobId: ctx.job.id
+            });
+          }
+        }
       }
     }
 

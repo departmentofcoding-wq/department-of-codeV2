@@ -187,10 +187,14 @@ export class CdpIdeDriver implements IdeDriver {
     await this.sendCdpCommand('Runtime.enable');
   }
 
-  public async navigate(url: string): Promise<void> {
+  private async ensureConnected(): Promise<void> {
     if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
+      await this.launch();
     }
+  }
+
+  public async navigate(url: string): Promise<void> {
+    await this.ensureConnected();
     const result = await this.sendCdpCommand('Page.navigate', { url });
     if (result.errorText) {
       throw new HarnessError(`Page.navigate failed: ${result.errorText}`, url, 'Page.navigate');
@@ -198,9 +202,7 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async read(selectorKey: string): Promise<IdeDriverReadResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const css = this.resolveSelector(selectorKey);
     const nonce = mintNonce();
@@ -244,9 +246,7 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async act(selectorKey: string, action: IdeDriverAction, value?: string): Promise<IdeDriverActResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const css = this.resolveSelector(selectorKey);
     const nonce = mintNonce();
@@ -297,14 +297,12 @@ export class CdpIdeDriver implements IdeDriver {
   }
 
   public async snapshot(): Promise<IdeDriverSnapshotResult> {
-    if (!this.ws) {
-      throw new HarnessError('CDP client is not connected');
-    }
+    await this.ensureConnected();
 
     const script = `
       (() => {
         if (!document.body) return '';
-        return document.body.innerText || document.body.outerHTML || '';
+        return document.body.outerHTML || document.body.innerText || '';
       })()
     `;
 
@@ -320,6 +318,7 @@ export class CdpIdeDriver implements IdeDriver {
   public async close(): Promise<void> {
     if (this.ws) {
       try {
+        await this.sendCdpCommand('Browser.close').catch(() => {});
         this.ws.close();
       } catch {
         // Ignored
@@ -328,23 +327,16 @@ export class CdpIdeDriver implements IdeDriver {
     }
 
     if (this.proc && !this.proc.killed) {
-      const procRef = this.proc;
-      const exitPromise = new Promise<void>(resolve => {
-        procRef.once('exit', () => resolve());
-      });
-
-      try {
-        procRef.kill('SIGTERM');
-      } catch {
-        // Ignored
-      }
-
-      const timeoutPromise = new Promise<void>(resolve => setTimeout(resolve, 2000));
-      await Promise.race([exitPromise, timeoutPromise]);
-
-      if (!procRef.killed) {
+      const pid = this.proc.pid;
+      if (process.platform === 'win32' && pid) {
         try {
-          procRef.kill('SIGKILL');
+          child_process.execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
+        } catch {
+          // Ignored
+        }
+      } else {
+        try {
+          this.proc.kill('SIGKILL');
         } catch {
           // Ignored
         }
@@ -355,9 +347,8 @@ export class CdpIdeDriver implements IdeDriver {
     if (this.userDataDir && fs.existsSync(this.userDataDir)) {
       try {
         fs.rmSync(this.userDataDir, { recursive: true, force: true });
-      } catch (err) {
-        // On Windows file locks, re-attempt after short pause
-        await new Promise(r => setTimeout(r, 100));
+      } catch {
+        await new Promise(r => setTimeout(r, 200));
         try {
           fs.rmSync(this.userDataDir, { recursive: true, force: true });
         } catch {
