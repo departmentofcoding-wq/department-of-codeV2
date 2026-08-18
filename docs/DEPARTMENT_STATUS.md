@@ -12,7 +12,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 235/235 tests, 68 files, `npm run build` clean on merged main. Antigravity junior integration verified live (agent answered a command sent by dept code). Prior: 232/232 at console completion. |
+| Suite | 236/236 tests, 69 files, `npm run build` clean on merged main. Antigravity junior driven from code AND via the `junior.dispatch` pipeline (both verified live). Prior: 232/232 at console completion. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Antigravity junior drive-layer landed (`9447e7e`) — a Stream B down-payment. Remaining: real LLM provider wiring + the two live findings (role→model fallback to Google when Ollama is down; seed model id `gemini-2.5-flash` 404s but `gemini-flash-latest` works), then the C1 supervised end-to-end run. Gemini key is live (`.env`, gitignored). |
 
@@ -22,7 +22,16 @@ detects a live CDP endpoint or launches Antigravity with `--remote-debugging-por
 attaches to the workbench window, and types+submits a command into the agent chat
 ("Message input" contenteditable). CLI `scripts/run_junior.ts` / `npm run junior`.
 Verified live against Antigravity 2.8.1 (Electron 41 / Chrome 146): the agent
-received and answered a command sent entirely by dept code. Two runtime scars
+received and answered a command sent entirely by dept code. **Pipeline wiring
+(`19d99dd`):** `junior.dispatch` now routes a `prompt` payload to the Antigravity
+junior via a new override-able `antigravity-seam`, journaling the agent
+transcript as an attributed `observation` span — verified live (dispatch
+completed + observation journaled) and by `tc_dispatch_antigravity`. The model
+picker was also driven from code to switch the junior off the rate-limited
+Gemini 3.6 Flash onto **Gemini 3.7 Flash** (quota headroom). Known follow-up: the
+transcript read is a best-effort `body.innerText` tail and can capture transient
+IDE menus — robustly targeting the conversation container is a calibration item.
+Two runtime scars
 recorded: (1) `node --experimental-strip-types` forbids TS **parameter
 properties** (`tsc` accepts them, the runtime does not) — use explicit field
 assignment; (2) the main window's page title reflects the active chat, so match
