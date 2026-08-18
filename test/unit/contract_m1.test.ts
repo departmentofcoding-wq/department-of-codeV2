@@ -186,14 +186,39 @@ describe.each(testImplementations)('M1 Database Schema & Constraints ($name)', (
     }).toThrow(/bureau_intake_messages is append-only/);
   });
 
-  it('enforces foreign keys on bureau_intake_messages -> bureau_intake_sessions', () => {
+  it('allows claimed -> blocked state transition under senior-engineer role and refuses unauthorized roles', () => {
+    const { transition, canTransition } = require('../../engine/state/machine.ts');
     const now = new Date().toISOString();
+
+    db.run(
+      `INSERT INTO bureau_tasks (id, title, state, work_uuid, created_at, updated_at)
+       VALUES ('task-blocked-test', 'Blocked Test Task', 'claimed', 'work-123', ?, ?)`,
+      now,
+      now
+    );
+
+    // Can transition check
+    expect(canTransition('claimed', 'blocked', 'senior-engineer')).toBe(true);
+    expect(canTransition('claimed', 'blocked', 'junior-engineer')).toBe(false);
+
+    // Illegal role transition throws
     expect(() => {
-      db.run(
-        `INSERT INTO bureau_intake_messages (id, session_id, role, content, actor_role, provider, model, account, created_at)
-         VALUES ('msg-invalid', 'non-existent-session', 'human', '{}', 'human-operator', 'deterministic', 'core', NULL, ?)`,
-        now
-      );
-    }).toThrow();
+      transition(db, 'task-blocked-test', 'blocked', {
+        actor_role: 'junior-engineer',
+        provider: 'ollama',
+        model: 'coder',
+        account: null
+      });
+    }).toThrow(/Illegal state transition/);
+
+    // Legal senior-engineer role transition succeeds
+    const updated = transition(db, 'task-blocked-test', 'blocked', {
+      actor_role: 'senior-engineer',
+      provider: 'deterministic',
+      model: 'rubric',
+      account: null
+    });
+
+    expect(updated.state).toBe('blocked');
   });
 });

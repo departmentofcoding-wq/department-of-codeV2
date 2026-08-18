@@ -4,6 +4,7 @@ import { journal } from '../journal/writer.ts';
 import { acquireLease, releaseLease } from './lease-manager.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
+import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -110,7 +111,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
             [
               {
                 role: 'system',
-                content: 'You are a junior engineer agent operating a web IDE.'
+                content: JUNIOR_DISPATCH_SYSTEM_PROMPT
               },
               {
                 role: 'user',
@@ -132,7 +133,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
 
         let stepDecision: { action: string; selectorKey?: string; value?: string };
         try {
-          stepDecision = JSON.parse(responseText);
+          stepDecision = parseJuniorDispatchDecision(responseText);
         } catch (err: any) {
           throw new Error(`LLM decision step returned unparseable output '${responseText}': ${err.message}`);
         }
