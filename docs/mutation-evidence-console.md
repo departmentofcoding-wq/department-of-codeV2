@@ -27,3 +27,49 @@ Every PR in the Operator Console track records the guard it broke and the test t
        37|       expect(['GET', 'POST']).toContain(ep.method);
   ```
 - **Verification**: Mutation caught by `test/unit/contract_d0_c.test.ts`. Restored code passes all 4 tests cleanly.
+
+---
+
+## M-A1: Loopback-only bind host guard (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-a-console` (Milestone A1)
+- **Guard Broken**: Loopback host validation in `createConsoleServer` (`console/server.ts:140`).
+- **Mutation Applied**: Bypassed host check by replacing condition with `if (false)`.
+- **Test Command**: `npx vitest run test/unit/tc1_server.test.ts`
+- **Result Output**:
+  ```
+   ❯ test/unit/tc1_server.test.ts (5 tests | 1 failed) 293ms
+     × T-C1: Console HTTP Server Skeleton & Auth (Milestone A1) > refuses to bind to non-loopback host (e.g. 0.0.0.0) 93ms
+       → promise resolved "{ server: Server{ … }, host: "127.0.0.1", port: 49816 }" instead of rejecting
+  ```
+
+---
+
+## M-A2: Secret Output Redaction Guard (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-a-console` (Milestone A2)
+- **Guard Broken**: `redactOutput(t.title)` pass on task summaries in `GET /api/tasks` handler (`console/server.ts:213`).
+- **Mutation Applied**: Removed `redactOutput` pass, returning unredacted `t.title`.
+- **Test Command**: `npx vitest run test/unit/tc2_read_api.test.ts`
+- **Result Output**:
+  ```
+   ❯ test/unit/tc2_read_api.test.ts (3 tests | 1 failed) 117ms
+     × T-C2: Console Read Endpoints (Milestone A2) > guarantees planted secret never appears in any read response 32ms
+       → expected '[{"id":"task-secret-1","title":"Fix task with secret bureau-secret-api-key-998877"...}]' not to contain 'bureau-secret-api-key-998877'
+  ```
+
+---
+
+## M-A3: Non-Interactive Approval Core Invariant (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-a-console` (Milestone A3)
+- **Guard Broken**: Calling `approveTask(db, taskId, attribution)` single-writer in `POST /api/tasks/:id/approve` handler (`console/server.ts:314`).
+- **Mutation Applied**: Replaced `approveTask` core call with a raw SQL `UPDATE bureau_tasks SET state = 'done'` bypassing single-writer invariant checks.
+- **Test Command**: `npx vitest run test/unit/tc3_action_api.test.ts`
+- **Result Output**:
+  ```
+   ❯ test/unit/tc3_action_api.test.ts (4 tests | 1 failed) 98ms
+     × T-C3: Console Action Endpoints & Approval Core (Milestone A3) > approves a verified task: sets approval columns, retains state needs-review, enqueues pr.create, and journals human span 24ms
+       → AssertionError: expected 'done' to be 'needs-review' // Object.is equality
+  ```
+
