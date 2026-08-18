@@ -5,6 +5,7 @@ import { acquireLease, releaseLease } from './lease-manager.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
+import { getAntigravityDriver } from './antigravity-seam.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -12,6 +13,10 @@ export interface JuniorDispatchPayload {
   url?: string;
   actions?: Array<{ selectorKey: string; action: string; value?: string }>;
   maxSteps?: number;
+  /** Natural-language command for the Antigravity junior agent. When set, the
+   *  dispatch drives Antigravity via CDP instead of the selector/LLM loop. */
+  prompt?: string;
+  antigravityPort?: number;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -65,14 +70,31 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
   const lease = acquireLease(ctx.db, windowTarget, dispatch.id, attribution);
 
   try {
-    // Retrieve IDE driver from neutral seam (X3: never touch override inside job handler)
-    const driver = getIdeDriver();
-
-    if (payload.url) {
-      await driver.navigate(payload.url);
-    }
-
-    if (payload.actions && Array.isArray(payload.actions)) {
+    if (payload.prompt) {
+      // Antigravity junior path: send a natural-language command to the live
+      // agent via CDP and record its transcript as an attributed observation.
+      const ag = getAntigravityDriver();
+      const result = await ag.runCommand(payload.prompt, { port: payload.antigravityPort });
+      journal(ctx.db, {
+        kind: 'observation',
+        attribution,
+        taskId: dispatch.task_id,
+        workUuid: dispatch.work_uuid,
+        jobId: ctx.job.id,
+        detail: {
+          source: 'antigravity',
+          dispatchId: dispatch.id,
+          prompt: payload.prompt,
+          launched: result.launched,
+          transcriptTail: result.transcript
+        }
+      });
+    } else if (payload.actions && Array.isArray(payload.actions)) {
+      // Retrieve IDE driver from neutral seam (X3: never touch override inside job handler)
+      const driver = getIdeDriver();
+      if (payload.url) {
+        await driver.navigate(payload.url);
+      }
       // Fallback static payload mode (for crash safety T37 tests)
       for (const actItem of payload.actions) {
         const actResult = await driver.act(actItem.selectorKey, actItem.action as any, actItem.value);
@@ -90,6 +112,10 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         }
       }
     } else {
+      const driver = getIdeDriver();
+      if (payload.url) {
+        await driver.navigate(payload.url);
+      }
       // Scripted mock model decision loop via Phase 1 callModel choke point (CX-4)
       const maxSteps = payload.maxSteps ?? 10;
       let step = 0;
