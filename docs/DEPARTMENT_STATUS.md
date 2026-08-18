@@ -12,7 +12,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 236/236 tests, 69 files, `npm run build` clean on merged main. Antigravity junior driven from code AND via the `junior.dispatch` pipeline (both verified live). Prior: 232/232 at console completion. |
+| Suite | 238/238 tests, 69 files, `npm run build` clean on merged main. Antigravity junior driven from code AND via the `junior.dispatch` pipeline; agent-reply capture hardened (clean reply verified live). Full manual: `docs/antigravity-integration.md`. Prior: 232/232 at console completion. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Antigravity junior drive-layer landed (`9447e7e`) — a Stream B down-payment. Remaining: real LLM provider wiring + the two live findings (role→model fallback to Google when Ollama is down; seed model id `gemini-2.5-flash` 404s but `gemini-flash-latest` works), then the C1 supervised end-to-end run. Gemini key is live (`.env`, gitignored). |
 
@@ -29,9 +29,13 @@ transcript as an attributed `observation` span — verified live (dispatch
 completed + observation journaled) and by `tc_dispatch_antigravity`. The model
 picker was also driven from code to switch the junior off the rate-limited
 Gemini 3.6 Flash onto **Gemini 3.7 Flash** (quota headroom). Known follow-up: the
-transcript read is a best-effort `body.innerText` tail and can capture transient
-IDE menus — robustly targeting the conversation container is a calibration item.
-Two runtime scars
+transcript read is now hardened: `extractAgentReply` (pure, version-resilient)
+isolates the agent's reply by slicing after the sent prompt and dropping IDE
+chrome (timestamps, model-name label, input placeholder, open menus), and
+`sendPrompt` presses Escape first so a stray model picker can't swallow focus —
+verified live (clean reply "PIPELINE OK" captured). **Full operating manual:
+`docs/antigravity-integration.md`** (components, CLI, pipeline usage, calibrated
+selectors, rate-limit guidance, scars, tests). Two runtime scars
 recorded: (1) `node --experimental-strip-types` forbids TS **parameter
 properties** (`tsc` accepts them, the runtime does not) — use explicit field
 assignment; (2) the main window's page title reflects the active chat, so match
