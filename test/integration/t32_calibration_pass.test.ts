@@ -11,12 +11,11 @@ import {
 } from '../../engine/contract/index.ts';
 import { wrapDatabaseSync } from '../../engine/db/adapter.ts';
 import { applyBootMigrations, applySchema } from '../../engine/db/schema.ts';
-import { claimJob, completeJob } from '../../engine/jobs/jobs.ts';
+import { drainSingleJob } from '../../runner/main.ts';
 import {
   enqueueSelectorCalibration,
   getSelector,
-  registerSelector,
-  selectorCalibrateHandler
+  registerSelector
 } from '../../engine/selectors/index.ts';
 
 class StableIdeDriver implements IdeDriver {
@@ -77,24 +76,14 @@ describe('T32: Selector Calibration Pass Integration Test', () => {
     }
   });
 
-  it('calibrates a selector with exactly 1 stable match after N consistent reads', async () => {
+  it('calibrates a selector with exactly 1 stable match after N consistent reads via drainSingleJob', async () => {
     registerSelector(db, { key: 'btn.submit', css: 'button#submit' });
 
     const jobRow = enqueueSelectorCalibration(db, 'btn.submit', { maxReads: 3 });
     expect(jobRow.state).toBe('pending');
 
-    const claimed = claimJob(db, 'runner-t32', 30000);
-    expect(claimed).not.toBeNull();
-    expect(claimed?.id).toBe(jobRow.id);
-
-    await selectorCalibrateHandler({
-      db,
-      job: claimed!,
-      payload: JSON.parse(claimed!.payload),
-      signal: new AbortController().signal
-    });
-
-    completeJob(db, claimed!.id);
+    // Drain job end-to-end through runner's drainSingleJob (verifies defined job registration & handler execution)
+    await drainSingleJob(db, jobRow.id);
 
     const selector = getSelector(db, 'btn.submit');
     expect(selector?.status).toBe('calibrated');
