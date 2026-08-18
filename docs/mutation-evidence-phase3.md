@@ -63,3 +63,46 @@ This document records mutation testing evidence for Phase 3 milestones per stand
       307|         `);
       308|       }).toThrow();
   ```
+
+---
+
+## Stream A — CDP Client & Window Lease Manager (`wt/junior-a-cdp`)
+
+### Mutation A1: Remove `acquireLease` DB Exclusivity Guard
+- **Guard Modified:** Removed `idx_window_leases_active` partial UNIQUE index check from [`engine/harness/lease-manager.ts`](file:///d:/Dept%20of%20code%20v2/engine/harness/lease-manager.ts).
+- **Test Caught:** [`test/integration/t31_window_lease.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t31_window_lease.test.ts) > `enforces exclusivity, heartbeat extension, explicit release, and transactional reaping`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t31_window_lease.test.ts > T31: Window Lease Manager Integration Test (Stream A2) > enforces exclusivity, heartbeat extension, explicit release, and transactional reaping
+  AssertionError: expected [Function] to throw LeaseError
+  ```
+
+---
+
+### Mutation A2: Remove Browser Binary Discovery Guard
+- **Guard Modified:** Removed binary discovery check in `findBrowserBinary()` in [`engine/harness/cdp-client.ts`](file:///d:/Dept%20of%20code%20v2/engine/harness/cdp-client.ts).
+- **Test Caught:** [`test/integration/t30_cdp_client.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t30_cdp_client.test.ts) > `launches headless browser, navigates file:// page, reads/acts DOM, and closes cleanly`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t30_cdp_client.test.ts > T30: Hand-Rolled CDP Client Integration Test (Stream A1) > launches headless browser, navigates file:// page, reads/acts DOM, and closes cleanly
+  HarnessError: No Chrome or Edge browser binary found. Please install Chrome or Edge to run harness tests.
+  ```
+
+---
+
+### Mutation A3: Remove `finally` Lease Release in `dispatch-job.ts`
+- **Guard Modified:** Removed `releaseLease(ctx.db, lease.id)` from `finally` block in [`engine/harness/dispatch-job.ts`](file:///d:/Dept%20of%20code%20v2/engine/harness/dispatch-job.ts).
+- **Test Caught:** [`test/integration/t37_crash_safety.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t37_crash_safety.test.ts) > `handles mid-dispatch crash, reaps stale lease, re-drives safely, and releases lease on completion and failure`
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t37_crash_safety.test.ts > T37: Crash Safety Integration Test (Stream A3) > handles mid-dispatch crash, reaps stale lease, re-drives safely, and releases lease on completion and failure
+  AssertionError: expected 'active' to be 'released' // Object.is equality
+
+  Expected: "released"
+  Received: "active"
+
+   ❯ test/integration/t37_crash_safety.test.ts:78:33
+       76|     // Assert that handleJuniorDispatch released its window lease upon completion
+       77|     const leaseAfter1 = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ?', 'disp-t37');
+       78|     expect(leaseAfter1?.status).toBe('released');
+  ```

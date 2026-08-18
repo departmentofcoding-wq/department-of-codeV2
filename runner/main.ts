@@ -55,6 +55,17 @@ const STOP_TIMEOUT_MS = 10_000;
 
 import { getWorkspaceProviderOverride, setWorkspaceProvider } from '../engine/contract/workspace-seam.ts';
 import { GitWorkspaceProvider } from '../engine/worktrees/manager.ts';
+import { getIdeDriverOverride, setIdeDriverOverride } from '../engine/contract/ide-driver-seam.ts';
+import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
+import { reapExpiredWindowLeases } from '../engine/harness/lease-manager.ts';
+
+function getSelectorCss(db: DbConnection, key: string): string {
+  const row = db.get<{ css: string }>('SELECT css FROM bureau_selectors WHERE key = ?', key);
+  if (!row) {
+    throw new Error(`Selector key '${key}' not found in bureau_selectors`);
+  }
+  return row.css;
+}
 
 export class Runner {
   public readonly id: string;
@@ -82,6 +93,10 @@ export class Runner {
 
     if (!getWorkspaceProviderOverride()) {
       setWorkspaceProvider(new GitWorkspaceProvider());
+    }
+
+    if (!getIdeDriverOverride()) {
+      setIdeDriverOverride(new CdpIdeDriver((key) => getSelectorCss(this.db, key)));
     }
   }
 
@@ -159,7 +174,10 @@ export class Runner {
   }
 
   private runReaperAndWatchdog(): void {
-    // 1. Reap expired leases
+    // 0. Reap expired window leases
+    reapExpiredWindowLeases(this.db);
+
+    // 1. Reap expired jobs
     const reaped = reapExpiredJobs(this.db);
     for (const job of reaped) {
       log('WARN', 'lease_reaped', { jobId: job.id, reapedCount: job.reaped_count });
