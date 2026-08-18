@@ -1,0 +1,38 @@
+[
+  {
+    "id": 1001,
+    "ts": "2026-08-18T10:00:00.000Z",
+    "kind": "human",
+    "actor_role": "human-operator",
+    "provider": "console",
+    "model": "operator-ui",
+    "account": "operator@bureau",
+    "task_id": "task-101",
+    "work_uuid": "work-abc-123",
+    "work_title": "CDP Leak Patch",
+    "job_id": null,
+    "tokens_in": null,
+    "tokens_out": null,
+    "cost_usd": null,
+    "latency_ms": 45,
+    "detail": "Approved task task-101 via Operator Console"
+  },
+  {
+    "id": 1002,
+    "ts": "2026-08-18T11:00:00.000Z",
+    "kind": "guardrail",
+    "actor_role": "watchdog",
+    "provider": "system",
+    "model": "rule-guard",
+    "account": null,
+    "task_id": "task-102",
+    "work_uuid": "work-xyz-456",
+    "work_title": "XSS Test Work",
+    "job_id": "job-sweep-123",
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost_usd": 0,
+    "latency_ms": 12,
+    "detail": "Refused unverified task approval for <script>alert(1)</script>"
+  }
+]

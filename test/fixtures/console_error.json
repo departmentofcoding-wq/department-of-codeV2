@@ -1,0 +1,8 @@
+{
+  "error": "Task task-103 is not in verifier-passed state (verifier_exit_code=null)",
+  "code": "UNVERIFIED_APPROVAL_REFUSED",
+  "details": {
+    "task_id": "task-103",
+    "state": "dispatched"
+  }
+}
