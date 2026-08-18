@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Stream A (watchdog + secretary) merged to `main`.** |
-| Main | Stream A merged (Milestones A1 `c671778`, A2 `ac3d5da`, A3 `ea4ff0a` verified by Senior). Prior: D0-5 contract freeze at `9a56b8e`. |
-| Suite | 194/194 tests, 57 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~71s). |
-| In flight | Nothing for Stream A. Stream B in flight. |
-| Next action | Merge Stream B milestones as Senior verdicts land. |
+| **Phase** | **Phase 5 — Hardening: IN PROGRESS. Stream A complete (watchdog + secretary); Stream B milestone B1 (backup push) merged. B2/B3/B4 remain.** |
+| Main | `4e3d0dd` — Stream B B1 merged (`23a5a8f`). Stream A merged (A1 `c671778`, A2 `ac3d5da`, A3 `ea4ff0a`). D0-5 freeze at `9a56b8e`. All Senior-verified. |
+| Suite | 196/196 tests, 58 files, `npm run build` clean on merged main. Suite runs deterministically green twice (~70s). |
+| In flight | Nothing. Clean handoff point. |
+| Next action | Phase 5 is **not yet complete**: Stream B still owes **B2 (dashboards)**, **B3 (red-team sweep)**, **B4 (deterministic flake fix)** per `docs/phase-5-plan.md`. Cut a fresh `wt/junior-b-hardening` round from `main` (`4e3d0dd`) for B2→B4, then demonstrate the Phase 5 exit sentence (`scripts/demo_phase5.ts`) before marking the phase done. |
 
 **Flake fix (2026-08-18, operator, branch `wt/operator-flake-ledger`):** the
 full suite was non-deterministically red — 4 heavy integration tests
@@ -37,7 +37,29 @@ polls) remains Phase 5 scope.
 | 2 — Worktrees + Verifier | Worktree manager, checkpoints, deterministic verifier, verify→fix loop bounded by `verify_fixes` | ✅ done, merged (`3053145`), exit demo verified on main |
 | 3 — Junior harness | CDP client, selector registry + calibration gate, nonce correlation, window lease | ✅ done, merged (`6618608`), exit demo verified on main |
 | 4 — Senior + gates + delivery | Plan/work review, operator approval, PR creation, merge with worktree cleanup | ✅ done, merged (`a8711e9`) — D0 freeze (`e0efd42`), Stream A review gates (`732fbbe`), Stream B delivery (`a8711e9`) |
-| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 🔄 **in progress** — D0-5 freeze (`9a56b8e`), Stream A merged (`c671778` A1, `ac3d5da` A2, `ea4ff0a` A3) |
+| 5 — Hardening | Watchdog, backup push, Secretary, dashboards, red-team checklist | 🔄 **in progress** — D0-5 freeze (`9a56b8e`); Stream A merged (`c671778` A1, `ac3d5da` A2, `ea4ff0a` A3); Stream B **B1** backup push merged (`23a5a8f`). Remaining: B2 dashboards, B3 red-team, B4 deterministic flake fix, then exit-sentence demo. |
+
+Phase 5 progress record (as of 2026-08-18): D0-5 contract freeze, Stream A
+(A1–A3), and Stream B B1 merged; suite 196/196 across 58 files, green twice on
+merged main, build clean. Senior re-executed representatives of each stream's
+mutation evidence (M-A1 `verifying` predicate, M-A3 fail-closed lease, M-B1
+remote-tip readback) and confirmed A's read-only proof is a genuine before/after
+snapshot, not a self-filtering test. The mini-freeze (`subject_kind`,
+`subject_id`, per-finding `recover_attempts` on `bureau_watchdog_findings`) fixed
+the plan-review gap that the findings table had no generic subject reference; the
+partial unique index was correctly sequenced in `applyBootMigrations` after
+`applyAddedColumns`. Incidents, all caught at Senior review, none reaching main:
+Stream B's first B1 submission (`a66ede2`) shipped a **false "build clean" claim**
+while `registry.ts` wired `watchdog.sweep` to `../watchdog/sweep.ts` — Stream A
+code absent on B's branch, so `tsc` failed (TS2307); the 180 tests passed only
+because no test triggers that dynamic import. This is the **second cross-stream
+registry contamination** (first was `32518bd` in Phase 4) and a repeat of the
+fake/greenwashed-claim pattern — walkthroughs are re-built and re-run, never
+trusted. Repaired by reverting the block to its D0-5 stub (`23a5a8f`) and
+re-verified. Minor debt: the M-B1 evidence log still cites the pre-rename test
+path `backup_push.test.ts` (now `t48_backup_push.test.ts`) — a stale reference,
+not a functional defect. Phase 5 is **not complete**: B2 (dashboards), B3
+(red-team sweep), B4 (deterministic flake fix), and the exit-sentence demo remain.
 
 Phase 3 closing record: T30–T38 green on main; nine mutation evidences
 recorded (C0 ×4, Stream A ×3, Stream B ×2, CX ×3) with the Senior
