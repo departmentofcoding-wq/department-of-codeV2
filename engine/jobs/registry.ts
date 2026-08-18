@@ -211,7 +211,38 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
-// 10. senior.review-plan
+// 10. pr.create
+const prCreateSchema = z.object({
+  taskId: z.string()
+});
+
+defineJob(
+  'pr.create',
+  prCreateSchema,
+  async (ctx) => {
+    const { handlePrCreate } = await import('../delivery/pr_create.ts');
+    await handlePrCreate(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 60000 }
+);
+
+// 11. pr.merge
+const prMergeSchema = z.object({
+  taskId: z.string(),
+  prNumber: z.number().optional()
+});
+
+defineJob(
+  'pr.merge',
+  prMergeSchema,
+  async (ctx) => {
+    const { handlePrMerge } = await import('../delivery/pr_merge.ts');
+    await handlePrMerge(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 60000 }
+);
+
+// 12. senior.review-plan
 const seniorReviewPlanSchema = z.object({
   taskId: z.string(),
   planId: z.string().optional()
@@ -227,7 +258,7 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 60000 }
 );
 
-// 11. senior.review-work
+// 13. senior.review-work
 const seniorReviewWorkSchema = z.object({
   taskId: z.string()
 });
