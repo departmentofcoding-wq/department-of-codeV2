@@ -45,7 +45,9 @@ export const SPAN_KINDS = [
   'transition',
   'human',
   'system',
-  'task-filed'
+  'task-filed',
+  'dispatch',
+  'observation'
 ] as const;
 
 export type SpanKind = typeof SPAN_KINDS[number];
@@ -56,7 +58,10 @@ export const JOB_KINDS = [
   'demo.fail',
   'intake.turn',
   'worktree.prepare',
-  'verify.run'
+  'verify.run',
+  'junior.dispatch',
+  'selector.calibrate',
+  'lease.reap'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});
@@ -93,6 +98,13 @@ export const BUDGET_META_KEYS = {
   VERIFY_FIXES_CEILING: 'verify:fixes:ceiling',
   VERIFY_TIMEOUT_MS: 'verify:timeout_ms'
 } as const;
+
+export const HARNESS_META_KEYS = {
+  LEASE_MS: 'harness:lease_ms',
+  LEASE_HEARTBEATS_CEILING: 'harness:lease:heartbeats'
+} as const;
+
+export const DEFAULT_LEASE_MS = 120_000;
 
 export const VACUOUS_VERIFY_COMMANDS = [
   'exit 0',

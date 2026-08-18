@@ -200,6 +200,47 @@ export function applySchema(db: DatabaseSync): void {
 
     CREATE TRIGGER IF NOT EXISTS bureau_intake_messages_no_delete BEFORE DELETE ON bureau_intake_messages
     BEGIN SELECT RAISE(ABORT, 'bureau_intake_messages is append-only'); END;
+
+    CREATE TABLE IF NOT EXISTS bureau_selectors (
+      id TEXT PRIMARY KEY,
+      key TEXT UNIQUE NOT NULL,
+      css TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('draft','calibrating','calibrated','failed')),
+      match_count INTEGER NOT NULL DEFAULT 0,
+      last_calibrated_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+      model TEXT NOT NULL, account TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bureau_window_leases (
+      id TEXT PRIMARY KEY,
+      window_target TEXT NOT NULL,
+      dispatch_id TEXT NOT NULL REFERENCES bureau_dispatches(id),
+      status TEXT NOT NULL CHECK (status IN ('active','released','expired','reaped')),
+      acquired_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      heartbeats INTEGER NOT NULL DEFAULT 0,
+      actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+      model TEXT NOT NULL, account TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_window_leases_active
+    ON bureau_window_leases (window_target)
+    WHERE status = 'active';
+
+    CREATE TABLE IF NOT EXISTS bureau_observations (
+      id TEXT PRIMARY KEY,
+      dispatch_id TEXT NOT NULL REFERENCES bureau_dispatches(id),
+      nonce TEXT UNIQUE NOT NULL,
+      selector_key TEXT NOT NULL,
+      observed TEXT NOT NULL DEFAULT '{}',
+      actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+      model TEXT NOT NULL, account TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -208,6 +249,10 @@ export function applyAddedColumns(
   tableName: string,
   newColumns: Array<{ name: string; definition: string }>
 ): void {
+  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(tableName);
+  if (!tableExists) {
+    return;
+  }
   const stmt = db.prepare(`PRAGMA table_info(${tableName})`);
   const columns = stmt.all() as Array<{ name: string }>;
   const existingNames = new Set(columns.map(c => c.name));
@@ -227,7 +272,8 @@ export function applyAddedColumns(
  * constant DEFAULT (SQLite refuses otherwise).
  */
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
-  { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' }
+  { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
+  { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {
@@ -311,10 +357,22 @@ export function applyBootMigrations(db: DatabaseSync): void {
 
 
   // 3. Indices built after table rebuild completes
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_intake_session
-    ON bureau_tasks (intake_session_id)
-    WHERE intake_session_id IS NOT NULL;
-  `);
+  const hasTasks = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bureau_tasks'`).get();
+  if (hasTasks) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_intake_session
+      ON bureau_tasks (intake_session_id)
+      WHERE intake_session_id IS NOT NULL;
+    `);
+  }
+
+  const hasWindowLeases = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bureau_window_leases'`).get();
+  if (hasWindowLeases) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_window_leases_active
+      ON bureau_window_leases (window_target)
+      WHERE status = 'active';
+    `);
+  }
 }
 
