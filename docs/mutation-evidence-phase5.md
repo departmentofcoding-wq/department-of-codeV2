@@ -104,3 +104,37 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   ```
 - **Verification**: Mutation caught by T47 test suite. Restored code passes all 5/5 tests cleanly.
 
+---
+
+## M-B2: Milestone B2 — Dashboards Read-Only Guard (T49)
+
+- **Branch / Milestone**: `wt/junior-b-hardening-2` (Milestone B2)
+- **Guard Broken**: read-only contract of `dashboardSnapshot` in `engine/dashboards/views.ts`
+- **Mutation Applied**: Injected an `INSERT INTO bureau_journal` at the top of `dashboardSnapshot`, so a render mutates state.
+- **Test Command**: `npx vitest run test/unit/t49_dashboards.test.ts`
+- **Result**: `Tests 1 failed | 2 passed (3)` — test 2 ("Read-Only Proof") caught the write (journal snapshot before ≠ after).
+- **Verification**: Restored code passes 3/3.
+
+---
+
+## M-B3: Milestone B3 — Red-Team Env-Scrub Guard (T50)
+
+- **Branch / Milestone**: `wt/junior-b-hardening-2` (Milestone B3)
+- **Guard Broken**: secret denylist in `scrubEnv` (`engine/contract/tools.ts`)
+- **Mutation Applied**: Removed the `!isSecretKey(key)` condition so `scrubEnv` copies every var, secrets included.
+- **Test Command**: `npx vitest run test/integration/t50_red_team.test.ts`
+- **Result**: `Tests 1 failed | 2 passed (3)` — the exfiltration probe caught the leak (`GOOGLE_API_KEY`/`BUREAU_SECRET` survived into the child env).
+- **Verification**: Restored code passes 3/3.
+
+---
+
+## M-B4: Milestone B4 — Deterministic Wait Gate (T4b)
+
+- **Branch / Milestone**: `wt/junior-b-hardening-2` (Milestone B4)
+- **Guard Broken**: condition gate in `pollUntil` (`test/helpers/wait.ts`) — proven via T4b's use of it.
+- **Mutation Applied**: Changed T4b's reap predicate from `includes('lease-reaped')` to `includes('NEVER-MATCHES')` so the awaited condition never holds.
+- **Test Command**: `npx vitest run test/integration/t4_crash_resume.test.ts`
+- **Result**: `Tests 3 failed (3)` — `pollUntil` threw `pollUntil timed out after 15000ms waiting for: kill-chain-1 lease-reaped span`, proving the wait gates on the real observed state rather than passing on elapsed sleeps.
+- **Note**: B4 is test-infrastructure (a deterministic-sync helper); it has no product-code guard of its own. `fileParallelism: false` is retained in `vitest.config.ts` because the browser-spawning tests (t28/t38) remain the real cross-file contention source; converting those to browser-event waits and flipping parallelism back is deferred, tracked in DEPARTMENT_STATUS.md.
+- **Verification**: Restored code passes 3/3.
+

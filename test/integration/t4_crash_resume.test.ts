@@ -8,6 +8,7 @@ import type { BureauJobRow, BureauJournalRow, DbConnection } from '../../engine/
 import { enqueueJob, reapExpiredJobs } from '../../engine/jobs/jobs.ts';
 import { Runner } from '../../runner/main.ts';
 import { createFakeDb, createRealSqliteDb } from '../fixtures/db_factory.ts';
+import { pollUntil } from '../helpers/wait.ts';
 
 const testImplementations = [
   { name: 'Fake DB', create: () => ({ db: createFakeDb(), cleanup: () => {} }) },
@@ -265,18 +266,16 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       }
 
       // The abandoned lease was reaped and journaled through the one door.
-      // Poll with a deadline in case journal flushing/writing has a slight latency.
-      let hasLeaseReaped = false;
-      let spans: BureauJournalRow[] = [];
-      for (let i = 0; i < 40; i++) {
-        spans = testDb.all<BureauJournalRow>(`SELECT * FROM bureau_journal WHERE job_id LIKE 'kill-chain-1%'`);
-        if (spans.some((j) => typeof j.detail === 'string' && j.detail.includes('lease-reaped'))) {
-          hasLeaseReaped = true;
-          break;
-        }
-        await new Promise((res) => setTimeout(res, 50));
-      }
-      expect(hasLeaseReaped).toBe(true);
+      // Deterministic wait (B4): return the instant the reap span appears, keyed
+      // off the actual DB state rather than a fixed count of wall-clock sleeps.
+      const spans = await pollUntil(
+        () => {
+          const rows = testDb.all<BureauJournalRow>(`SELECT * FROM bureau_journal WHERE job_id LIKE 'kill-chain-1%'`);
+          const reaped = rows.some((j) => typeof j.detail === 'string' && j.detail.includes('lease-reaped'));
+          return reaped ? rows : undefined;
+        },
+        { timeoutMs: 15000, intervalMs: 25, label: 'kill-chain-1 lease-reaped span' }
+      );
 
       // Every span is attributed: the record says who did the work
       for (const span of spans) {

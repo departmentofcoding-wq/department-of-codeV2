@@ -15,7 +15,9 @@
     "smoke:llm": "node --experimental-strip-types scripts/smoke_llm.ts",
     "demo:phase1": "node --experimental-strip-types scripts/demo_phase1.ts",
     "demo:phase2": "node --experimental-strip-types scripts/demo_phase2.ts",
-    "demo:phase3": "node --experimental-strip-types scripts/demo_phase3.ts"
+    "demo:phase3": "node --experimental-strip-types scripts/demo_phase3.ts",
+    "demo:phase5": "node --experimental-strip-types scripts/demo_phase5.ts",
+    "dashboard": "node --experimental-strip-types scripts/dashboard.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
