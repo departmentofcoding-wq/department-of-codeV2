@@ -10,11 +10,11 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 3 — Junior Harness: planned, ready to start** |
-| Main | `3853f0a` — Phase 2 complete and merged (2026-08-17); planning docs added |
-| Suite | 125/125 tests, 35 files, `npm run build` clean, `demo:phase2` verified on main |
-| In flight | Nothing. Clean handoff point. |
-| Next action | Operator assigns Phase 3 streams from `docs/phase-3-plan.md` (C0 freeze first) |
+| **Phase** | **Phase 3 — Junior Harness: Stream A & B active** |
+| Main | `c0102e6` — Milestone C0 merged (2026-08-18); contract frozen (Senior verified `63e760b`) |
+| Suite | 135/135 tests, 36 files, `npm run build` clean |
+| In flight | Stream A (`wt/junior-a-cdp`) drafting plan for CDP client & window lease |
+| Next action | Junior A implements Stream A (A1-A3), Junior B implements Stream B (B1-B3) |
 
 ## Phase ledger
 
