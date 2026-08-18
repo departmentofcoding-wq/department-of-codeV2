@@ -106,3 +106,31 @@ This document records mutation testing evidence for Phase 3 milestones per stand
        77|     const leaseAfter1 = db.get<{ status: string }>('SELECT status FROM bureau_window_leases WHERE dispatch_id = ?', 'disp-t37');
        78|     expect(leaseAfter1?.status).toBe('released');
   ```
+
+---
+
+## Stream B — Selector Registry, Calibration Gate, Nonce Correlation
+
+### Mutation 1: Calibration Gate Check Removal (`t35_calibration_gate.test.ts`)
+- **Guard Modified:** Commented out `this.checkGate(...)` calls in `GatedIdeDriver.read` and `GatedIdeDriver.act` in [`engine/selectors/gate.ts`](file:///d:/Dept%20of%20code%20v2/engine/selectors/gate.ts).
+- **Test Caught:** [`test/integration/t35_calibration_gate.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t35_calibration_gate.test.ts)
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t35_calibration_gate.test.ts > T35: Calibration Gate Integration Test > refuses actions on uncalibrated selectors, browser never sees them, and journals guardrail span
+  AssertionError: promise resolved "{ success: true, …(1) }" instead of rejecting
+   ❯ test/integration/t35_calibration_gate.test.ts:81:55
+      81|     await expect(gatedDriver.act('btn.draft', 'click')).rejects.toThrow(UncalibratedSelectorError);
+  ```
+
+---
+
+### Mutation 2: Calibration Match Count Equality Check Removal (`t33_calibration_fail.test.ts`)
+- **Guard Modified:** Modified `if (readRes.matchCount !== 1)` to `if (false)` in `selectorCalibrateHandler()` in [`engine/selectors/registry.ts`](file:///d:/Dept%20of%20code%20v2/engine/selectors/registry.ts).
+- **Test Caught:** [`test/integration/t33_calibration_fail.test.ts`](file:///d:/Dept%20of%20code%20v2/test/integration/t33_calibration_fail.test.ts)
+- **Failure Output:**
+  ```text
+  FAIL  test/integration/t33_calibration_fail.test.ts > T33: Selector Calibration Fail Integration Test > fails calibration for an ambiguous selector and records evidence in job last_error and journal
+  AssertionError: expected selector status 'calibrated' to be 'failed'
+   ❯ test/integration/t33_calibration_fail.test.ts:86:31
+      86|     expect(selector?.status).toBe('failed');
+  ```

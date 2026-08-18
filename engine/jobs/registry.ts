@@ -195,6 +195,18 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
+// 9. selector.calibrate
+const selectorCalibrateSchema = z.object({
+  key: z.string(),
+  maxReads: z.number().optional().default(3)
+});
 
-
-
+defineJob(
+  'selector.calibrate',
+  selectorCalibrateSchema,
+  async (ctx) => {
+    const { selectorCalibrateHandler } = await import('../selectors/registry.ts');
+    await selectorCalibrateHandler(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 30000 }
+);
