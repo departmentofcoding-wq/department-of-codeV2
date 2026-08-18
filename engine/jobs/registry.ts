@@ -326,7 +326,10 @@ const secretaryClaimSchema = z.object({
 defineJob(
   'secretary.claim',
   secretaryClaimSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleSecretaryClaim } = await import('../secretary/ownership.ts');
+    await handleSecretaryClaim(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 30000 }
 );
 
@@ -339,6 +342,9 @@ const secretaryReleaseSchema = z.object({
 defineJob(
   'secretary.release',
   secretaryReleaseSchema,
-  async (_ctx) => {},
+  async (ctx) => {
+    const { handleSecretaryRelease } = await import('../secretary/ownership.ts');
+    await handleSecretaryRelease(ctx);
+  },
   { maxAttempts: 3, timeoutMs: 30000 }
 );

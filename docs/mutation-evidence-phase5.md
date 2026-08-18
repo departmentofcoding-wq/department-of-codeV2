@@ -62,4 +62,22 @@ Every PR in Phase 5 records the guard it broke and the test that caught it, prov
   ```
 - **Verification**: Mutation caught by T46 test suite. Restored code passes all 4/4 tests cleanly.
 
+---
+
+## M-A3: Milestone A3 — Secretary Fail-Closed Double-Claim Refusal Guard (T47)
+
+- **Branch / Milestone**: `wt/junior-a-hardening` (Milestone A3)
+- **Guard Broken**: `expires_at > now` active lease refusal check in `engine/secretary/ownership.ts`
+- **Mutation Applied**: Changed `if (existing.expires_at > now)` to `if (false && existing.expires_at > now)` in `claimOwnership`.
+- **Test Command**: `npx vitest run test/unit/t47_secretary_ownership.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/t47_secretary_ownership.test.ts > T47 — Secretary Authoritative Ownership (secretary.claim / secretary.release) > 2. Double-Claim Refusal (Fail-Closed): second claim on held unexpired key is refused
+  AssertionError: expected [Function] to throw an error
+  - Expected: null
+  + Received: undefined
+  ```
+- **Verification**: Mutation caught by T47 test suite. Restored code passes all 5/5 tests cleanly.
+
+
 
