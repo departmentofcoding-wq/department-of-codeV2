@@ -4,6 +4,7 @@ import {
   renderFindingsList,
   renderWorkers,
   renderJournalTimeline,
+  renderSettings,
   renderRelaunchState,
   renderErrorToast
 } from './render.js';
@@ -130,6 +131,19 @@ async function loadJournalView() {
   }
 }
 
+function loadSettingsView() {
+  const container = document.getElementById('settings-container');
+  if (!container) return;
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const tokenPreview = consoleToken ? `${consoleToken.slice(0, 8)}...` : undefined;
+  container.innerHTML = renderSettings({
+    theme,
+    isPaused,
+    hasToken: Boolean(consoleToken),
+    tokenPreview
+  });
+}
+
 async function refreshActiveView() {
   if (isPaused) return;
 
@@ -153,6 +167,9 @@ async function refreshActiveView() {
       break;
     case 'journal':
       await loadJournalView();
+      break;
+    case 'settings':
+      loadSettingsView();
       break;
   }
 }

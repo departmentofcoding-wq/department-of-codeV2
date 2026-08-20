@@ -280,3 +280,71 @@ export function renderErrorToast(error) {
   const code = error?.code ? ` [${error.code}]` : '';
   return `<div class="toast toast-error"><span class="toast-icon">🛑</span> <strong>${escapeHtml(msg)}</strong>${escapeHtml(code)}</div>`;
 }
+
+/**
+ * Renders the console settings view.
+ * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string }} [settings]
+ * @returns {string}
+ */
+export function renderSettings(settings = {}) {
+  const theme = escapeHtml(settings.theme || 'dark');
+  const pollStatus = settings.isPaused ? 'Paused' : 'Active (5s interval)';
+  const token = settings.tokenPreview
+    ? escapeHtml(settings.tokenPreview)
+    : (settings.hasToken ? 'Active' : 'Not configured');
+
+  return `
+    <div class="dashboard-grid">
+      <div class="card stat-card">
+        <h3>Operator Session</h3>
+        <div class="metric-group">
+          <div class="metric-sub">Session Token: <code>${token}</code></div>
+          <div class="metric-sub">UI Theme: <strong>${theme}</strong></div>
+        </div>
+      </div>
+
+      <div class="card stat-card">
+        <h3>Console Polling</h3>
+        <div class="metric-group">
+          <div class="metric-sub">Interval: <strong>5000ms</strong></div>
+          <div class="metric-sub">State: <strong>${escapeHtml(pollStatus)}</strong></div>
+        </div>
+      </div>
+
+      <div class="card table-card full-width">
+        <h3>Console Configuration & Status</h3>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Current Value</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>AUTO_REFRESH_INTERVAL</code></td>
+              <td><code>5000ms</code></td>
+              <td>Background polling interval for active views</td>
+            </tr>
+            <tr>
+              <td><code>THEME</code></td>
+              <td><code>${theme}</code></td>
+              <td>Active color theme (Dark / Light toggle)</td>
+            </tr>
+            <tr>
+              <td><code>SESSION_AUTH</code></td>
+              <td><code>${token}</code></td>
+              <td>Authenticated x-console-token header status</td>
+            </tr>
+            <tr>
+              <td><code>ENVIRONMENT</code></td>
+              <td><code>Department of Code v2</code></td>
+              <td>Autonomous Bureau Operator Console</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}

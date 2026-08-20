@@ -13,5 +13,6 @@ export function renderTaskTable(tasks: TaskSummaryDTO[]): string;
 export function renderFindingsList(findings: FindingDTO[]): string;
 export function renderWorkers(workers: WorkerDTO[]): string;
 export function renderJournalTimeline(journal: JournalEntryDTO[]): string;
+export function renderSettings(settings?: { theme?: string; isPaused?: boolean; hasToken?: boolean; tokenPreview?: string }): string;
 export function renderRelaunchState(reason?: string): string;
 export function renderErrorToast(error: ApiErrorResponse | string): string;

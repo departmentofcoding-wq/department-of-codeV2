@@ -7,6 +7,7 @@ import {
   renderTaskTable,
   renderFindingsList,
   renderJournalTimeline,
+  renderSettings,
   renderRelaunchState,
   renderErrorToast
 } from '../../console/public/render.js';
@@ -78,5 +79,18 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     const html = renderErrorToast(errorFixture);
     expect(html).toContain('Task task-103 is not in verifier-passed state');
     expect(html).toContain('[UNVERIFIED_APPROVAL_REFUSED]');
+  });
+
+  it('8. renderSettings: renders operator console settings and configuration', () => {
+    const html = renderSettings({
+      theme: 'dark',
+      isPaused: false,
+      hasToken: true,
+      tokenPreview: 'abc12345...'
+    });
+    expect(html).toContain('Operator Session');
+    expect(html).toContain('abc12345...');
+    expect(html).toContain('AUTO_REFRESH_INTERVAL');
+    expect(html).toContain('5000ms');
   });
 });
