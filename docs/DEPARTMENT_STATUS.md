@@ -12,7 +12,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 238/238 tests, 69 files, `npm run build` clean on merged main. Antigravity junior driven from code AND via the `junior.dispatch` pipeline; agent-reply capture hardened (clean reply verified live). Full manual: `docs/antigravity-integration.md`. Prior: 232/232 at console completion. |
+| Suite | 241/241 tests, 70 files, `npm run build` clean on merged main. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. Antigravity junior driven from code + via `junior.dispatch`; manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Remaining for C1: add delivery (PR/merge/backup) against a sandbox *remote*, and the LLM-officer findings (role→model fallback when Ollama is down; seed id `gemini-2.5-flash` 404s, `gemini-flash-latest` works). Gemini key live (`.env`, gitignored). |
 
