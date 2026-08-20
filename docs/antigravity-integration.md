@@ -1,10 +1,47 @@
 # Antigravity Junior Integration
 
-How the department drives its **junior** — the Antigravity IDE agent — from code.
-Antigravity is an Electron/Chromium app (verified against **2.8.1**, Electron 41 /
-Chrome 146), so it speaks the Chrome DevTools Protocol exactly like the browser
-the Phase 3 `CdpIdeDriver` already drove. This document is the operating manual
-for that seam.
+How the department drives its **two juniors** — both Antigravity agents — from
+code. Antigravity is an Electron/Chromium app (verified live against **2.8.1**,
+Electron 41 / Chrome 146), so it speaks the Chrome DevTools Protocol exactly like
+the browser the Phase 3 `CdpIdeDriver` already drove. This document is the
+operating manual for that seam.
+
+## The two juniors (one per Pro account)
+
+| Id | App | Binary | CDP port | Env override |
+|---|---|---|---|---|
+| **A** | Antigravity **IDE** (VS Code fork) | `…\Programs\Antigravity IDE\Antigravity IDE.exe` | `9333` | `ANTIGRAVITY_IDE_PATH` |
+| **B** | Antigravity **2.0** (standalone agent app; ships `language_server.exe` + `webm_encoder.exe`) | `…\Programs\Antigravity\Antigravity.exe` | `9334` | `ANTIGRAVITY_2_PATH` |
+
+Both are launched with their own `--remote-debugging-port`, so both can be driven
+at once, and their two Pro accounts stay separate (different data folders). They
+share the **same DOM landmarks** (verified live), so one driver runs both:
+
+- **Chat input:** `contenteditable` with `aria-label="Message input"`.
+- **Model picker:** `button[aria-label^="Select model"]` → `[role=menuitem]` options
+  (e.g. "Gemini 3.7 Flash", "Claude Opus 4.6 (Thinking)", "GPT-OSS 120B").
+- **Send:** `aria-label="Send message"` — **2.0 does not submit on Enter**, so
+  `sendPrompt` presses Enter *and* clicks Send if the input still holds text.
+- **Folder / project:** each workspace is a sidebar button carrying its name/path;
+  `selectFolder(nameOrPath)` clicks it.
+
+### Registry & driving
+
+`JUNIORS` (in `antigravity.ts`) holds both configs; `resolveJunior('A'|'B')`
+selects one (default `A`). `AntigravitySession` gained `selectModel(name)`,
+`selectFolder(nameOrPath)`, and `captureArtifacts(prompt)` (returns
+`{ transcript, reply, plan, walkthrough }`).
+
+### Captured as department data
+
+Antigravity emits an **implementation plan** before coding and a **walkthrough**
+when done. `extractPlan` / `extractWalkthrough` (pure, marker-based like
+`extractAgentReply`) isolate them; `junior.dispatch` writes them plus the whole
+output to `docs/junior-artifacts/<taskId>/…/{plan,walkthrough,reply,transcript}.md`
+and journals an `observation` span carrying `{ junior, model, folder, hasPlan,
+hasWalkthrough, artifactFiles }`. NOTE: the plan/walkthrough heading markers
+(`PLAN_MARKERS` / `WALKTHROUGH_MARKERS`) are best-effort until refined against the
+first live task that emits them.
 
 ## What it does
 
@@ -27,13 +64,17 @@ for that seam.
 
 ### CLI
 ```bash
-# Detect-or-open Antigravity, attach, send a command, print the agent's reply:
+# Junior A (IDE) — detect-or-open, attach, send a command, print reply/plan/walkthrough:
 npm run junior "add a function add(a,b) to math.js with a test"
 
-# Just check the junior is drivable (no command):
-node --experimental-strip-types scripts/run_junior.ts --status
+# Junior B (Antigravity 2.0), selecting model + folder through the GUI first:
+node --experimental-strip-types scripts/run_junior.ts --junior B \
+  --model "Gemini 3.7 Flash" --folder "Dept of code v2" "refactor foo() for clarity"
 
-# Point at a specific CDP port (default 9333):
+# Just check a junior is drivable (no command):
+node --experimental-strip-types scripts/run_junior.ts --junior B --status
+
+# Point at an explicit CDP port (bypasses the junior's configured port):
 node --experimental-strip-types scripts/run_junior.ts --port 9333 "..."
 ```
 
@@ -43,7 +84,13 @@ Enqueue a `junior.dispatch` job whose payload carries a `prompt` (and optional
 
 ```ts
 // payload for a junior.dispatch job
-{ dispatchId: '<row id>', prompt: 'refactor foo() for clarity', antigravityPort: 9333 }
+{
+  dispatchId: '<row id>',
+  prompt: 'refactor foo() for clarity',
+  junior: 'B',                 // 'A' = IDE (default), 'B' = Antigravity 2.0
+  model: 'Gemini 3.7 Flash',   // optional: driven through the GUI picker
+  folder: 'Dept of code v2'    // optional: workspace selected in the GUI
+}
 ```
 The dispatch transitions to `completed` and writes an `observation` span with
 `{ source: 'antigravity', prompt, launched, transcriptTail }`.

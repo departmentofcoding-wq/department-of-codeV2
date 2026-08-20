@@ -12,7 +12,7 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 241/241 tests, 70 files, `npm run build` clean on merged main. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. Antigravity junior driven from code + via `junior.dispatch`; manual: `docs/antigravity-integration.md`. |
+| Suite | 265/265 tests, 72 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Remaining for C1: add delivery (PR/merge/backup) against a sandbox *remote*, and the LLM-officer findings (role→model fallback when Ollama is down; seed id `gemini-2.5-flash` 404s, `gemini-flash-latest` works). Gemini key live (`.env`, gitignored). |
 
@@ -59,6 +59,88 @@ free tier) is an operational matter, not a code bug — the engine already handl
 429 via model cooldown; the operator should pick a model with quota headroom
 (Gemini 2.5/3.7 Flash were green; Antigravity Agents tier has 60 RPM) or enable
 billing.
+
+**Adaptive completion wait — no hard cap on junior/senior time (2026-08-20):**
+replaced the fixed-ms completion ceiling with `engine/harness/agent-wait.ts`
+(`waitForAgentIdle`): poll the agent and keep waiting AS LONG AS it's working
+(Stop/Cancel control, Working/Generating/Thinking indicator, or transcript still
+growing) — no elapsed-time cap; stop only on genuine completion (idle + text
+stable across polls) or a real stall (inactive with no progress for `stallMs`,
+default 120s). Wired into both `AntigravitySession.waitForCompletion` (junior)
+and `ZCodeSession.waitForCompletion` (senior); seams pass `stallMs`, never a hard
+ceiling. Unit-tested (`test/unit/tc_agent_wait.test.ts`, 4 tests incl.
+"actively-working agent is never cut off"). Live: the ZAI work-review kept being
+waited on past 10 min because GLM was genuinely still auditing (re-ran the suite,
+opened Terminal/Browser panes) — the adaptive waiter behaved correctly; the only
+cap hit was the operator's own 10-min tool limit. Open follow-up: GLM's deep audit
+spawns ZCode **side panes** (Terminal/Browser/Review) so its final verdict can land
+outside the main transcript — a ZCode capture calibration, separate from the wait.
+Suite 271/271. Also: **one-junior-per-task** (`assignJunior`, deterministic by task
+id, spreads tasks across A/B for parallelism, never both on one task) and a live
+end-to-end real task — **Settings tab added to the Operator Console** (junior B
+planned, ZAI approved the plan against the task verbatim, junior implemented on
+branch `wt/console-settings`, verified build+267 tests+live browser, merged to main
+`03985ef` fast-forward).
+
+**Plan-review cycle wired — junior authors, senior reviews (2026-08-20):** the
+seniors are now IN the department flow, in the corrected order. New
+`engine/flow/plan_review_cycle.ts` (`runPlanReviewCycle`): TASK → junior
+(Antigravity) AUTHORS a plan-only (`buildJuniorPlanPrompt`, task embedded, 25s
+wait) → senior (Claude/ZCode) REVIEWS it **with the task verbatim** (title +
+intent + spec + acceptance, so it judges plan↔task alignment). Writes real
+`bureau_plans` (actor=junior-engineer/antigravity) + `bureau_plan_reviews`
+(approve→approved/revise→amend) rows, an `observation` + a `review` journal span,
+and increments `plan_rounds`. CLI `scripts/run_plan_cycle.ts`. **Verified live:**
+junior B authored a temperature-converter plan; the Claude senior reviewed it
+against the spec/acceptance and returned APPROVE (and in an earlier run correctly
+caught a plan-capture bug — REVISE with a precise diagnosis). `buildReviewPrompt`
+now includes the task verbatim for all senior reviews. Suite 265/265. NOTE: this
+is a new orchestration path using the harnesses; the legacy `senior.review-plan`
+job (internal `callModel`) is untouched for now. Manual: `docs/senior-integration.md`.
+
+**Two-senior integration (2026-08-20, direct on main):** the department now
+drives its **seniors** from code too — seniors review (never code) the junior's
+captured plan/walkthrough and return a fail-closed `approve|revise` verdict.
+**claude** = the Claude Code CLI (`claude -p --append-system-prompt`, subprocess),
+authed against api.anthropic.com; **zai** = ZCode, the Z.ai GLM desktop agent
+(Electron/Chromium, CDP-driven on port 9335, exactly like the juniors). New:
+`engine/harness/senior.ts` (`SENIORS` registry, pure `buildReviewPrompt`/
+`parseVerdict`, `ClaudeCliSenior`, `ZCodeSession`+`ZCodeSenior`), override-able
+`senior-seam.ts`, `readLatestArtifacts` (reads `docs/junior-artifacts/`),
+`scripts/run_senior.ts`. **Verified live (both seniors):** the Claude senior approved a
+right-sized clicker plan and flagged an over-engineered one as REVISE; the ZCode
+(GLM-5.2) senior, driven over CDP on 9335, reviewed the same plan and returned
+APPROVE — both writing no code. **Single-reviewer assignment** (`assignSenior`):
+one senior per artifact (default plan→claude, walkthrough→zai; env
+`SENIOR_PLAN`/`SENIOR_WALKTHROUGH`/`SENIOR_DEFAULT`) — never both, since that's
+wasteful. **Model selection both:** Claude via `--model`; ZCode via the in-GUI
+"Choose model" picker (`ZCodeSession.selectModel`, live-tested on GLM-5.2).
+**Quota:** ZCode `readUsage()` ("Usage remaining" control); Claude via `/usage`
+in-app or console.anthropic.com (`usageHint`). ZCode calibrated live: workbench is
+a `file://…app.asar/out/renderer` page, input `div[role=textbox][contenteditable]`,
+Send `aria-label="Send"`. Scar: ZCode runs a persistent tray process, so "quit"
+leaves it alive holding the single-instance lock — must kill all ZCode procs before
+relaunching with the debug flag. Suite 262/262, build clean. Manual:
+`docs/senior-integration.md`.
+
+**Two-junior integration (2026-08-20, direct on main):** the department now
+drives **both** Antigravity Pro accounts as juniors — **A** = Antigravity IDE
+(port 9333), **B** = Antigravity 2.0, the standalone agent app (port 9334). One
+CDP driver runs both (same DOM landmarks, calibrated live): `JUNIORS` registry +
+`resolveJunior`/`ensureJuniorRunning`/`findJuniorBinary` in `antigravity.ts`;
+`AntigravitySession` gained `selectModel` (GUI picker), `selectFolder` (workspace
+picker), and `captureArtifacts`. Scar: **Antigravity 2.0 does not submit on
+Enter** — it needs the "Send message" button; `sendPrompt` now presses Enter then
+clicks Send if the input still holds text, and clears stale drafts with real
+Ctrl+A/Delete key events (raw `innerText=''` is ignored by the contenteditable
+framework and left text to double). `junior.dispatch` accepts `junior`/`model`/
+`folder`, journals `{ junior, model, folder, hasPlan, hasWalkthrough,
+artifactFiles }`, and persists plan/walkthrough/full-output to
+`docs/junior-artifacts/<taskId>/`. **Verified live:** Junior B selected a model
+and answered "TWO JUNIORS OK" end-to-end via `run_junior.ts --junior B`. Suite
+248/248, build clean. Follow-up: refine `PLAN_MARKERS`/`WALKTHROUGH_MARKERS`
+against the first real task that emits a plan/walkthrough; calibrate Junior A's
+send path (it may already submit on Enter).
 
 **Phase 6 note:** the console streams were each unit-tested but not wired end-to-end
 — `scripts/console.ts` minted the token and opened the browser but never started

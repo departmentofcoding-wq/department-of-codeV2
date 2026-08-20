@@ -6,6 +6,7 @@ import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 import { getAntigravityDriver } from './antigravity-seam.ts';
+import { writeJuniorArtifacts } from './junior-artifacts.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -17,6 +18,12 @@ export interface JuniorDispatchPayload {
    *  dispatch drives Antigravity via CDP instead of the selector/LLM loop. */
   prompt?: string;
   antigravityPort?: number;
+  /** Which junior to drive: 'A' = Antigravity IDE, 'B' = Antigravity 2.0. Default A. */
+  junior?: string;
+  /** Model to select in the junior's GUI picker before sending the prompt. */
+  model?: string;
+  /** Folder/project to select in the junior's GUI before sending the prompt. */
+  folder?: string;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -74,7 +81,28 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       // Antigravity junior path: send a natural-language command to the live
       // agent via CDP and record its transcript as an attributed observation.
       const ag = getAntigravityDriver();
-      const result = await ag.runCommand(payload.prompt, { port: payload.antigravityPort });
+      const result = await ag.runCommand(payload.prompt, {
+        junior: payload.junior,
+        port: payload.antigravityPort,
+        model: payload.model,
+        folder: payload.folder
+      });
+
+      // Persist plan/walkthrough/full-output as reviewable department data.
+      // Guarded to the rich (real-driver) path so fake-driver tests, which
+      // return only `transcript`, never write to the filesystem.
+      let artifactFiles: Record<string, string> = {};
+      if (result.fullOutput || result.plan || result.walkthrough) {
+        const written = writeJuniorArtifacts(dispatch.task_id, dispatch.id, {
+          junior: result.junior,
+          fullOutput: result.fullOutput,
+          plan: result.plan,
+          walkthrough: result.walkthrough,
+          reply: result.transcript
+        });
+        artifactFiles = written.files;
+      }
+
       journal(ctx.db, {
         kind: 'observation',
         attribution,
@@ -83,10 +111,17 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         jobId: ctx.job.id,
         detail: {
           source: 'antigravity',
+          junior: result.junior ?? payload.junior ?? 'A',
           dispatchId: dispatch.id,
           prompt: payload.prompt,
+          model: result.model ?? payload.model ?? null,
+          folder: payload.folder ?? null,
+          folderSelected: result.folderSelected ?? null,
           launched: result.launched,
-          transcriptTail: result.transcript
+          transcriptTail: result.transcript,
+          hasPlan: !!(result.plan && result.plan.trim()),
+          hasWalkthrough: !!(result.walkthrough && result.walkthrough.trim()),
+          artifactFiles
         }
       });
     } else if (payload.actions && Array.isArray(payload.actions)) {

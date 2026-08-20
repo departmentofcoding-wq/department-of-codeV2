@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { HarnessError } from './errors.ts';
+import { waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 
 /**
  * Antigravity IDE integration — "run the junior with code."
@@ -56,6 +57,128 @@ export function findAntigravityBinary(): string {
 /** CDP launch args: expose the DevTools endpoint on a fixed port. */
 export function buildAntigravityArgs(port: number): string[] {
   return [`--remote-debugging-port=${port}`];
+}
+
+/**
+ * The department runs TWO Antigravity juniors, one per Pro account:
+ *
+ *  - **A** — the Antigravity IDE (VS Code fork, `Antigravity IDE.exe`).
+ *  - **B** — Antigravity 2.0, the standalone agent app (`Antigravity.exe`, ships
+ *    `language_server.exe` + `webm_encoder.exe` for walkthrough recording).
+ *
+ * Both are Electron/Chromium and — verified live against 2.8.1 — share the same
+ * DOM landmarks: the chat input is a `contenteditable` `aria-label="Message input"`,
+ * the model picker is `button[aria-label^="Select model"]` opening `[role=menuitem]`
+ * options, and the send control is `aria-label="Send message"`. They differ only
+ * in binary, CDP port, and the env var that overrides the binary path.
+ */
+export interface JuniorConfig {
+  /** Stable id used across the department ('A' | 'B'). */
+  id: string;
+  /** Human label for logs/journal. */
+  label: string;
+  /** Env var that, if set to an existing path, overrides the binary. */
+  envPath: string;
+  /** Absolute exe candidates, most-preferred first. */
+  binaryCandidates: string[];
+  /** CDP debug port this junior is launched/attached on. */
+  cdpPort: number;
+}
+
+function localAppData(): string {
+  return process.env['LOCALAPPDATA'] || path.join(os.homedir(), 'AppData', 'Local');
+}
+
+/** The two juniors, keyed by id. */
+export const JUNIORS: Record<string, JuniorConfig> = {
+  A: {
+    id: 'A',
+    label: 'Antigravity IDE',
+    envPath: 'ANTIGRAVITY_IDE_PATH',
+    binaryCandidates:
+      os.platform() === 'win32'
+        ? [path.join(localAppData(), 'Programs', 'Antigravity IDE', 'Antigravity IDE.exe')]
+        : os.platform() === 'darwin'
+          ? ['/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE']
+          : ['/usr/bin/antigravity-ide', '/opt/Antigravity IDE/antigravity-ide'],
+    cdpPort: 9333
+  },
+  B: {
+    id: 'B',
+    label: 'Antigravity 2.0',
+    envPath: 'ANTIGRAVITY_2_PATH',
+    binaryCandidates:
+      os.platform() === 'win32'
+        ? [path.join(localAppData(), 'Programs', 'Antigravity', 'Antigravity.exe')]
+        : os.platform() === 'darwin'
+          ? ['/Applications/Antigravity.app/Contents/MacOS/Antigravity']
+          : ['/usr/bin/antigravity', '/opt/Antigravity/antigravity'],
+    cdpPort: 9334
+  }
+};
+
+/**
+ * Assign exactly ONE junior to a task. A task must never activate both juniors —
+ * two juniors exist for **parallelism** (different tasks at the same time), not to
+ * double up on one task. The mapping is deterministic by task id (so the same task
+ * always routes to the same junior, and re-runs are stable) and spreads different
+ * tasks across A/B. Force one with `prefer`, or globally with env `JUNIOR_DEFAULT`.
+ */
+export function assignJunior(opts: { taskId: string; prefer?: string }): string {
+  if (opts.prefer) return resolveJunior(opts.prefer).id;
+  const forced = process.env['JUNIOR_DEFAULT'];
+  if (forced) return resolveJunior(forced).id;
+  // Deterministic hash of the task id → A or B.
+  let h = 0;
+  for (const ch of opts.taskId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % 2 === 0 ? 'A' : 'B';
+}
+
+/** Resolve a junior config by id (case-insensitive), defaulting to A. */
+export function resolveJunior(id?: string): JuniorConfig {
+  const key = (id || 'A').toUpperCase();
+  const cfg = JUNIORS[key];
+  if (!cfg) {
+    throw new HarnessError(`Unknown junior '${id}'. Known juniors: ${Object.keys(JUNIORS).join(', ')}.`);
+  }
+  return cfg;
+}
+
+/** Locate a specific junior's executable, honoring its env override. */
+export function findJuniorBinary(cfg: JuniorConfig): string {
+  const override = process.env[cfg.envPath];
+  if (override && fs.existsSync(override)) return override;
+  for (const c of cfg.binaryCandidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  throw new HarnessError(
+    `${cfg.label} executable not found. Set ${cfg.envPath} to its binary (looked in: ${cfg.binaryCandidates.join(', ')}).`
+  );
+}
+
+/**
+ * "See if this junior is open, or open it" — the per-junior analogue of
+ * ensureAntigravityRunning. Reuses a live CDP endpoint on the junior's port,
+ * else launches its binary with the debug port and waits for CDP.
+ */
+export async function ensureJuniorRunning(
+  cfg: JuniorConfig,
+  opts: { timeoutMs?: number } = {}
+): Promise<EnsureResult> {
+  const port = cfg.cdpPort;
+  if (await isDebugPortLive(port)) return { launched: false, port };
+  const binary = findJuniorBinary(cfg);
+  const child = child_process.spawn(binary, buildAntigravityArgs(port), {
+    detached: true,
+    stdio: 'ignore'
+  });
+  child.unref();
+  const deadline = Date.now() + (opts.timeoutMs ?? 30000);
+  while (Date.now() < deadline) {
+    if (await isDebugPortLive(port)) return { launched: true, port, child };
+    await new Promise(r => setTimeout(r, 500));
+  }
+  throw new HarnessError(`${cfg.label} launched but no CDP endpoint on port ${port} within timeout`);
 }
 
 function cdpGet(port: number, urlPath: string, timeoutMs = 2000): Promise<any> {
@@ -124,8 +247,12 @@ export async function findMainWindowWs(port: number = ANTIGRAVITY_DEFAULT_PORT):
   const targets = await cdpGet(port, '/json/list');
   const pages = (targets as any[]).filter(t => t.type === 'page' && t.webSocketDebuggerUrl);
   // Prefer the https workbench window; never the data: splash.
+  // Junior B (2.0) serves the workbench from https loopback; Junior A (the IDE,
+  // a VS Code fork) serves it from vscode-file://vscode-app. Prefer either, and
+  // never the data: loading splash.
   const page =
     pages.find(t => typeof t.url === 'string' && t.url.startsWith(ANTIGRAVITY_WORKBENCH_URL_PREFIX)) ??
+    pages.find(t => typeof t.url === 'string' && t.url.startsWith('vscode-file://')) ??
     pages.find(t => typeof t.url === 'string' && !t.url.startsWith('data:'));
   if (!page) {
     throw new HarnessError(
@@ -184,6 +311,88 @@ export function extractAgentReply(fullText: string, prompt: string): string {
   return reply.join('\n').trim();
 }
 
+/**
+ * Antigravity produces two named artifacts the Senior must review: an
+ * **implementation plan** (emitted before it codes) and a **walkthrough**
+ * (emitted when work is done). These extractors isolate those blocks from a
+ * full-conversation capture, marker-based and version-resilient like
+ * `extractAgentReply` — they key off heading text, not fragile DOM classes.
+ *
+ * NOTE: the exact heading strings are calibrated on the first live task that
+ * emits a plan/walkthrough; `PLAN_MARKERS` / `WALKTHROUGH_MARKERS` are the one
+ * place to re-tune. Until then they match the common Antigravity headings.
+ */
+export const PLAN_MARKERS: RegExp[] = [
+  /^(implementation plan|the plan|here'?s (the|my) plan|plan:)/i,
+  /^#{1,3}\s*plan\b/i
+];
+export const WALKTHROUGH_MARKERS: RegExp[] = [
+  /^(walkthrough|summary of changes|here'?s what i (did|changed|built)|changes made)/i,
+  /^#{1,3}\s*(walkthrough|summary)\b/i
+];
+
+/** Extract the block that starts at the first line matching any marker. */
+function extractMarkedBlock(fullText: string, markers: RegExp[]): string {
+  const lines = fullText.split('\n').map(l => l.replace(/\s+$/, ''));
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t && markers.some(m => m.test(t))) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return '';
+  const block: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (i > start && isChrome(t)) break;
+    if (t) block.push(t);
+  }
+  return block.join('\n').trim();
+}
+
+/** The implementation plan Antigravity emits before coding (best-effort). */
+export function extractPlan(fullText: string): string {
+  return extractMarkedBlock(fullText, PLAN_MARKERS);
+}
+
+/** The walkthrough Antigravity emits when work is done (best-effort). */
+export function extractWalkthrough(fullText: string): string {
+  return extractMarkedBlock(fullText, WALKTHROUGH_MARKERS);
+}
+
+/**
+ * Isolate the region of the transcript AFTER the current prompt, so plan/
+ * walkthrough extraction reads the *current* reply and not stale history from an
+ * earlier task in the same conversation. Keys off the last line of the prompt
+ * (robust to multi-line prompts); falls back to the whole text if not found.
+ */
+export function sliceAfterPrompt(fullText: string, prompt: string): string {
+  const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
+  const pLines = prompt.split('\n').map(l => l.trim()).filter(Boolean);
+  const lastPromptLine = pLines[pLines.length - 1];
+  if (!lastPromptLine) return fullText;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i] === lastPromptLine || lines[i].includes(lastPromptLine)) {
+      return lines.slice(i + 1).join('\n');
+    }
+  }
+  return fullText;
+}
+
+/** Everything the junior produced, plus the isolated reply/plan/walkthrough. */
+export interface JuniorArtifacts {
+  /** Full visible conversation capture (the whole output). */
+  transcript: string;
+  /** The agent's reply to the sent prompt, chrome-stripped. */
+  reply: string;
+  /** Implementation plan block, if present. */
+  plan: string;
+  /** Walkthrough block, if present. */
+  walkthrough: string;
+}
+
 /** Minimal CDP session over the built-in WebSocket. */
 export class AntigravitySession {
   private ws: WebSocket | null = null;
@@ -231,16 +440,38 @@ export class AntigravitySession {
     return r?.result?.value;
   }
 
-  private async pressKey(key: string, code: string, vk: number): Promise<void> {
+  private async pressKey(
+    key: string,
+    code: string,
+    vk: number,
+    mods: { ctrl?: boolean } = {}
+  ): Promise<void> {
+    // CDP modifiers bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+    const modifiers = mods.ctrl ? 2 : 0;
     for (const type of ['keyDown', 'keyUp'] as const) {
       await this.send('Input.dispatchKeyEvent', {
         type,
         key,
         code,
+        modifiers,
         windowsVirtualKeyCode: vk,
         nativeVirtualKeyCode: vk
       });
     }
+  }
+
+  /**
+   * Start a fresh conversation so an earlier task's context/plan can't bleed into
+   * this one. Best-effort: clicks a "New Conversation"/"New task"/"New chat"
+   * control if present; a no-op otherwise.
+   */
+  async newConversation(): Promise<boolean> {
+    await this.pressKey('Escape', 'Escape', 27);
+    return !!(await this.evaluate(`(() => {
+      const b = [...document.querySelectorAll('button,[role=button],a')]
+        .find(x => /^(new conversation|new task|new chat)$/i.test(((x.getAttribute('aria-label')||x.innerText)||'').trim()));
+      if (!b) return false; b.click(); return true;
+    })()`));
   }
 
   /** Focus the agent chat input, type the command, and submit it. */
@@ -254,9 +485,115 @@ export class AntigravitySession {
       if (!el) return false; el.focus(); return true;
     })()`);
     if (!focused) throw new HarnessError(`Chat input ('${ANTIGRAVITY_INPUT_LABEL}') not found`);
+    // Clear any stale draft with real key events (raw innerText='' is ignored by
+    // the contenteditable framework and would leave the previous text to append).
+    await this.pressKey('a', 'KeyA', 65, { ctrl: true });
+    await this.pressKey('Delete', 'Delete', 46);
     await this.send('Input.insertText', { text: prompt });
     await new Promise(r => setTimeout(r, 300));
     await this.pressKey('Enter', 'Enter', 13);
+    await new Promise(r => setTimeout(r, 400));
+    // Antigravity 2.0 does not submit on Enter — it has an explicit "Send
+    // message" control. If the input still holds our text, click Send. (The IDE
+    // submits on Enter, so this is a no-op there because the box is empty.)
+    await this.evaluate(`(() => {
+      const input = [...document.querySelectorAll('[contenteditable="true"],textarea')]
+        .find(e => (e.getAttribute('aria-label')||e.getAttribute('placeholder')) === ${JSON.stringify(ANTIGRAVITY_INPUT_LABEL)});
+      const still = input && (input.innerText||input.value||'').trim().length > 0;
+      if (!still) return 'sent-by-enter';
+      const send = [...document.querySelectorAll('button,[role=button]')]
+        .find(b => (b.getAttribute('aria-label')||'') === 'Send message');
+      if (send) { send.click(); return 'sent-by-button'; }
+      return 'unsent';
+    })()`);
+  }
+
+  /**
+   * Drive the model picker: open `button[aria-label^="Select model"]`, then
+   * click the `[role=menuitem]` whose text starts with `modelName`. Calibrated
+   * live against 2.8.1 (options: "Gemini 3.7 Flash", "Claude Opus 4.6", …).
+   * Returns the model label now shown on the picker button.
+   */
+  async selectModel(modelName: string): Promise<string> {
+    await this.pressKey('Escape', 'Escape', 27);
+    const opened = await this.evaluate(`(() => {
+      const b = [...document.querySelectorAll('button,[role=button]')]
+        .find(x => (x.getAttribute('aria-label')||'').startsWith('Select model'));
+      if (!b) return false; b.click(); return true;
+    })()`);
+    if (!opened) throw new HarnessError('Model picker button ("Select model") not found');
+    await new Promise(r => setTimeout(r, 500));
+    const picked = await this.evaluate(`(() => {
+      const want = ${JSON.stringify(modelName)}.toLowerCase();
+      const items = [...document.querySelectorAll('[role=menuitem],[role=option]')];
+      const hit = items.find(e => (e.innerText||'').trim().toLowerCase().startsWith(want))
+        || items.find(e => (e.innerText||'').toLowerCase().includes(want));
+      if (!hit) return false; hit.click(); return true;
+    })()`);
+    if (!picked) {
+      await this.pressKey('Escape', 'Escape', 27);
+      throw new HarnessError(`Model '${modelName}' not offered in the picker`);
+    }
+    await new Promise(r => setTimeout(r, 400));
+    // Read back the current model from the picker's aria-label ("…current: X").
+    const label = await this.evaluate(`(() => {
+      const b = [...document.querySelectorAll('button,[role=button]')]
+        .find(x => (x.getAttribute('aria-label')||'').startsWith('Select model'));
+      return b ? (b.getAttribute('aria-label')||'').replace(/^Select model,?\\s*current:?\\s*/i,'').trim() : '';
+    })()`);
+    return label || modelName;
+  }
+
+  /**
+   * Select the working folder / project. In both juniors the sidebar lists each
+   * project as a button carrying its name (or absolute path) as text; clicking it
+   * opens that workspace. Matches by exact name/path first, then substring.
+   * Returns true if a matching project was clicked.
+   */
+  async selectFolder(nameOrPath: string): Promise<boolean> {
+    await this.pressKey('Escape', 'Escape', 27);
+    return !!(await this.evaluate(`(() => {
+      const want = ${JSON.stringify(nameOrPath)}.toLowerCase();
+      const btns = [...document.querySelectorAll('button,[role=button],[role=treeitem],a')];
+      const norm = e => (e.innerText||e.getAttribute('aria-label')||'').trim().toLowerCase();
+      const hit = btns.find(e => norm(e) === want)
+        || btns.find(e => norm(e).includes(want));
+      if (!hit) return false; hit.click(); return true;
+    })()`));
+  }
+
+  /** Capture the whole output plus the isolated reply, plan, and walkthrough. */
+  async captureArtifacts(prompt: string, lastLines = 200): Promise<JuniorArtifacts> {
+    const transcript = await this.readTranscript(lastLines);
+    // Extract plan/walkthrough from the CURRENT reply region only, so an earlier
+    // task's plan still in the conversation scroll can't be captured by mistake.
+    const region = sliceAfterPrompt(transcript, prompt);
+    return {
+      transcript,
+      reply: extractAgentReply(transcript, prompt),
+      plan: extractPlan(region),
+      walkthrough: extractWalkthrough(region)
+    };
+  }
+
+  /** Probe the agent's current activity (working / idle / output length). */
+  private async probeActivity(): Promise<AgentActivity> {
+    return (await this.evaluate(`(() => {
+      const btns = [...document.querySelectorAll('button,[role=button]')];
+      const has = re => btns.some(b => re.test(((b.getAttribute('aria-label')||b.innerText)||'').trim()));
+      const working = has(/^(stop|cancel)$/i) || /\\b(Working|Generating|Thinking)\\b/i.test(document.body.innerText);
+      const canSend = has(/^send( message)?$/i);
+      return { working, canSend, len: document.body.innerText.length };
+    })()`)) as AgentActivity;
+  }
+
+  /**
+   * Wait until the agent finishes — adaptively, with NO hard time cap: keep
+   * waiting as long as it's working or still producing output, and only stop when
+   * it's genuinely idle (done) or inactive for the stall window. See agent-wait.
+   */
+  async waitForCompletion(opts: WaitOptions = {}): Promise<WaitResult> {
+    return waitForAgentIdle(() => this.probeActivity(), opts);
   }
 
   /** Raw visible-text capture (last N non-empty lines). */
