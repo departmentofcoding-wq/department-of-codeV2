@@ -85,7 +85,8 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         junior: payload.junior,
         port: payload.antigravityPort,
         model: payload.model,
-        folder: payload.folder
+        folder: payload.folder,
+        signal: ctx.signal
       });
 
       // Persist plan/walkthrough/full-output as reviewable department data.

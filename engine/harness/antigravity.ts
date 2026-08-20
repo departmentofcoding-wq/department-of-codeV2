@@ -277,6 +277,12 @@ function isChrome(line: string): boolean {
   return CHROME_PATTERNS.some(p => p.test(line.trim()));
 }
 
+/** Bare timestamps are weak chrome: they can appear MID-message (long generations
+ *  crossing a minute boundary), so they must not terminate an extracted block. */
+function isTimestamp(line: string): boolean {
+  return /^\d{1,2}:\d{2}\s?(AM|PM)$/i.test(line.trim());
+}
+
 /**
  * Isolate the agent's reply from a full conversation-text capture, version-
  * resiliently: take the content that appears AFTER the last occurrence of the
@@ -331,7 +337,10 @@ export const WALKTHROUGH_MARKERS: RegExp[] = [
   /^#{1,3}\s*(walkthrough|summary)\b/i
 ];
 
-/** Extract the block that starts at the first line matching any marker. */
+/** Extract the block that starts at the first line matching any marker.
+ *  Terminates at real IDE chrome (a new message's chrome), but tolerates bare
+ *  timestamps inside the block — a long plan generation can cross a minute
+ *  boundary and get stamped mid-plan. */
 function extractMarkedBlock(fullText: string, markers: RegExp[]): string {
   const lines = fullText.split('\n').map(l => l.replace(/\s+$/, ''));
   let start = -1;
@@ -346,6 +355,7 @@ function extractMarkedBlock(fullText: string, markers: RegExp[]): string {
   const block: string[] = [];
   for (let i = start; i < lines.length; i++) {
     const t = lines[i].trim();
+    if (i > start && isTimestamp(t)) continue; // mid-block stamp: skip, keep going
     if (i > start && isChrome(t)) break;
     if (t) block.push(t);
   }
@@ -547,8 +557,10 @@ export class AntigravitySession {
   /**
    * Select the working folder / project. In both juniors the sidebar lists each
    * project as a button carrying its name (or absolute path) as text; clicking it
-   * opens that workspace. Matches by exact name/path first, then substring.
-   * Returns true if a matching project was clicked.
+   * opens that workspace. Matching is tiered so an unrelated button that merely
+   * CONTAINS the wanted text is only clicked when nothing closer exists: exact
+   * name/path first, then prefix, then substring. Returns true if a matching
+   * project was clicked.
    */
   async selectFolder(nameOrPath: string): Promise<boolean> {
     await this.pressKey('Escape', 'Escape', 27);
@@ -557,6 +569,7 @@ export class AntigravitySession {
       const btns = [...document.querySelectorAll('button,[role=button],[role=treeitem],a')];
       const norm = e => (e.innerText||e.getAttribute('aria-label')||'').trim().toLowerCase();
       const hit = btns.find(e => norm(e) === want)
+        || btns.find(e => norm(e).startsWith(want))
         || btns.find(e => norm(e).includes(want));
       if (!hit) return false; hit.click(); return true;
     })()`));

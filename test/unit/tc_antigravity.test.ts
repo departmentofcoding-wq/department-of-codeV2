@@ -138,6 +138,24 @@ describe('Plan / walkthrough artifact extraction', () => {
     expect(extractWalkthrough(full)).toContain('Added add() and a passing test.');
   });
 
+  it('a bare timestamp landing MID-plan does not truncate the extracted block', () => {
+    // Long generations cross minute boundaries; the stamp must be skipped,
+    // not treated as the end of the plan.
+    const full = [
+      'Implementation Plan',
+      '1. add add() to math.js',
+      '9:01 PM',
+      '2. add a test file test/math.test.ts',
+      '3. record mutation evidence',
+      'Ask anything, @ to mention'
+    ].join('\n');
+    const plan = extractPlan(full);
+    expect(plan).toContain('add add() to math.js');
+    expect(plan).toContain('record mutation evidence'); // the part after the stamp survives
+    expect(plan).not.toContain('9:01 PM');
+    expect(plan).not.toContain('Ask anything');
+  });
+
   it('returns empty string when no marker is present', () => {
     expect(extractPlan('just a chat reply\nView Usage')).toBe('');
     expect(extractWalkthrough('just a chat reply\nView Usage')).toBe('');

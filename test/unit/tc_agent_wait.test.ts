@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { waitForAgentIdle, type AgentActivity } from '../../engine/harness/agent-wait.ts';
+import { ensureCompleted, waitForAgentIdle, type AgentActivity } from '../../engine/harness/agent-wait.ts';
 
 // Deterministic tests: scripted activity sequences + instant sleep, so no wall clock.
 function scriptedProbe(frames: AgentActivity[]): () => Promise<AgentActivity> {
@@ -61,5 +61,44 @@ describe('waitForAgentIdle — adaptive, no hard time cap', () => {
       warmupMs: 0, pollMs: 2, stallMs: 20, absoluteMaxMs: 60
     });
     expect(res).toBe('timeout'); // hit the huge safety net, NOT 'stalled'
+  });
+
+  it('honors an AbortSignal: a pre-aborted signal returns immediately, mid-wait abort stops the loop', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const res = await waitForAgentIdle(async () => ({ working: true, canSend: false, len: 1 }), {
+      sleep: noSleep, warmupMs: 0, signal: ac.signal
+    });
+    expect(res).toBe('aborted');
+
+    // Mid-wait abort: the agent is mid-generation (would keep extending), but
+    // the signal stops the wait on the next poll.
+    const ac2 = new AbortController();
+    let polls = 0;
+    const res2 = await waitForAgentIdle(
+      async () => {
+        polls++;
+        if (polls === 2) ac2.abort();
+        return { working: true, canSend: false, len: polls };
+      },
+      { sleep: noSleep, warmupMs: 0, pollMs: 0, signal: ac2.signal }
+    );
+    expect(res2).toBe('aborted');
+    expect(polls).toBe(2);
+  });
+});
+
+describe('ensureCompleted — a non-completed wait is a hard failure, never a silent verdict', () => {
+  it('passes completed through untouched', () => {
+    expect(() => ensureCompleted('completed', 'anyone')).not.toThrow();
+  });
+
+  it('throws on stalled / timeout / aborted, naming the agent and the reason', () => {
+    expect(() => ensureCompleted('stalled', 'ZCode junior')).toThrow(/stalled|stall window/);
+    expect(() => ensureCompleted('stalled', 'ZCode junior')).toThrow(/ZCode junior/);
+    expect(() => ensureCompleted('timeout', 'senior')).toThrow(/absolute cap/);
+    expect(() => ensureCompleted('aborted', 'senior')).toThrow(/aborted/);
+    // The contract that matters: partial output must never be recorded as a review.
+    expect(() => ensureCompleted('stalled', 'x')).toThrow(/NOT recorded/i);
   });
 });
