@@ -92,6 +92,80 @@ export function guardrailCount(db: DbConnection): number {
   return row?.count ?? 0;
 }
 
+export interface WorkerRosterEntry {
+  role: string;
+  backend: string | null;
+  model_id: string | null;
+  provider: string | null;
+  display: string | null;
+  active: boolean;
+  active_leases: number;
+  running_dispatches: number;
+  last_activity_ts: string | null;
+  last_activity_kind: string | null;
+}
+
+/** How recent a journal span counts as "currently working" (ms). */
+export const WORKER_ACTIVE_WINDOW_MS = 120_000;
+
+/**
+ * The department roster — every worker (role), the model/provider backing it,
+ * and whether it is currently active. A worker is active if it holds a live
+ * window lease, has a running dispatch, or produced a journal span within the
+ * last WORKER_ACTIVE_WINDOW_MS. Read-only.
+ */
+export function workerRoster(db: DbConnection, nowMs: number = Date.now()): WorkerRosterEntry[] {
+  // Roles come from explicit assignments plus any actor seen in the journal
+  // (foreman, verifier, human-operator, system have no model assignment).
+  const roles = new Set<string>();
+  for (const r of db.all<{ role: string }>(`SELECT role FROM bureau_assignments`)) roles.add(r.role);
+  for (const r of db.all<{ actor_role: string }>(`SELECT DISTINCT actor_role FROM bureau_journal`)) {
+    if (r.actor_role) roles.add(r.actor_role);
+  }
+
+  const roster: WorkerRosterEntry[] = [];
+  for (const role of [...roles].sort()) {
+    const assign = db.get<{ backend: string; model_id: string | null }>(
+      `SELECT backend, model_id FROM bureau_assignments WHERE role = ?`,
+      role
+    );
+    const model = assign?.model_id
+      ? db.get<{ provider: string; display: string }>(`SELECT provider, display FROM bureau_models WHERE id = ?`, assign.model_id)
+      : undefined;
+    const activeLeases = db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM bureau_window_leases WHERE actor_role = ? AND status = 'active'`,
+      role
+    )?.c ?? 0;
+    const runningDispatches = db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM bureau_dispatches WHERE actor_role = ? AND status = 'running'`,
+      role
+    )?.c ?? 0;
+    const last = db.get<{ ts: string; kind: string }>(
+      `SELECT ts, kind FROM bureau_journal WHERE actor_role = ? ORDER BY id DESC LIMIT 1`,
+      role
+    );
+    const recentlyActive = last?.ts ? nowMs - Date.parse(last.ts) <= WORKER_ACTIVE_WINDOW_MS : false;
+
+    roster.push({
+      role,
+      backend: assign?.backend ?? null,
+      model_id: assign?.model_id ?? null,
+      provider: model?.provider ?? null,
+      display: model?.display ?? null,
+      active: activeLeases > 0 || runningDispatches > 0 || recentlyActive,
+      active_leases: activeLeases,
+      running_dispatches: runningDispatches,
+      last_activity_ts: last?.ts ?? null,
+      last_activity_kind: last?.kind ?? null
+    });
+  }
+  // Active workers first, then most-recently-active.
+  return roster.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return (b.last_activity_ts ?? '').localeCompare(a.last_activity_ts ?? '');
+  });
+}
+
 /** One read-only pass assembling the whole dashboard. */
 export function dashboardSnapshot(db: DbConnection): DashboardSnapshot {
   return {

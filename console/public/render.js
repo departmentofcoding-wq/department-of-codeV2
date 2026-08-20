@@ -189,6 +189,39 @@ export function renderFindingsList(findings) {
 }
 
 /**
+ * Renders the department worker/employee roster with active status.
+ * @param {import('../contract.ts').WorkerDTO[]} workers
+ * @returns {string}
+ */
+export function renderWorkers(workers) {
+  if (!workers || workers.length === 0) {
+    return '<div class="card empty-state">No workers on record yet.</div>';
+  }
+  const activeCount = workers.filter(w => w.active).length;
+  const rows = workers.map(w => {
+    const dot = w.active ? '<span class="worker-dot active" title="Active"></span>' : '<span class="worker-dot idle" title="Idle"></span>';
+    const status = w.active ? 'Working' : 'Idle';
+    const doing = w.running_dispatches > 0 ? `${w.running_dispatches} dispatch(es)` : (w.active_leases > 0 ? `${w.active_leases} lease(s)` : '—');
+    const model = w.display || w.model_id || (w.backend ? escapeHtml(w.backend) : 'deterministic / core');
+    const last = w.last_activity_ts ? `${escapeHtml(w.last_activity_kind || '')} @ ${escapeHtml(w.last_activity_ts)}` : 'never';
+    return `
+      <tr class="worker-row ${w.active ? 'is-active' : ''}">
+        <td>${dot} <strong>${escapeHtml(w.role)}</strong></td>
+        <td>${escapeHtml(model)}${w.provider ? ` <span class="badge">${escapeHtml(w.provider)}</span>` : ''}</td>
+        <td>${escapeHtml(status)}</td>
+        <td>${escapeHtml(doing)}</td>
+        <td class="worker-last">${last}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <div class="workers-summary">${escapeHtml(activeCount)} of ${escapeHtml(workers.length)} workers active</div>
+    <table class="worker-table">
+      <thead><tr><th>Worker</th><th>Model / backend</th><th>Status</th><th>Doing</th><th>Last activity</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+/**
  * Renders the journal timeline entries.
  * @param {import('../contract.ts').JournalEntryDTO[]} journal
  * @returns {string}

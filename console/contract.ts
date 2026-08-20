@@ -128,6 +128,20 @@ export interface JournalEntryDTO {
   detail: string;
 }
 
+/** Worker/employee roster entry (role + backing model + activity). */
+export interface WorkerDTO {
+  role: string;
+  backend: string | null;
+  model_id: string | null;
+  provider: string | null;
+  display: string | null;
+  active: boolean;
+  active_leases: number;
+  running_dispatches: number;
+  last_activity_ts: string | null;
+  last_activity_kind: string | null;
+}
+
 
 // --- Action DTOs ---
 
@@ -205,6 +219,12 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/journal',
     auth: 'token',
     description: 'Query timeline of journal entries'
+  },
+  {
+    method: 'GET',
+    path: '/api/workers',
+    auth: 'token',
+    description: 'Department worker roster with active/working status'
   },
   {
     method: 'POST',

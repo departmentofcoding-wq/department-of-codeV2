@@ -2,6 +2,7 @@ import {
   renderDashboardTileGrid,
   renderTaskTable,
   renderFindingsList,
+  renderWorkers,
   renderJournalTimeline,
   renderRelaunchState,
   renderErrorToast
@@ -109,6 +110,16 @@ async function loadFindingsView() {
   }
 }
 
+async function loadWorkersView() {
+  const container = document.getElementById('workers-container');
+  try {
+    const workers = await apiFetch('/api/workers');
+    container.innerHTML = renderWorkers(workers);
+  } catch (e) {
+    // Error handled in apiFetch
+  }
+}
+
 async function loadJournalView() {
   const container = document.getElementById('journal-container');
   try {
@@ -136,6 +147,9 @@ async function refreshActiveView() {
       break;
     case 'findings':
       await loadFindingsView();
+      break;
+    case 'workers':
+      await loadWorkersView();
       break;
     case 'journal':
       await loadJournalView();

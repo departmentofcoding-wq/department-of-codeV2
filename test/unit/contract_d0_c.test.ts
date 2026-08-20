@@ -20,7 +20,7 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
   });
 
   it('2. Endpoint Manifest: every endpoint declares method, path, description, and token auth', () => {
-    expect(ENDPOINTS.length).toBe(7);
+    expect(ENDPOINTS.length).toBe(8);
 
     const paths = ENDPOINTS.map(e => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/health');

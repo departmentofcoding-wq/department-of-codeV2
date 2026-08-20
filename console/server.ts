@@ -5,7 +5,7 @@ import url from 'node:url';
 import type { DbConnection, BureauTaskRow, BureauWatchdogFindingRow, BureauJournalRow } from '../engine/contract/types.ts';
 import { redactOutput } from '../engine/contract/tools.ts';
 import { journal } from '../engine/journal/writer.ts';
-import { dashboardSnapshot } from '../engine/dashboards/views.ts';
+import { dashboardSnapshot, workerRoster } from '../engine/dashboards/views.ts';
 import { timeline } from '../engine/journal/queries.ts';
 import { approveTask } from '../engine/state/machine.ts';
 import { enqueueJobIfAbsent } from '../engine/jobs/jobs.ts';
@@ -20,6 +20,7 @@ import {
   type TaskSummaryDTO,
   type FindingDTO,
   type JournalEntryDTO,
+  type WorkerDTO,
   type ApproveTaskRequest,
   type ApproveTaskResult,
   type TriggerActionRequest,
@@ -278,6 +279,24 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           cost_usd: r.cost_usd,
           latency_ms: r.latency_ms,
           detail: redactOutput(r.detail)
+        }));
+        sendJson(res, 200, dtos);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/workers') {
+        const roster = workerRoster(db);
+        const dtos: WorkerDTO[] = roster.map(w => ({
+          role: w.role,
+          backend: w.backend,
+          model_id: w.model_id,
+          provider: w.provider,
+          display: w.display,
+          active: w.active,
+          active_leases: w.active_leases,
+          running_dispatches: w.running_dispatches,
+          last_activity_ts: w.last_activity_ts,
+          last_activity_kind: w.last_activity_kind
         }));
         sendJson(res, 200, dtos);
         return;
