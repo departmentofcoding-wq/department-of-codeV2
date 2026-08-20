@@ -1,3 +1,4 @@
+import { ensureCompleted } from './agent-wait.ts';
 import {
   ANTIGRAVITY_DEFAULT_PORT,
   AntigravitySession,
@@ -6,6 +7,7 @@ import {
   findMainWindowWs,
   resolveJunior
 } from './antigravity.ts';
+import { HarnessError } from './errors.ts';
 
 /**
  * Seam for driving the Antigravity junior, mirroring the department's other
@@ -25,7 +27,8 @@ export interface AntigravityRunResult {
   plan?: string;
   /** Walkthrough Antigravity emitted when done, if any. */
   walkthrough?: string;
-  /** Model shown on the picker after selection (when a model was requested). */
+  /** Model label actually in effect: the picker read-back when a model was
+   *  requested, else undefined — never a fabricated placeholder. */
   model?: string;
   /** Whether the requested folder/project was selected. */
   folderSelected?: boolean;
@@ -36,14 +39,19 @@ export interface AntigravityRunOptions {
   junior?: string;
   /** Explicit CDP port override (defaults to the junior's configured port). */
   port?: number;
-  /** Milliseconds to wait for the agent after submitting. */
-  waitMs?: number;
+  /** Inactivity (stall) window in ms — NOT a cap on total work time. The agent
+   *  may work arbitrarily long as long as it keeps making progress. */
+  stallMs?: number;
   /** Model to select in the GUI picker before sending the prompt. */
   model?: string;
   /** Folder/project to select in the GUI before sending the prompt. */
   folder?: string;
-  /** Start a fresh conversation first so a prior task can't bleed in. Default true. */
+  /** Start a fresh conversation first so a prior task can't bleed in. Default
+   *  true; enforced strictly — if the fresh-conversation control can't be found
+   *  we fail rather than risk reviewing stale context. */
   freshConversation?: boolean;
+  /** Cancellation (job timeout / runner shutdown), honored every poll. */
+  signal?: AbortSignal;
 }
 
 export interface AntigravityDriver {
@@ -64,6 +72,7 @@ class RealAntigravityDriver implements AntigravityDriver {
     // The workbench window can lag the CDP endpoint by a few seconds.
     let wsUrl = '';
     for (let i = 0; i < 20; i++) {
+      if (opts.signal?.aborted) throw new HarnessError(`${cfg.label} dispatch aborted before attach`);
       try {
         wsUrl = await findMainWindowWs(port);
         break;
@@ -80,8 +89,16 @@ class RealAntigravityDriver implements AntigravityDriver {
       let folderSelected: boolean | undefined;
       // Fresh conversation per task (unless disabled) prevents an earlier task's
       // plan/context from bleeding into this one — a real bug observed live.
+      // Strict: a missing "New Conversation" control fails the run instead of
+      // silently reviewing against unknown prior context.
       if (opts.freshConversation !== false) {
-        await session.newConversation();
+        const fresh = await session.newConversation();
+        if (!fresh) {
+          throw new HarnessError(
+            `${cfg.label}: could not start a fresh conversation (no New Conversation/task/chat control). ` +
+              `Refusing to continue in an unknown prior context — recalibrate the selector.`
+          );
+        }
         await new Promise(r => setTimeout(r, 800));
       }
       if (opts.folder) folderSelected = await session.selectFolder(opts.folder);
@@ -89,8 +106,13 @@ class RealAntigravityDriver implements AntigravityDriver {
 
       await session.sendPrompt(prompt);
       // Wait adaptively: keep extending while the junior is working; no hard cap.
-      // `waitMs`, if given, is used only as the inactivity (stall) window.
-      await session.waitForCompletion({ stallMs: opts.waitMs ?? 120000 });
+      // A stall/abort/timeout is a hard failure — the partial transcript is
+      // never returned as if it were a completed answer.
+      const waited = await session.waitForCompletion({
+        stallMs: opts.stallMs ?? 120000,
+        signal: opts.signal
+      });
+      ensureCompleted(waited, `${cfg.label} junior`);
 
       const artifacts = await session.captureArtifacts(prompt);
       return {

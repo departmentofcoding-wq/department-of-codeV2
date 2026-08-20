@@ -94,16 +94,22 @@ describe('Senior harness — prompt building (seniors review, do not code)', () 
   });
 });
 
-describe('Senior harness — verdict parsing (fail-closed)', () => {
+describe('Senior harness — verdict parsing (genuinely fail-closed)', () => {
   it('reads an explicit VERDICT line', () => {
     expect(parseVerdict('VERDICT: APPROVE\nlooks good').verdict).toBe('approve');
     expect(parseVerdict('VERDICT: APPROVED').verdict).toBe('approve');
     expect(parseVerdict('VERDICT: REVISE\nfix X').verdict).toBe('revise');
     expect(parseVerdict('VERDICT: REJECT\ntoo much').verdict).toBe('revise');
+    // The marker may sit anywhere — including the first line of a long review
+    // whose tail is all that was captured.
+    expect(parseVerdict('VERDICT: APPROVE\n' + 'reasoning\n'.repeat(200)).verdict).toBe('approve');
   });
 
-  it('falls back to approve only on clear approval language', () => {
-    expect(parseVerdict('This looks good, lgtm.').verdict).toBe('approve');
+  it('NEVER approves without an explicit VERDICT marker — approval-sounding prose still revises', () => {
+    // This exact shape fail-opened before: "approved" matched the old positive
+    // heuristic while none of the negative words did.
+    expect(parseVerdict('I do not think this should be approved as-is.').verdict).toBe('revise');
+    expect(parseVerdict('This looks good, lgtm.').verdict).toBe('revise');
     expect(parseVerdict('looks good but revise the naming').verdict).toBe('revise');
   });
 

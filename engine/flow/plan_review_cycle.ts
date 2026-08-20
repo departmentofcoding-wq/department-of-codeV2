@@ -1,23 +1,47 @@
 import crypto from 'node:crypto';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
+import { DEFAULT_PLAN_ROUNDS_CEILING, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
+import { enqueueJob } from '../jobs/jobs.ts';
+import { transition } from '../state/machine.ts';
+import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSenior } from '../harness/senior.ts';
+import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 
 /**
- * Plan-review cycle — the corrected department flow for the planning stage:
+ * Plan-review cycle — the department flow for the planning stage, integrating
+ * the live harnesses (Antigravity junior, Claude/ZCode senior) with the jobs
+ * machinery's guards:
  *
- *   TASK  →  junior AUTHORS the plan  →  senior REVIEWS the plan (with the task
- *   verbatim)  →  approve | revise.
+ *   TASK  →  junior AUTHORS the plan  →  deterministic RUBRIC gate  →
+ *   senior REVIEWS the plan (with the task verbatim)  →  approve | revise.
  *
- * The junior (an Antigravity agent) is asked for a plan ONLY — no code yet. The
- * senior (Claude CLI or ZCode/GLM) is handed the plan together with the task
- * verbatim (title + intent + spec + acceptance) so it can judge whether the plan
- * actually satisfies the task. Both steps write real DB rows (`bureau_plans`,
- * `bureau_plan_reviews`) and attributed journal spans, so this is the department's
- * flow, not a side channel.
+ *   - approve  → a `bureau_dispatches` row is created and `junior.dispatch` is
+ *     enqueued with the approved plan as the implementation prompt (the
+ *     legacy job's continuation, now on the harness path).
+ *   - revise   → the senior's feedback is fed back to the junior and the next
+ *     `plan.cycle` round is enqueued — the cycle actually cycles, bounded by
+ *     the `plan_rounds` ceiling.
+ *
+ * Guards inherited from the legacy `senior.review-plan` job (both were missing
+ * on the harness path this module replaced):
+ *   - state gate: only `queued`/`claimed` tasks may plan;
+ *   - ceiling entry-guard: at `plan_rounds >= ceiling` the cycle REFUSES
+ *     (guardrail span, task blocked, operator notified) — never silently
+ *     continues;
+ *   - deterministic rubric before any senior tokens are spent.
+ *
+ * Every step writes real DB rows (`bureau_plans`, `bureau_plan_reviews`,
+ * `bureau_jobs`) and attributed journal spans. `runPlanReviewCycle` is the
+ * engine; the `plan.cycle` job kind and `scripts/run_plan_cycle.ts` are doors
+ * to it — nothing fire-and-forget.
  */
+
+/** Attribution recorded when no real model label is known — honest, never a
+ *  fabricated model name. */
+const UNSPECIFIED_MODEL = 'unspecified';
 
 export interface PlanCycleOptions {
   taskId: string;
@@ -30,35 +54,113 @@ export interface PlanCycleOptions {
   seniorModel?: string;
   /** Optional workspace/folder for the junior. */
   folder?: string;
-  /** How long to wait for the junior to author the plan (ms). Planning is slower
-   *  than a one-line reply, so this defaults high. */
-  juniorWaitMs?: number;
+  /** Inactivity (stall) window for the junior, ms — NOT a cap on work time. */
+  juniorStallMs?: number;
+  /** Cancellation (job timeout / runner shutdown), honored by the waits. */
+  signal?: AbortSignal;
+  /** The job invoking this cycle, for span attribution. */
+  jobId?: string;
+  /** Prior round's review feedback, fed back to the junior (round N+1). */
+  priorFeedback?: string;
 }
 
-export interface PlanCycleResult {
-  planId: string;
-  planText: string;
-  junior: string;
-  senior: string;
-  verdict: 'approve' | 'revise';
-  feedback: string;
+export type PlanCycleResult =
+  | {
+      outcome: 'refused';
+      reason: 'ceiling' | 'state';
+      roundsUsed: number;
+      ceiling: number;
+    }
+  | {
+      outcome: 'approved';
+      planId: string;
+      planText: string;
+      junior: string;
+      senior: string;
+      feedback: string;
+      roundsUsed: number;
+      ceiling: number;
+      dispatchJobId: string;
+    }
+  | {
+      outcome: 'revise';
+      planId: string;
+      planText: string;
+      junior: string;
+      /** Who returned the revise: the senior, or the deterministic rubric. */
+      by: 'senior' | 'rubric';
+      senior?: string;
+      feedback: string;
+      roundsUsed: number;
+      ceiling: number;
+      /** Next round enqueued (false when the ceiling was hit and the task blocked). */
+      nextRoundEnqueued: boolean;
+    };
+
+/** Options carried across rounds of the cycle. */
+interface CycleCarry {
+  junior?: string;
+  seniorId?: string;
+  juniorModel?: string;
+  seniorModel?: string;
+  folder?: string;
+  juniorStallMs?: number;
 }
 
 /**
- * Hand the junior the task and let it plan in its own way — Antigravity produces
- * an implementation plan for a task regardless, so we don't dictate the format.
- * The only constraint: plan first, don't write code yet (a senior reviews first).
+ * Hand the junior the task and let it plan in its own way — plan only, no code
+ * yet. The prompt states the department's plan standard up front (branch,
+ * enumerable scope, tests + mutation evidence, walkthrough plan) so the
+ * deterministic rubric and the senior judge against a standard the junior was
+ * actually told about. A prior round's senior feedback is included verbatim.
  */
-export function buildJuniorPlanPrompt(task: BureauTaskRow): string {
+export function buildJuniorPlanPrompt(task: BureauTaskRow, priorFeedback?: string): string {
   return (
     'Here is a task for you to plan. Do NOT write any code yet — a senior will ' +
     'review your implementation plan first.\n\n' +
+    'Your plan MUST include: (1) a branch name in the form wt/..., (2) an ' +
+    'enumerable scope (components and files to change), (3) the tests you will ' +
+    'add and the mutation evidence you will record, and (4) a walkthrough / ' +
+    'verification plan.\n\n' +
+    (priorFeedback
+      ? `The senior reviewed your PREVIOUS plan and required these changes — address every point:\n` +
+        `${priorFeedback}\n\n`
+      : '') +
     '===== TASK =====\n' +
     `TITLE: ${task.title}\n` +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '')
   );
+}
+
+/**
+ * The implementation prompt handed to the junior via `junior.dispatch` once a
+ * plan is approved: the task verbatim plus the approved plan, with the
+ * department's working rules (branch, tests, walkthrough when done).
+ */
+export function buildImplementationPrompt(task: BureauTaskRow, planText: string): string {
+  return (
+    'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
+    'it now, exactly as planned.\n\n' +
+    'Rules: work on the branch named in the plan; add the tests the plan names; ' +
+    'when done, finish with a walkthrough section summarizing what changed, the ' +
+    'test results, and the verification you ran.\n\n' +
+    '===== TASK =====\n' +
+    `TITLE: ${task.title}\n` +
+    (task.intent ? `INTENT: ${task.intent}\n` : '') +
+    (task.spec ? `SPEC: ${task.spec}\n` : '') +
+    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
+    `\n===== APPROVED PLAN =====\n${planText}\n`
+  );
+}
+
+function readCeiling(db: DbConnection): number {
+  const row = db.get<{ value: string }>(
+    'SELECT value FROM bureau_meta WHERE key = ?',
+    REVIEW_PR_META_KEYS.REVIEW_PLAN_ROUNDS_CEILING
+  );
+  return row ? parseInt(row.value, 10) : DEFAULT_PLAN_ROUNDS_CEILING;
 }
 
 export async function runPlanReviewCycle(
@@ -68,6 +170,47 @@ export async function runPlanReviewCycle(
   const task = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', opts.taskId);
   if (!task) throw new Error(`Task '${opts.taskId}' not found in bureau_tasks`);
 
+  const ceiling = readCeiling(db);
+  const notify = (reason: string) => notifyOperator(opts.jobId ?? 'plan.cycle', reason);
+
+  // ---- 0a. State gate: only queued/claimed tasks may plan -----------------
+  if (task.state !== 'queued' && task.state !== 'claimed') {
+    journal(db, {
+      kind: 'guardrail',
+      attribution: SENIOR_RUBRIC_ATTRIBUTION,
+      taskId: task.id,
+      jobId: opts.jobId ?? null,
+      detail: { action: 'plan_cycle_state_refusal', taskState: task.state }
+    });
+    notify(`Task ${task.id} plan cycle refused: state is '${task.state}', not queued/claimed`);
+    return { outcome: 'refused', reason: 'state', roundsUsed: task.plan_rounds, ceiling };
+  }
+
+  // ---- 0b. Ceiling entry-guard (legacy A-2, ported): refuse BEFORE any
+  // junior or senior work — no unbounded rounds against live agents. (A
+  // blocked task was already refused by the state gate above.)
+  if (task.plan_rounds >= ceiling) {
+    journal(db, {
+      kind: 'guardrail',
+      attribution: SENIOR_RUBRIC_ATTRIBUTION,
+      taskId: task.id,
+      jobId: opts.jobId ?? null,
+      detail: {
+        action: 'plan_cycle_ceiling_exceeded',
+        plan_rounds: task.plan_rounds,
+        ceiling,
+        taskState: task.state
+      }
+    });
+    if (task.state === 'claimed') {
+      transition(db, task.id, 'blocked', SENIOR_RUBRIC_ATTRIBUTION, {
+        reason: 'plan_rounds_ceiling_exceeded'
+      });
+    }
+    notify(`Task ${task.id} plan cycle ceiling (${ceiling}) reached`);
+    return { outcome: 'refused', reason: 'ceiling', roundsUsed: task.plan_rounds, ceiling };
+  }
+
   const nowIso = new Date().toISOString();
 
   // ---- 1. Junior AUTHORS the plan -----------------------------------------
@@ -75,18 +218,21 @@ export async function runPlanReviewCycle(
   const juniorAttribution: AttributionTuple = {
     actor_role: 'junior-engineer',
     provider: 'antigravity',
-    model: opts.juniorModel || `junior-${juniorId}`,
+    model: opts.juniorModel || UNSPECIFIED_MODEL,
     account: null
   };
 
   const ag = getAntigravityDriver();
-  const jr = await ag.runCommand(buildJuniorPlanPrompt(task), {
+  const jr = await ag.runCommand(buildJuniorPlanPrompt(task, opts.priorFeedback), {
     junior: juniorId,
     model: opts.juniorModel,
     folder: opts.folder,
-    waitMs: opts.juniorWaitMs ?? 25000
+    stallMs: opts.juniorStallMs ?? 120000,
+    signal: opts.signal
   });
   const planText = (jr.plan && jr.plan.trim()) || jr.transcript || '(junior produced no plan text)';
+  // Honest attribution: the GUI picker read-back when a model was selected.
+  juniorAttribution.model = jr.model ?? opts.juniorModel ?? UNSPECIFIED_MODEL;
 
   const planId = crypto.randomUUID();
   db.run(
@@ -109,10 +255,33 @@ export async function runPlanReviewCycle(
     attribution: juniorAttribution,
     taskId: task.id,
     workUuid: task.work_uuid,
+    jobId: opts.jobId ?? null,
     detail: { source: 'antigravity', stage: 'plan-authoring', junior: jr.junior ?? juniorId, planId }
   });
 
-  // ---- 2. Senior REVIEWS the plan (with the task verbatim) ----------------
+  // ---- 2. Cheap deterministic gate BEFORE any senior tokens ----------------
+  // A plan missing the department standard (branch/scope/tests+mutations/
+  // walkthrough) — including a junk fallback transcript — is amended by the
+  // rubric, and the cycle loops; the senior is never billed for garbage.
+  const rubric = evaluatePlanRubric(planText);
+  if (!rubric.ok) {
+    const feedback = `Deterministic rubric failure: missing ${rubric.missing.join(', ')}`;
+    return finishReviseRound(db, task, {
+      planId,
+      planText,
+      junior: jr.junior ?? juniorId,
+      by: 'rubric',
+      feedback,
+      reviewAttribution: SENIOR_RUBRIC_ATTRIBUTION,
+      reviewProvider: 'deterministic',
+      reviewModel: 'rubric',
+      ceiling,
+      carry: opts,
+      jobId: opts.jobId
+    });
+  }
+
+  // ---- 3. Senior REVIEWS the plan (with the task verbatim) -----------------
   const seniorId = opts.seniorId ?? assignSenior({ kind: 'plan' });
   const senior = getSeniorDriver(seniorId);
   const review = await senior.review({
@@ -125,30 +294,90 @@ export async function runPlanReviewCycle(
     model: opts.seniorModel
   });
 
-  const dbVerdict = review.verdict === 'approve' ? 'approved' : 'amend';
+  if (review.verdict === 'approve') {
+    return finishApproveRound(db, task, {
+      planId,
+      planText,
+      junior: jr.junior ?? juniorId,
+      seniorId,
+      seniorLabel: review.senior,
+      seniorModel: review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL,
+      feedback: review.feedback,
+      juniorProvider: juniorAttribution.provider,
+      juniorModel: juniorAttribution.model,
+      ceiling,
+      carry: opts
+    });
+  }
+
+  return finishReviseRound(db, task, {
+    planId,
+    planText,
+    junior: jr.junior ?? juniorId,
+    by: 'senior',
+    seniorId,
+    feedback: review.feedback,
+    reviewAttribution: {
+      actor_role: 'senior-engineer',
+      provider: seniorId,
+      model: review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL,
+      account: null
+    },
+    reviewProvider: seniorId,
+    reviewModel: review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL,
+    ceiling,
+    carry: opts,
+    jobId: opts.jobId
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Round completion — shared bookkeeping for the verdict paths
+// ---------------------------------------------------------------------------
+
+interface ApproveParams {
+  planId: string;
+  planText: string;
+  junior: string;
+  seniorId: string;
+  seniorLabel: string;
+  seniorModel: string;
+  feedback: string;
+  juniorProvider: string;
+  juniorModel: string;
+  ceiling: number;
+  carry: PlanCycleOptions;
+}
+
+function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApproveParams): PlanCycleResult {
+  const nowIso = new Date().toISOString();
+  const dbVerdict = 'approved';
   const seniorAttribution: AttributionTuple = {
     actor_role: 'senior-engineer',
-    provider: seniorId,
-    model: opts.seniorModel || review.senior,
+    provider: p.seniorId,
+    model: p.seniorModel,
     account: null
   };
 
-  db.execTransaction(() => {
+  const dispatchId = crypto.randomUUID();
+  const implPrompt = buildImplementationPrompt(task, p.planText);
+
+  const dispatchJob = db.execTransaction(() => {
     db.run(
       `INSERT INTO bureau_plan_reviews (id, plan_id, task_id, verdict, feedback, actor_role, provider, model, account, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       crypto.randomUUID(),
-      planId,
+      p.planId,
       task.id,
       dbVerdict,
-      review.feedback,
+      p.feedback,
       seniorAttribution.actor_role,
       seniorAttribution.provider,
       seniorAttribution.model,
       seniorAttribution.account,
       nowIso
     );
-    db.run(`UPDATE bureau_plans SET status = ?, updated_at = ? WHERE id = ?`, dbVerdict, nowIso, planId);
+    db.run(`UPDATE bureau_plans SET status = ?, updated_at = ? WHERE id = ?`, dbVerdict, nowIso, p.planId);
     db.run(
       `UPDATE bureau_tasks SET plan_rounds = plan_rounds + 1, updated_at = ? WHERE id = ?`,
       nowIso,
@@ -159,16 +388,155 @@ export async function runPlanReviewCycle(
       attribution: seniorAttribution,
       taskId: task.id,
       workUuid: task.work_uuid,
-      detail: { stage: 'plan-review', senior: seniorId, verdict: dbVerdict, planId }
+      jobId: p.carry.jobId ?? null,
+      detail: { stage: 'plan-review', senior: p.seniorId, verdict: dbVerdict, planId: p.planId }
+    });
+
+    // Legacy A-7a continuation, on the harness path: an approved plan immediately
+    // becomes a real dispatch row + job for the SAME junior who planned it.
+    db.run(
+      `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+       VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
+      dispatchId,
+      task.id,
+      task.work_uuid,
+      p.juniorProvider,
+      p.juniorModel,
+      nowIso
+    );
+    return enqueueJob(db, {
+      kind: 'junior.dispatch',
+      task_id: task.id,
+      payload: {
+        dispatchId,
+        prompt: implPrompt,
+        junior: p.junior,
+        // Pin the model the planning round actually used, when it is known —
+        // never pin the 'unspecified' sentinel.
+        ...(p.juniorModel !== UNSPECIFIED_MODEL ? { model: p.juniorModel } : {}),
+        ...(p.carry.folder ? { folder: p.carry.folder } : {})
+      }
     });
   });
 
   return {
-    planId,
-    planText,
-    junior: jr.junior ?? juniorId,
-    senior: seniorId,
-    verdict: review.verdict,
-    feedback: review.feedback
+    outcome: 'approved',
+    planId: p.planId,
+    planText: p.planText,
+    junior: p.junior,
+    senior: p.seniorId,
+    feedback: p.feedback,
+    roundsUsed: task.plan_rounds + 1,
+    ceiling: p.ceiling,
+    dispatchJobId: dispatchJob.id
+  };
+}
+
+interface ReviseParams {
+  planId: string;
+  planText: string;
+  junior: string;
+  by: 'senior' | 'rubric';
+  seniorId?: string;
+  feedback: string;
+  reviewAttribution: AttributionTuple;
+  reviewProvider: string;
+  reviewModel: string;
+  ceiling: number;
+  carry: CycleCarry & { jobId?: string };
+  jobId?: string;
+}
+
+function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParams): PlanCycleResult {
+  const nowIso = new Date().toISOString();
+  const dbVerdict = 'amend';
+
+  db.execTransaction(() => {
+    db.run(
+      `INSERT INTO bureau_plan_reviews (id, plan_id, task_id, verdict, feedback, actor_role, provider, model, account, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      crypto.randomUUID(),
+      p.planId,
+      task.id,
+      dbVerdict,
+      p.feedback,
+      p.reviewAttribution.actor_role,
+      p.reviewProvider,
+      p.reviewModel,
+      p.reviewAttribution.account,
+      nowIso
+    );
+    db.run(`UPDATE bureau_plans SET status = ?, updated_at = ? WHERE id = ?`, dbVerdict, nowIso, p.planId);
+    db.run(
+      `UPDATE bureau_tasks SET plan_rounds = plan_rounds + 1, updated_at = ? WHERE id = ?`,
+      nowIso,
+      task.id
+    );
+    journal(db, {
+      kind: 'review',
+      attribution: p.reviewAttribution,
+      taskId: task.id,
+      workUuid: task.work_uuid,
+      jobId: p.jobId ?? null,
+      detail: { stage: 'plan-review', by: p.by, senior: p.seniorId ?? 'rubric', verdict: dbVerdict, planId: p.planId }
+    });
+  });
+
+  const roundsUsed = task.plan_rounds + 1;
+
+  // The cycle actually cycles: with rounds remaining, the senior's feedback is
+  // fed straight back to the junior in the next round. At the ceiling the task
+  // is blocked and the operator notified — never silently continued.
+  if (roundsUsed >= p.ceiling) {
+    const refreshed = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', task.id);
+    if (refreshed && refreshed.state === 'claimed') {
+      transition(db, task.id, 'blocked', p.reviewAttribution, {
+        reason: 'plan_rounds_ceiling_exceeded_after_amend'
+      });
+    }
+    notifyOperator(p.jobId ?? 'plan.cycle', `Task ${task.id} plan review ceiling (${p.ceiling}) reached`);
+    return {
+      outcome: 'revise',
+      planId: p.planId,
+      planText: p.planText,
+      junior: p.junior,
+      by: p.by,
+      senior: p.seniorId,
+      feedback: p.feedback,
+      roundsUsed,
+      ceiling: p.ceiling,
+      nextRoundEnqueued: false
+    };
+  }
+
+  const next = enqueueJob(db, {
+    kind: 'plan.cycle',
+    task_id: task.id,
+    payload: {
+      taskId: task.id,
+      priorFeedback: p.feedback,
+      junior: p.junior,
+      ...(p.carry.seniorId ? { seniorId: p.carry.seniorId } : {}),
+      ...(p.carry.juniorModel ? { juniorModel: p.carry.juniorModel } : {}),
+      ...(p.carry.seniorModel ? { seniorModel: p.carry.seniorModel } : {}),
+      ...(p.carry.folder ? { folder: p.carry.folder } : {}),
+      ...(p.carry.juniorStallMs ? { juniorStallMs: p.carry.juniorStallMs } : {})
+    },
+    // One attempt per round: a failed round surfaces to the operator instead of
+    // re-prompting the live GUI agents (duplicate conversations, duplicate cost).
+    max_attempts: 1
+  });
+
+  return {
+    outcome: 'revise',
+    planId: p.planId,
+    planText: p.planText,
+    junior: p.junior,
+    by: p.by,
+    senior: p.seniorId,
+    feedback: p.feedback,
+    roundsUsed,
+    ceiling: p.ceiling,
+    nextRoundEnqueued: true
   };
 }

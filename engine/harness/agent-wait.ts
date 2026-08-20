@@ -1,3 +1,5 @@
+import { HarnessError } from './errors.ts';
+
 /**
  * Adaptive completion wait for autonomous agents (juniors and seniors).
  *
@@ -16,6 +18,8 @@
  *     e.g. an error, a login wall, a modal) → stalled; give up.
  *
  * So the only real bound is the *inactivity* window, not total elapsed time.
+ * An AbortSignal (job timeout / runner shutdown) is honored every poll: the
+ * department's cancellation machinery governs even its longest operations.
  */
 
 export interface AgentActivity {
@@ -27,7 +31,7 @@ export interface AgentActivity {
   len: number;
 }
 
-export type WaitResult = 'completed' | 'stalled' | 'timeout';
+export type WaitResult = 'completed' | 'stalled' | 'timeout' | 'aborted';
 
 export interface WaitOptions {
   /** How often to poll. Default 2000ms. */
@@ -42,6 +46,8 @@ export interface WaitOptions {
   absoluteMaxMs?: number;
   /** Small initial delay so the working indicator can appear. Default 1200ms. */
   warmupMs?: number;
+  /** Cancellation: checked every poll, and before the first. */
+  signal?: AbortSignal;
   /** Progress callback (elapsed, current status, activity) for logging. */
   onTick?: (info: { elapsedMs: number; status: string; activity: AgentActivity }) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -72,6 +78,8 @@ export async function waitForAgentIdle(
   let idleStable = 0;
 
   for (;;) {
+    if (opts.signal?.aborted) return 'aborted';
+
     const a = await probe();
     const grew = a.len !== lastLen;
     if (grew) lastLen = a.len;
@@ -107,4 +115,21 @@ export async function waitForAgentIdle(
 
     await sleep(pollMs);
   }
+}
+
+/**
+ * Turn a wait result into a hard failure unless the agent genuinely completed.
+ * A stalled or aborted agent produces a PARTIAL transcript; parsing a verdict
+ * or plan out of it would record garbage as if it were a real review. Used by
+ * every harness call site so no non-completion is silently treated as done.
+ */
+export function ensureCompleted(result: WaitResult, who: string): void {
+  if (result === 'completed') return;
+  const reason =
+    result === 'stalled'
+      ? `no progress for the stall window (error, modal, or login wall?)`
+      : result === 'aborted'
+        ? 'aborted (job timeout or runner shutdown)'
+        : 'hit the last-resort absolute cap';
+  throw new HarnessError(`${who} did not complete: ${reason}. Partial output was NOT recorded as a review/plan.`);
 }

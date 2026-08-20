@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HarnessError } from './errors.ts';
 import { sliceAfterPrompt } from './antigravity.ts';
-import { waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
+import { ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -49,6 +49,9 @@ export interface SeniorVerdict {
   feedback: string;
   /** The raw text the senior produced, for the journal/audit. */
   raw: string;
+  /** The model label actually in effect (CLI --model / GUI picker read-back),
+   *  when known — used for honest attribution. */
+  model?: string;
 }
 
 export interface SeniorDriver {
@@ -86,9 +89,11 @@ export function buildReviewPrompt(input: SeniorReviewInput): { system: string; u
 
 /**
  * Parse a senior's free-text reply into a verdict. Keys off an explicit
- * "VERDICT: APPROVE/REVISE" line, with resilient fallbacks (approved/lgtm vs
- * revise/amend/reject/changes). Defaults to 'revise' when genuinely ambiguous —
- * fail-closed, so an unreadable review never auto-approves.
+ * "VERDICT: APPROVE/REVISE/…" line anywhere in the reply. Genuinely fail-closed:
+ * with no explicit marker the verdict is ALWAYS 'revise' — there is no
+ * approve-by-heuristic fallback, because prose like "I don't think this should
+ * be approved as-is" pattern-matches approval language while meaning the
+ * opposite. An unreadable or truncated review never auto-approves.
  */
 export function parseVerdict(raw: string): { verdict: Verdict; feedback: string } {
   const text = (raw || '').trim();
@@ -96,11 +101,6 @@ export function parseVerdict(raw: string): { verdict: Verdict; feedback: string 
   const marker = text.match(/VERDICT:\s*(APPROVE[D]?|REVISE|AMEND|REJECT)/i);
   if (marker) {
     return { verdict: /APPROVE/i.test(marker[1]) ? 'approve' : 'revise', feedback };
-  }
-  // Fallbacks when the model didn't follow the format.
-  if (/\b(approve[d]?|lgtm|looks good|ship it)\b/i.test(text) &&
-      !/\b(revise|amend|reject|do not approve|not approve|changes needed)\b/i.test(text)) {
-    return { verdict: 'approve', feedback };
   }
   return { verdict: 'revise', feedback };
 }
@@ -225,20 +225,30 @@ export class ClaudeCliSenior implements SeniorDriver {
     if (model) args.push('--model', model);
     const raw = await this.spawnClaude(bin, args, user);
     const { verdict, feedback } = parseVerdict(raw);
-    return { senior: this.cfg.id, verdict, feedback, raw };
+    return { senior: this.cfg.id, verdict, feedback, raw, model };
   }
 
   private spawnClaude(bin: string, args: string[], stdin: string): Promise<string> {
     return new Promise((resolve, reject) => {
+      const usesShell = bin.endsWith('.cmd') || bin === 'claude' || bin === 'claude.cmd';
       const child = child_process.spawn(bin, args, {
         // .cmd shims on Windows need a shell to resolve.
-        shell: bin.endsWith('.cmd') || bin === 'claude' || bin === 'claude.cmd',
+        shell: usesShell,
         stdio: ['pipe', 'pipe', 'pipe']
       });
       let out = '';
       let err = '';
+      const killTree = () => {
+        // With shell:true on Windows, child.kill() only kills cmd.exe and leaves
+        // the real claude process running; taskkill /T takes the whole tree.
+        if (usesShell && process.platform === 'win32' && child.pid) {
+          child_process.exec(`taskkill /PID ${child.pid} /T /F`);
+        } else {
+          child.kill();
+        }
+      };
       const timer = setTimeout(() => {
-        child.kill();
+        killTree();
         reject(new HarnessError('Claude CLI senior timed out'));
       }, Number(process.env['CLAUDE_SENIOR_TIMEOUT_MS'] || 180000));
       child.stdout.on('data', d => (out += d));
@@ -523,18 +533,30 @@ export class ZCodeSenior implements SeniorDriver {
     const prompt = `${system}\n\n${user}`;
     const session = await ZCodeSession.attach(port);
     try {
-      await session.newConversation();
+      const fresh = await session.newConversation();
+      if (!fresh) {
+        throw new HarnessError(
+          'ZCode: could not start a fresh conversation (no New task/conversation/chat control). ' +
+            'Refusing to review against unknown prior context — recalibrate the selector.'
+        );
+      }
       await new Promise(r => setTimeout(r, 800));
-      if (input.model) await session.selectModel(input.model);
+      let model: string | undefined;
+      if (input.model) model = await session.selectModel(input.model);
       await session.sendPrompt(prompt);
       // No hard cap: GLM often verifies claims by re-running the suite/build/browser
-      // itself (good!). Keep waiting while it's active; only the inactivity window bounds it.
-      await session.waitForCompletion({ stallMs: this.waitMs });
-      const full = await session.readTranscript();
+      // itself (good!). Keep waiting while it's active; only the inactivity window
+      // bounds it. A stall/abort is a hard failure — a partial review must never be
+      // recorded as a verdict.
+      const waited = await session.waitForCompletion({ stallMs: this.waitMs });
+      ensureCompleted(waited, 'ZCode (zai) senior');
+      // Wide window: the VERDICT line is the FIRST line of the reply, so a small
+      // tail read would drop it on any review longer than the window.
+      const full = await session.readTranscript(400);
       // Isolate the verdict from THIS review, not stale conversation history.
       const raw = sliceAfterPrompt(full, prompt) || full;
       const { verdict, feedback } = parseVerdict(raw);
-      return { senior: this.cfg.id, verdict, feedback, raw };
+      return { senior: this.cfg.id, verdict, feedback, raw, model };
     } finally {
       session.close();
     }

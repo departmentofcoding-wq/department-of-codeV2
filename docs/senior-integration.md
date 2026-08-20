@@ -78,11 +78,15 @@ so `sendPrompt` clicks **Send** as a fallback (same scar as the juniors).
 ## The review contract
 
 `SeniorDriver.review(input)` takes `{ kind: 'plan'|'walkthrough', taskTitle,
-taskSpec?, plan?, walkthrough? }` and returns `{ senior, verdict, feedback, raw }`
-where `verdict` is `'approve' | 'revise'`. Verdict parsing is **fail-closed**:
-the senior is told to start its reply with `VERDICT: APPROVE` / `VERDICT: REVISE`;
-anything ambiguous or empty parses to `revise`, so an unreadable review never
-auto-approves.
+taskSpec?, plan?, walkthrough? }` and returns `{ senior, verdict, feedback, raw,
+model? }` where `verdict` is `'approve' | 'revise'`. Verdict parsing is
+**genuinely fail-closed**: the senior is told to start its reply with
+`VERDICT: APPROVE` / `VERDICT: REVISE`; a reply with NO explicit marker —
+including approval-sounding prose like "I don't think this should be approved
+as-is" — parses to `revise`. There is deliberately no approve-by-heuristic
+fallback: an unreadable, truncated, or nuance-worded review never
+auto-approves. A stalled/aborted/timeout senior wait is a hard error
+(`ensureCompleted`), never a parsed verdict.
 
 ## Usage
 
@@ -122,23 +126,39 @@ node --experimental-strip-types scripts/run_senior.ts --senior zai --kind plan \
 right order:
 
 ```
-TASK → junior AUTHORS the plan → senior REVIEWS it (with the task verbatim) → approve | revise
+TASK → junior AUTHORS the plan → rubric GATES it → senior REVIEWS it (with the task verbatim) → approve | revise
 ```
 
-`runPlanReviewCycle(db, { taskId, junior, seniorId, ... })`:
-1. Asks the junior (Antigravity) for a **plan only** — no code — via `buildJuniorPlanPrompt`
-   (the task title/intent/spec/acceptance are embedded). Waits `juniorWaitMs` (default 25s,
-   planning is slower than a one-line reply). Writes a `bureau_plans` row
-   (`actor_role='junior-engineer'`, `provider='antigravity'`) + an `observation` span.
-2. Hands the plan **plus the task verbatim** (title + intent + spec + acceptance) to the
-   assigned senior. Writes a `bureau_plan_reviews` row (`approve`→`approved`, `revise`→`amend`)
-   + a `review` span, and increments `plan_rounds`.
+`runPlanReviewCycle(db, { taskId, junior, seniorId, ... })` — the integrated flow
+(a `plan.cycle` job kind; the CLI enqueues and drains it as a real job):
+1. **State + ceiling entry-guards:** only `queued`/`claimed` tasks may plan, and at
+   `plan_rounds >= ceiling` (meta `review:plan_rounds_ceiling`, default 3) the
+   cycle REFUSES — guardrail span, task blocked, operator notified — before any
+   agent is touched.
+2. Asks the junior (Antigravity) for a **plan only** — no code — via `buildJuniorPlanPrompt`
+   (the task verbatim + the department plan standard: branch `wt/…`, enumerable scope,
+   tests + mutation evidence, walkthrough plan; a prior round's senior feedback is
+   relayed verbatim). The stall window is `juniorStallMs` (default 120s — the agent
+   may work arbitrarily long while it keeps making progress). Writes a `bureau_plans`
+   row (`actor_role='junior-engineer'`, `provider='antigravity'`, honest model label)
+   + an `observation` span.
+3. **Deterministic rubric gate** (zero senior tokens): a plan missing the standard —
+   including junk transcript fallbacks — is amended by the rubric and the cycle loops.
+4. Hands the plan **plus the task verbatim** to the assigned senior. Writes a
+   `bureau_plan_reviews` row (`approve`→`approved`, `revise`→`amend`) + a `review`
+   span, and increments `plan_rounds`.
+5. **Continuation:** approve → a `bureau_dispatches` row + a `junior.dispatch` job
+   whose prompt embeds the approved plan (same junior who planned it); revise →
+   the next `plan.cycle` round is enqueued WITH the senior feedback — until the
+   ceiling blocks the task.
 
 Run it: `node --experimental-strip-types scripts/run_plan_cycle.ts --task <id> --junior B --senior claude`.
 
-**Verified live:** junior B authored a real temperature-converter plan; the Claude senior
-reviewed it against the spec + acceptance ("single file", "live" update, the C→F formula)
-and returned APPROVE — real DB rows and journal spans written to an isolated DB.
+**Verified live (pre-integration shape):** junior B authored a real temperature-converter
+plan; the Claude senior reviewed it against the spec + acceptance ("single file", "live"
+update, the C→F formula) and returned APPROVE — real DB rows and journal spans written
+to an isolated DB. The integrated `plan.cycle` job path is unit/integration-tested with
+fake drivers (`tc_plan_cycle.test.ts`); its first LIVE run is Phase 7 C1 scope.
 
 ## Flow integration
 
@@ -148,7 +168,9 @@ the **external** reviewer path: call `getSeniorDriver('claude'|'zai').review(...
 with `readLatestArtifacts(taskId)` to have a real Claude/GLM senior judge the
 captured plan/walkthrough. Both juniors and both seniors are now driven by the
 department: junior produces plan → senior reviews → junior produces walkthrough →
-senior reviews.
+senior reviews. The `plan.cycle` flow is the jobs-machinery integration of exactly
+that path — same guards as the legacy job (ceiling, rubric, continuation), live
+agents behind the seams.
 
 ## Tests
 

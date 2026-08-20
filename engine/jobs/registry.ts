@@ -179,7 +179,11 @@ defineJob(
     const { handleJuniorDispatch } = await import('../harness/dispatch-job.ts');
     await handleJuniorDispatch(ctx);
   },
-  { maxAttempts: 3, timeoutMs: 120000 }
+  // The Antigravity prompt path drives a live GUI agent that legitimately runs
+  // for many minutes (adaptive wait, no hard cap); the old 120s ceiling only
+  // worked because the CDP path ignored its abort signal. The signal is now
+  // honored through the wait, so this timeout is real again — and generous.
+  { maxAttempts: 3, timeoutMs: 30 * 60 * 1000 }
 );
 
 // 8. lease.reap
@@ -350,4 +354,31 @@ defineJob(
     await handleSecretaryRelease(ctx);
   },
   { maxAttempts: 3, timeoutMs: 30000 }
+);
+
+// 19. plan.cycle — the integrated plan-review flow: junior authors, rubric
+// gates, senior reviews; approve → junior.dispatch, revise → next round with
+// feedback, all bounded by the plan_rounds ceiling. Long timeout because both
+// agents are live GUI/CLI seniors; one attempt per round (a failure surfaces to
+// the operator rather than re-prompting the agents).
+const planCycleSchema = z.object({
+  taskId: z.string(),
+  junior: z.string().optional(),
+  seniorId: z.string().optional(),
+  juniorModel: z.string().optional(),
+  seniorModel: z.string().optional(),
+  folder: z.string().optional(),
+  juniorStallMs: z.number().optional(),
+  priorFeedback: z.string().optional()
+});
+
+defineJob(
+  'plan.cycle',
+  planCycleSchema,
+  async (ctx) => {
+    const payload = planCycleSchema.parse(ctx.payload ?? {});
+    const { runPlanReviewCycle } = await import('../flow/plan_review_cycle.ts');
+    await runPlanReviewCycle(ctx.db, { ...payload, signal: ctx.signal, jobId: ctx.job.id });
+  },
+  { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
 );
