@@ -7,6 +7,8 @@ import { notifyOperator } from '../state/notifications.ts';
 import { GoogleClient } from './google_client.ts';
 import { OllamaClient } from './ollama_client.ts';
 import { MockClient } from './mock_client.ts';
+import { getGoogleKeys } from './google_keys.ts';
+import { googleLimitFor } from './google_limits.ts';
 
 export interface CallModelOptions {
   taskId?: string | null;
@@ -70,9 +72,102 @@ export function getCandidateModels(db: DbConnection, role: string): BureauModelR
   return candidates.filter((m) => {
     if (m.enabled !== 1) return false;
     if (isModelInCooldown(db, m.id)) return false;
-    if (m.provider === 'google' && !process.env.GOOGLE_API_KEY) return false;
+    if (m.provider === 'google' && getGoogleKeys().length === 0) return false;
     return true;
   });
+}
+
+/** Serving account label for a Google key slot — never the key itself (T18). */
+export function googleKeyAccount(keyIndex: number): string {
+  return `gkey-${keyIndex}`;
+}
+
+/** Rolling per-(model,key) usage read from the append-only journal. */
+export function googlePairUsage(
+  db: DbConnection,
+  modelId: string,
+  keyIndex: number
+): { rpm: number; rpd: number; tpm: number } {
+  const account = googleKeyAccount(keyIndex);
+  const now = Date.now();
+  const since24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  const since60s = new Date(now - 60 * 1000).toISOString();
+
+  const day = db.get<{ c: number }>(
+    `SELECT COUNT(*) as c FROM bureau_journal WHERE kind = 'llm' AND model = ? AND account = ? AND ts >= ?`,
+    modelId, account, since24h
+  );
+  const minute = db.get<{ c: number; t: number | null }>(
+    `SELECT COUNT(*) as c, COALESCE(SUM(tokens_in), 0) as t
+       FROM bureau_journal WHERE kind = 'llm' AND model = ? AND account = ? AND ts >= ?`,
+    modelId, account, since60s
+  );
+
+  return { rpd: Number(day?.c ?? 0), rpm: Number(minute?.c ?? 0), tpm: Number(minute?.t ?? 0) };
+}
+
+export interface GoogleKeyPair {
+  keyIndex: number;
+  key: string;
+  rpdRemaining: number;
+  rpmRemaining: number;
+}
+
+/**
+ * Key slots for a Google model that are under every rate cap (RPM/RPD/TPM) and
+ * not in per-pair cooldown, ordered by most remaining daily headroom first.
+ * This is the proactive steering: normal traffic rides the roomiest pool.
+ */
+export function eligibleGoogleKeyPairs(db: DbConnection, modelId: string, keys: string[]): GoogleKeyPair[] {
+  const limit = googleLimitFor(modelId);
+  const pairs: GoogleKeyPair[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    if (isModelInCooldown(db, `${modelId}:${i}`)) continue;
+    const u = googlePairUsage(db, modelId, i);
+    if (u.rpd >= limit.rpd || u.rpm >= limit.rpm || u.tpm >= limit.tpm) continue;
+    pairs.push({ keyIndex: i, key: keys[i], rpdRemaining: limit.rpd - u.rpd, rpmRemaining: limit.rpm - u.rpm });
+  }
+  pairs.sort((a, b) => b.rpdRemaining - a.rpdRemaining || b.rpmRemaining - a.rpmRemaining);
+  return pairs;
+}
+
+/** One concrete thing to try: a model, and (for Google) a specific key slot. */
+interface CallAttempt {
+  model: BureauModelRow;
+  keyIndex: number | null;
+  key?: string;
+}
+
+/**
+ * Order candidates so the role's assigned primary is tried first, then the
+ * remaining Google models by daily-quota generosity (flash-lites' 500/day
+ * before the flash models' 20/day), with non-Google providers (e.g. Ollama)
+ * last. Keeps officer/junior traffic on the roomy lite pools by construction.
+ */
+function orderCandidates(candidates: BureauModelRow[]): BureauModelRow[] {
+  if (candidates.length <= 1) return candidates;
+  const [primary, ...rest] = candidates;
+  rest.sort((a, b) => {
+    const ra = a.provider === 'google' ? googleLimitFor(a.id).rpd : -1;
+    const rb = b.provider === 'google' ? googleLimitFor(b.id).rpd : -1;
+    return rb - ra;
+  });
+  return [primary, ...rest];
+}
+
+/** Flatten ordered candidates into concrete (model × eligible-key) attempts. */
+function buildAttempts(db: DbConnection, candidates: BureauModelRow[], googleKeys: string[]): CallAttempt[] {
+  const attempts: CallAttempt[] = [];
+  for (const model of orderCandidates(candidates)) {
+    if (model.provider === 'google') {
+      for (const pair of eligibleGoogleKeyPairs(db, model.id, googleKeys)) {
+        attempts.push({ model, keyIndex: pair.keyIndex, key: pair.key });
+      }
+    } else {
+      attempts.push({ model, keyIndex: null });
+    }
+  }
+  return attempts;
 }
 
 export async function callModel(
@@ -146,42 +241,54 @@ export async function callModel(
     throw new LlmError('rate-limited', 'No enabled, non-cooldown model available for role');
   }
 
-  // 2. Candidate execution & rotation loop
+  // 2. Build concrete attempts (model × key slot), proactively steered.
+  const googleKeys = getGoogleKeys();
+  const attempts = buildAttempts(db, candidates, googleKeys);
+  if (attempts.length === 0) {
+    throw new LlmError('rate-limited', 'All model/key pairs are exhausted or in cooldown for this role');
+  }
+
+  // 3. Execution & rotation loop over attempts.
+  const mockOverride = getMockClientOverride();
   let lastError: Error | null = null;
-  for (const candidate of candidates) {
+  for (const attempt of attempts) {
+    const { model, keyIndex } = attempt;
+    const servingAccount = keyIndex !== null ? googleKeyAccount(keyIndex) : null;
+
     let client: LlmClient;
-    const mockOverride = getMockClientOverride();
     if (options?.customClient) {
       client = options.customClient;
     } else if (mockOverride) {
       client = mockOverride;
     } else if (process.env.NODE_ENV !== 'production' && process.env.BUREAU_MOCK_LLM === 'true') {
       client = new MockClient();
-    } else if (candidate.provider === 'google') {
-      client = new GoogleClient();
-    } else if (candidate.provider === 'ollama') {
+    } else if (model.provider === 'google') {
+      client = new GoogleClient(undefined, attempt.key);
+    } else if (model.provider === 'ollama') {
       client = new OllamaClient();
+    } else if (model.provider === 'mock') {
+      client = new MockClient();
     } else {
-      throw new LlmError('invalid', `Unsupported LLM provider '${candidate.provider}' for model '${candidate.id}'`);
+      throw new LlmError('invalid', `Unsupported LLM provider '${model.provider}' for model '${model.id}'`);
     }
 
     try {
       const response = await client.complete({
-        modelId: candidate.id,
+        modelId: model.id,
         messages,
         tools,
         timeoutMs: options?.timeoutMs,
         signal: options?.signal
       });
 
-      // Journal llm span with dynamic actor_role derived from role parameter
+      // Journal the llm span attributed to the model AND the serving key slot.
       journal(db, {
         kind: 'llm',
         attribution: {
           actor_role: role as ActorRole,
-          provider: candidate.provider,
-          model: candidate.id,
-          account: null
+          provider: model.provider,
+          model: model.id,
+          account: servingAccount
         },
         taskId: options?.taskId,
         workUuid: options?.workUuid,
@@ -194,23 +301,24 @@ export async function callModel(
 
       return {
         ...response,
-        provider: candidate.provider,
-        model: candidate.id
+        provider: model.provider,
+        model: model.id
       };
     } catch (err: any) {
       lastError = err;
       if (err instanceof LlmError && err.kind === 'rate-limited') {
         const retryMs = err.retryAfterMs ?? 60000;
-        setModelCooldown(db, candidate.id, retryMs);
+        // Cool the specific (model,key) pair, not the whole model.
+        const cooldownId = keyIndex !== null ? `${model.id}:${keyIndex}` : model.id;
+        setModelCooldown(db, cooldownId, retryMs);
 
-        // Emit guardrail span attributed to the model that refused
         journal(db, {
           kind: 'guardrail',
           attribution: {
             actor_role: role as ActorRole,
-            provider: candidate.provider,
-            model: candidate.id,
-            account: null
+            provider: model.provider,
+            model: model.id,
+            account: servingAccount
           },
           taskId: options?.taskId,
           workUuid: options?.workUuid,
@@ -218,7 +326,7 @@ export async function callModel(
           detail: { action: 'quota_exceeded_cooldown', retryAfterMs: retryMs }
         });
 
-        // Rotate to next candidate in roster
+        // Rotate to the next pair (another key for this model, or the next model).
         continue;
       }
       throw err;

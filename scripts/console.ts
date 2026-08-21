@@ -87,6 +87,10 @@ export async function main(
   // Start the real HTTP server so the tokenized URL serves a live console.
   // Gated behind opts.serve so unit tests calling main() never bind a port.
   if (opts.serve) {
+    // Load operator-saved Google keys from the gitignored secrets file into
+    // process.env before opening the DB, so the roster seed sees them.
+    const { loadGoogleKeysFromDisk } = await import('../engine/llm/google_keys.ts');
+    loadGoogleKeysFromDisk();
     const db = openDbConnection(process.env.BUREAU_DB_PATH);
     const handle = await createConsoleServer({ port, token, db });
     const shutdown = async () => {

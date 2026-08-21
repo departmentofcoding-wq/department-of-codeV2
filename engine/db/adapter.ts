@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 import type { DbConnection, Statement } from '../contract/index.ts';
 import { listModels } from '../models/registry.ts';
-import { seedModelsAndAssignments, seedPhase1OfficerRoster } from '../models/seed.ts';
+import { seedModelsAndAssignments, seedPhase1OfficerRoster, seedGoogleRosterV2 } from '../models/seed.ts';
 import { getDatabase, closeDatabase } from './connection.ts';
 
 /**
@@ -98,6 +98,7 @@ export function openDbConnection(customPath?: string): DbConnection & { close: (
     seedModelsAndAssignments(wrapped);
   }
   seedPhase1OfficerRoster(wrapped);
+  seedGoogleRosterV2(wrapped);
   return {
     ...wrapped,
     close() {

@@ -135,17 +135,48 @@ async function loadJournalView() {
   }
 }
 
-function loadSettingsView() {
+async function loadSettingsView() {
   const container = document.getElementById('settings-container');
   if (!container) return;
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
   const tokenPreview = consoleToken ? `${consoleToken.slice(0, 8)}...` : undefined;
+
+  let googleKeys = { count: 0, masked: [] };
+  try {
+    googleKeys = await apiFetch('/api/settings/google-keys');
+  } catch (e) {
+    // Non-fatal; render with empty status.
+  }
+
   container.innerHTML = renderSettings({
     theme,
     isPaused,
     hasToken: Boolean(consoleToken),
-    tokenPreview
+    tokenPreview,
+    googleKeys
   });
+
+  document.getElementById('save-google-keys-btn')?.addEventListener('click', saveGoogleKeys);
+}
+
+async function saveGoogleKeys() {
+  const k1 = document.getElementById('google-key-1')?.value.trim() || '';
+  const k2 = document.getElementById('google-key-2')?.value.trim() || '';
+  const keys = [k1, k2].filter(Boolean);
+  if (keys.length === 0) {
+    showToast(renderErrorToast('Enter at least one Google API key.'));
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/settings/google-keys', {
+      method: 'POST',
+      body: JSON.stringify({ keys })
+    });
+    showToast(`<div class="toast"><span class="toast-icon">🔑</span> Saved ${res.count} Google key(s)</div>`);
+    await loadSettingsView();
+  } catch (err) {
+    // Error toast handled by apiFetch.
+  }
 }
 
 async function refreshActiveView() {
@@ -173,7 +204,7 @@ async function refreshActiveView() {
       await loadJournalView();
       break;
     case 'settings':
-      loadSettingsView();
+      await loadSettingsView();
       break;
   }
 }

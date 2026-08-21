@@ -43,16 +43,20 @@ describe('A5: Model Registry & Assignments', () => {
     // Simulate pre-existing DB where listModels > 0
     seedPhase1OfficerRoster(db);
 
+    // The versioned v2 reseed (run at boot) moves the officer off the
+    // un-provisioned Ollama backend onto Google Gemini flash-lite.
     const officerAssignment = getAssignment(db, 'task-intake-officer');
     expect(officerAssignment).toBeDefined();
-    expect(officerAssignment?.backend).toBe('ollama');
-    expect(officerAssignment?.model_id).toBe('ollama/qwen2.5-coder');
+    expect(officerAssignment?.backend).toBe('google');
+    expect(officerAssignment?.model_id).toBe('gemini-3.1-flash-lite');
 
     const geminiModel = getModel(db, 'gemini-2.5-flash');
     expect(geminiModel).toBeDefined();
     expect(geminiModel?.provider).toBe('google');
     expect(geminiModel?.price_in_usd_per_mtok).toBeNull();
 
+    // The Phase 1 Ollama model is still registered (fallback if the operator
+    // later provisions Ollama), just no longer the officer's assignment.
     const ollamaModel = getModel(db, 'ollama/qwen2.5-coder');
     expect(ollamaModel).toBeDefined();
     expect(ollamaModel?.provider).toBe('ollama');

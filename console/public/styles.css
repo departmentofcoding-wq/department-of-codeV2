@@ -324,6 +324,19 @@ body {
   margin-top: 1.5rem;
 }
 
+/* Settings — Google key form */
+.settings-key-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  align-items: center;
+}
+.settings-key-form .intake-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
 /* Conversational Intake */
 .intake-modal {
   max-width: 640px;
