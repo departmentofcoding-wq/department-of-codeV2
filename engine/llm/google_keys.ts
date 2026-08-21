@@ -18,9 +18,15 @@ export function googleKeysFilePath(): string {
   return process.env.BUREAU_GOOGLE_KEYS_FILE || path.join(process.cwd(), 'secrets', 'google.env');
 }
 
-/** A Google API key is `AIza…` followed by URL-safe base64-ish chars. */
+/**
+ * Google issues API keys in more than one shape: the classic `AIza…` keys and
+ * the newer `AQ.…` keys (both from AI Studio). Rather than pin an exact prefix,
+ * accept any sufficiently long, whitespace-free token of key-safe characters
+ * (letters, digits, and `._-`), which covers both without silently rejecting a
+ * valid newer key.
+ */
 export function isValidGoogleKey(key: string): boolean {
-  return /^AIza[0-9A-Za-z_-]{20,}$/.test(key.trim());
+  return /^[A-Za-z0-9._-]{20,}$/.test(key.trim());
 }
 
 /**
@@ -92,7 +98,7 @@ export function saveGoogleKeys(keys: string[], filePath = googleKeysFilePath()):
     const k = (raw ?? '').trim();
     if (!k) continue;
     if (!isValidGoogleKey(k)) {
-      throw new Error('One or more keys are not valid Google API keys (expected an "AIza…" key).');
+      throw new Error('One or more entries are not valid Google API keys (expected a long key like "AIza…" or "AQ.…", no spaces).');
     }
     if (!seen.has(k)) {
       seen.add(k);

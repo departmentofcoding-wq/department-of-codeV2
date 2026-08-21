@@ -175,7 +175,10 @@ describe('Google keys module: parsing, validation, masking, persistence', () => 
 
   it('validates and masks keys', () => {
     expect(isValidGoogleKey(KEY_A)).toBe(true);
+    // Newer AI Studio key format (AQ.…) must be accepted too.
+    expect(isValidGoogleKey('AQ.Ab8dEfGhIjKlMnOpQrStUvWxYz01234Q')).toBe(true);
     expect(isValidGoogleKey('nope')).toBe(false);
+    expect(isValidGoogleKey('has spaces in it aaaaaaaaaaaaa')).toBe(false);
     expect(maskGoogleKey(KEY_A)).toBe('AIza…AA01');
     expect(maskGoogleKey(KEY_A)).not.toContain(KEY_A.slice(4, -4));
   });

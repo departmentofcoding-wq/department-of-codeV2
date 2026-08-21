@@ -373,9 +373,9 @@ export function renderGoogleKeysCard(status) {
       ${statusLine}
       <div class="settings-key-form">
         <input type="password" id="google-key-1" class="intake-input" autocomplete="off"
-          placeholder="Key 1 (AIza…)" />
+          placeholder="Key 1 (AIza… or AQ.…)" />
         <input type="password" id="google-key-2" class="intake-input" autocomplete="off"
-          placeholder="Key 2 (AIza…, optional)" />
+          placeholder="Key 2 (optional)" />
         <button id="save-google-keys-btn" class="btn btn-primary">Save keys</button>
       </div>
     </div>`;
