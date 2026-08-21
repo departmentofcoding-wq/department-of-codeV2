@@ -236,7 +236,7 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(JSON.parse(next.payload).priorFeedback).toMatch(/missing/i);
   });
 
-  it('AMEND at the ceiling: the task is blocked, the operator notified, and NO next round is enqueued', async () => {
+  it('AMEND at the ceiling: instead of blocking, the junior is sent to implement and the walkthrough review becomes the gate', async () => {
     const db = createFakeDb();
     seedTask(db, { plan_rounds: 2 }); // one round left (ceiling 3)
     setAntigravityDriverOverride({
@@ -249,9 +249,18 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     const res = await runPlanReviewCycle(db, { taskId: 'task-pc', seniorId: 'claude' });
     expect(res.outcome).toBe('revise');
     expect((res as any).roundsUsed).toBe(3);
+    // No further plan round: the ceiling stops PLANNING, not the pipeline.
     expect((res as any).nextRoundEnqueued).toBe(false);
-    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-pc').state).toBe('blocked');
     expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'plan.cycle'`).n).toBe(0);
+    // Instead of blocking, the junior is dispatched to implement the best plan.
+    expect((res as any).ceilingDispatchJobId).toBeTruthy();
+    const dispatchJobs = db.all<any>(`SELECT payload FROM bureau_jobs WHERE kind = 'junior.dispatch'`);
+    expect(dispatchJobs.length).toBe(1);
+    expect(JSON.parse(dispatchJobs[0].payload).prompt).toContain(GOOD_PLAN);
+    // A dispatch row was created for the same junior that planned.
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_dispatches`).n).toBe(1);
+    // The task is NOT blocked — it advances into implementation.
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-pc').state).not.toBe('blocked');
   });
 
   it('is wired as a real job kind: plan.cycle registered, single attempt, long timeout; junior.dispatch timeout fits GUI agents', () => {

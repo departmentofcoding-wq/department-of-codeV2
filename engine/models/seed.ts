@@ -123,9 +123,14 @@ export function applyGoogleRoster(db: DbConnection, enabled: number): void {
     notes: 'Google free tier — 20 RPD / 5 RPM / 250K TPM per key (quality spill-over)'
   });
 
-  // Google powers the high-volume "doing" roles; the senior stays put.
+  // Google powers the high-volume callModel role (the intake officer). The
+  // senior AND the junior both stay put: they are harness-driven GUI/CLI agents,
+  // not callModel google candidates. The junior is the Antigravity IDE agent
+  // (driven via CDP by engine/harness/antigravity.ts), the exact analogue of the
+  // Z.ai/Claude senior — reassigning it to a Google API model misrepresents the
+  // worker and is never used by the plan.cycle flow, which always drives
+  // Antigravity directly. Only the intake officer is a real google callModel role.
   assignRole(db, 'task-intake-officer', 'google', 'gemini-3.1-flash-lite');
-  assignRole(db, 'junior-engineer', 'google', 'gemini-3.5-flash-lite');
 }
 
 export function seedGoogleRosterV2(db: DbConnection): void {

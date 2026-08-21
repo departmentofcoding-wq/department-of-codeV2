@@ -465,5 +465,17 @@ export interface BureauWatchdogFindingRow {
 
 export type WatchdogFinding = BureauWatchdogFindingRow;
 
+export interface BureauAssetRow {
+  id: string;
+  name: string;
+  category: string;
+  url: string;
+  description: string | null;
+  owner: string | null;
+  status: 'Active' | 'Inactive';
+  created_at: string;
+  updated_at: string;
+}
+
 
 

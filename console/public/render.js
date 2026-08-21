@@ -291,6 +291,67 @@ export function renderWorkers(workers) {
 }
 
 /**
+ * Renders the department assets inventory table.
+ * @param {import('../contract.ts').AssetDTO[]} assets
+ * @returns {string}
+ */
+export function renderAssetsTable(assets) {
+  if (!assets || assets.length === 0) {
+    return '<div class="card empty-state">No department assets tracked yet.</div>';
+  }
+
+  const rows = assets.map(a => {
+    const statusClass = a.status === 'Active' ? 'state-active' : 'state-inactive';
+    const safeUrl = escapeHtml(a.url);
+    const safeName = escapeHtml(a.name);
+    const safeCategory = escapeHtml(a.category);
+    const safeDescription = escapeHtml(a.description || '—');
+    const safeOwner = escapeHtml(a.owner || '—');
+    const safeStatus = escapeHtml(a.status);
+    const safeUpdated = escapeHtml(a.updated_at);
+    const safeId = escapeHtml(a.id);
+
+    return `
+      <tr class="asset-row" data-asset-id="${safeId}">
+        <td><strong>${safeName}</strong></td>
+        <td><span class="badge category-badge">${safeCategory}</span></td>
+        <td><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="asset-link">${safeUrl}</a></td>
+        <td>${safeDescription}</td>
+        <td>${safeOwner}</td>
+        <td><span class="badge ${statusClass}">${safeStatus}</span></td>
+        <td class="metric-sub">${safeUpdated}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm btn-edit-asset" data-id="${safeId}">Edit</button>
+          <button class="btn btn-secondary btn-sm btn-delete-asset" data-id="${safeId}" style="color: var(--color-error, #f87171); margin-left: 0.25rem;">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="card table-card full-width">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Asset Name</th>
+            <th>Category</th>
+            <th>URL</th>
+            <th>Description</th>
+            <th>Owner / Custodian</th>
+            <th>Status</th>
+            <th>Last Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
  * Renders the journal timeline entries.
  * @param {import('../contract.ts').JournalEntryDTO[]} journal
  * @returns {string}

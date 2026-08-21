@@ -24,6 +24,11 @@ export interface JuniorDispatchPayload {
   model?: string;
   /** Folder/project to select in the junior's GUI before sending the prompt. */
   folder?: string;
+  /** Start a fresh conversation first (default true). Planning-originated
+   *  implementation dispatches set this false so the junior CONTINUES in the same
+   *  conversation it planned in — it already holds the approved plan + review
+   *  context, and the IDE may expose no reset control to open a fresh one. */
+  freshConversation?: boolean;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -86,6 +91,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         port: payload.antigravityPort,
         model: payload.model,
         folder: payload.folder,
+        freshConversation: payload.freshConversation,
         signal: ctx.signal
       });
 

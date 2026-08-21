@@ -146,3 +146,66 @@ Every PR in the Operator Console track records the guard it broke and the test t
   AssertionError: expected 200 to be 502
   ```
 - **Verification**: Mutation caught by `test/unit/tc4_intake_api.test.ts`. Restored code passes cleanly (7/7).
+
+---
+
+## M-ASSET-1: Asset Validation Gate Guard (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-assets-tab` (Department Assets Tab)
+- **Guard Broken**: Validation gate `if (!name || !url)` in `POST /api/assets` handler (`console/server.ts`).
+- **Mutation Applied**: Commented out the validation check so asset creation proceeds with empty/missing `name` or `url`.
+- **Test Command**: `npx vitest run test/unit/tc6_assets_api.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tc6_assets_api.test.ts > T-C6: Department Assets API & CRUD Machinery > 3. Validation Gate: rejects missing or blank name or url with 400 VALIDATION_ERROR
+  AssertionError: expected 201 to be 400 // Object.is equality
+
+  - Expected
+  + Received
+
+  - 400
+  + 201
+
+   ❯ test/unit/tc6_assets_api.test.ts:147:34
+  ```
+- **Verification**: Mutation caught by `test/unit/tc6_assets_api.test.ts`. Restored code passes cleanly (7/7).
+
+---
+
+## M-ASSET-2: Asset Endpoints Token Authentication Guard (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-assets-tab` (Department Assets Tab)
+- **Guard Broken**: Token authentication check `if (!reqToken || reqToken !== token)` for `/api/assets` routes (`console/server.ts`).
+- **Mutation Applied**: Exempted `/api/assets` routes from token check (`if (!pathname.startsWith('/api/assets') && (!reqToken || reqToken !== token))`).
+- **Test Command**: `npx vitest run test/unit/tc6_assets_api.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tc6_assets_api.test.ts > T-C6: Department Assets API & CRUD Machinery > 6. Auth Guard: /api/assets endpoints fail-closed (401) and log guardrail journal span when token missing/invalid
+  AssertionError: expected 200 to be 401 // Object.is equality
+
+  - Expected
+  + Received
+
+  - 401
+  + 200
+
+   ❯ test/unit/tc6_assets_api.test.ts:230:35
+  ```
+- **Verification**: Mutation caught by `test/unit/tc6_assets_api.test.ts`. Restored code passes cleanly (7/7).
+
+---
+
+## M-ASSET-3: Asset Update Timestamp Refresh Guard (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-assets-tab` (Department Assets Tab)
+- **Guard Broken**: Refreshing `updated_at = new Date().toISOString()` on `POST /api/assets/:id/update` (`console/server.ts`).
+- **Mutation Applied**: Preserved old `existing.updated_at` on update instead of generating a new ISO timestamp.
+- **Test Command**: `npx vitest run test/unit/tc6_assets_api.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tc6_assets_api.test.ts > T-C6: Department Assets API & CRUD Machinery > 4. POST /api/assets/:id/update: updates fields, refreshes updated_at, validates blank edits, and returns 404 for missing
+  AssertionError: expected '2026-01-01T00:00:00.000Z' not to be '2026-01-01T00:00:00.000Z' // Object.is equality
+   ❯ test/unit/tc6_assets_api.test.ts:180:37
+  ```
+- **Verification**: Mutation caught by `test/unit/tc6_assets_api.test.ts`. Restored code passes cleanly (7/7).
+

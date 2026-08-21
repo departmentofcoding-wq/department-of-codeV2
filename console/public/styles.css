@@ -497,3 +497,32 @@ body {
 .worker-dot.active { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
 .worker-dot.idle { background: #888; }
 .worker-last { color: var(--text-muted); font-size: 0.85rem; }
+
+/* Assets tab */
+.asset-link {
+  color: var(--accent-blue);
+  text-decoration: none;
+  word-break: break-all;
+}
+.asset-link:hover {
+  text-decoration: underline;
+}
+.category-badge {
+  background: rgba(192, 132, 252, 0.15);
+  color: var(--accent-purple);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+}
+.badge.state-active {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+.badge.state-inactive {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+.modal.asset-modal {
+  max-width: 540px;
+}
+

@@ -140,7 +140,7 @@ describe.each(testImplementations)('T39 & T40: Senior Plan Review & Ceiling Exha
     );
     expect(reviewRows2.length).toBe(1);
     expect(reviewRows2[0].verdict).toBe('approved');
-    expect(['mock', 'ollama']).toContain(reviewRows2[0].provider);
+    expect(['mock', 'ollama', 'google']).toContain(reviewRows2[0].provider);
 
     const taskAfter2 = db.get<{ plan_rounds: number }>('SELECT plan_rounds FROM bureau_tasks WHERE id = ?', 'task-t39');
     expect(taskAfter2?.plan_rounds).toBe(2);

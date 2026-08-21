@@ -6,6 +6,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
+import { sliceAfterPrompt } from '../harness/antigravity.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSenior } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
@@ -93,8 +94,11 @@ export type PlanCycleResult =
       feedback: string;
       roundsUsed: number;
       ceiling: number;
-      /** Next round enqueued (false when the ceiling was hit and the task blocked). */
+      /** Next round enqueued (false when the ceiling was hit). */
       nextRoundEnqueued: boolean;
+      /** Set when the ceiling was reached and, instead of blocking, the junior was
+       *  sent to implement on the best-available plan (walkthrough review gates). */
+      ceilingDispatchJobId?: string;
     };
 
 /** Options carried across rounds of the cycle. */
@@ -223,14 +227,29 @@ export async function runPlanReviewCycle(
   };
 
   const ag = getAntigravityDriver();
-  const jr = await ag.runCommand(buildJuniorPlanPrompt(task, opts.priorFeedback), {
+  const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback);
+  const jr = await ag.runCommand(juniorPrompt, {
     junior: juniorId,
     model: opts.juniorModel,
     folder: opts.folder,
     stallMs: opts.juniorStallMs ?? 120000,
+    // Round 1 must start fresh (no other task's context). A REVISE round
+    // (priorFeedback present) is the SAME task continuing: stay in the junior's
+    // existing conversation so it sees its prior plan + the senior's required
+    // changes — and so we don't depend on a reset control the IDE may not expose.
+    freshConversation: !opts.priorFeedback,
     signal: opts.signal
   });
-  const planText = (jr.plan && jr.plan.trim()) || jr.transcript || '(junior produced no plan text)';
+  // Choose the richest plan text. This junior often emits "Key Plan Highlights"
+  // inline and the full plan in an artifact file, so a narrow marker block can
+  // miss the branch/scope/tests the rubric checks for. Prefer, in order: a
+  // marker-extracted plan; the junior's full reply region (sliced after our
+  // prompt, so the echoed task text can't masquerade as the plan); the reply.
+  const replyRegion = jr.fullOutput ? sliceAfterPrompt(jr.fullOutput, juniorPrompt).trim() : '';
+  const planText =
+    [replyRegion, jr.plan, jr.transcript]
+      .map(s => (s || '').trim())
+      .find(s => s.length > 0) || '(junior produced no plan text)';
   // Honest attribution: the GUI picker read-back when a model was selected.
   juniorAttribution.model = jr.model ?? opts.juniorModel ?? UNSPECIFIED_MODEL;
 
@@ -275,6 +294,8 @@ export async function runPlanReviewCycle(
       reviewAttribution: SENIOR_RUBRIC_ATTRIBUTION,
       reviewProvider: 'deterministic',
       reviewModel: 'rubric',
+      juniorProvider: juniorAttribution.provider,
+      juniorModel: juniorAttribution.model,
       ceiling,
       carry: opts,
       jobId: opts.jobId
@@ -325,6 +346,8 @@ export async function runPlanReviewCycle(
     },
     reviewProvider: seniorId,
     reviewModel: review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL,
+    juniorProvider: juniorAttribution.provider,
+    juniorModel: juniorAttribution.model,
     ceiling,
     carry: opts,
     jobId: opts.jobId
@@ -411,6 +434,8 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
         dispatchId,
         prompt: implPrompt,
         junior: p.junior,
+        // Continue in the planning conversation (see enqueueImplementationDispatch).
+        freshConversation: false,
         // Pin the model the planning round actually used, when it is known —
         // never pin the 'unspecified' sentinel.
         ...(p.juniorModel !== UNSPECIFIED_MODEL ? { model: p.juniorModel } : {}),
@@ -432,6 +457,46 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
   };
 }
 
+/**
+ * Kick the junior's implementation: insert a dispatch row and enqueue
+ * junior.dispatch with the given plan as the implementation prompt. Shared by the
+ * approve path and the ceiling-proceed path so both drive the SAME junior that
+ * planned, in its GUI, on the recorded plan.
+ */
+function enqueueImplementationDispatch(
+  db: DbConnection,
+  task: BureauTaskRow,
+  opts: { planText: string; junior: string; juniorProvider: string; juniorModel: string; folder?: string }
+) {
+  const nowIso = new Date().toISOString();
+  const dispatchId = crypto.randomUUID();
+  const implPrompt = buildImplementationPrompt(task, opts.planText);
+  db.run(
+    `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+     VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
+    dispatchId,
+    task.id,
+    task.work_uuid,
+    opts.juniorProvider,
+    opts.juniorModel,
+    nowIso
+  );
+  return enqueueJob(db, {
+    kind: 'junior.dispatch',
+    task_id: task.id,
+    payload: {
+      dispatchId,
+      prompt: implPrompt,
+      junior: opts.junior,
+      // Continue in the planning conversation: the junior already holds its
+      // approved plan + the senior's review, and the IDE may expose no reset.
+      freshConversation: false,
+      ...(opts.juniorModel !== UNSPECIFIED_MODEL ? { model: opts.juniorModel } : {}),
+      ...(opts.folder ? { folder: opts.folder } : {})
+    }
+  });
+}
+
 interface ReviseParams {
   planId: string;
   planText: string;
@@ -442,6 +507,10 @@ interface ReviseParams {
   reviewAttribution: AttributionTuple;
   reviewProvider: string;
   reviewModel: string;
+  /** The junior that authored this plan — carried so the ceiling-proceed path can
+   *  dispatch the SAME junior to implement. */
+  juniorProvider: string;
+  juniorModel: string;
   ceiling: number;
   carry: CycleCarry & { jobId?: string };
   jobId?: string;
@@ -485,16 +554,39 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
   const roundsUsed = task.plan_rounds + 1;
 
   // The cycle actually cycles: with rounds remaining, the senior's feedback is
-  // fed straight back to the junior in the next round. At the ceiling the task
-  // is blocked and the operator notified — never silently continued.
+  // fed straight back to the junior in the next round. At the ceiling, rather
+  // than stall the task, the department lets the junior START implementing on the
+  // best-available plan and moves the quality gate to the WALKTHROUGH review
+  // (senior.review-work) after the work exists — "see the whole flow through".
+  // The plan history and every amend verdict remain on the record for that
+  // review, so nothing is silently waved through.
   if (roundsUsed >= p.ceiling) {
-    const refreshed = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', task.id);
-    if (refreshed && refreshed.state === 'claimed') {
-      transition(db, task.id, 'blocked', p.reviewAttribution, {
-        reason: 'plan_rounds_ceiling_exceeded_after_amend'
-      });
-    }
-    notifyOperator(p.jobId ?? 'plan.cycle', `Task ${task.id} plan review ceiling (${p.ceiling}) reached`);
+    const dispatchJob = enqueueImplementationDispatch(db, task, {
+      planText: p.planText,
+      junior: p.junior,
+      juniorProvider: p.juniorProvider,
+      juniorModel: p.juniorModel,
+      folder: p.carry.folder
+    });
+    journal(db, {
+      kind: 'review',
+      attribution: p.reviewAttribution,
+      taskId: task.id,
+      workUuid: task.work_uuid,
+      jobId: p.jobId ?? null,
+      detail: {
+        stage: 'plan-review',
+        action: 'ceiling_proceed_to_implementation',
+        ceiling: p.ceiling,
+        roundsUsed,
+        planId: p.planId,
+        dispatchJobId: dispatchJob.id
+      }
+    });
+    notifyOperator(
+      p.jobId ?? 'plan.cycle',
+      `Task ${task.id} hit the plan ceiling (${p.ceiling}); the junior started implementing — the walkthrough review is now the gate`
+    );
     return {
       outcome: 'revise',
       planId: p.planId,
@@ -505,7 +597,8 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
       feedback: p.feedback,
       roundsUsed,
       ceiling: p.ceiling,
-      nextRoundEnqueued: false
+      nextRoundEnqueued: false,
+      ceilingDispatchJobId: dispatchJob.id
     };
   }
 
