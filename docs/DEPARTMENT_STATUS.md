@@ -11,8 +11,8 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console conversational intake merged at `baa5b74` (feature `11b4ad9`, Senior verdict `bbdf221`); Phase 7 Stream A google-provider merged at `a74131d` (feature `df7f442`, Senior verdict `65a0d5e`). |
-| Suite | 300/300 tests, 76 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`). |
+| Suite | 314/314 tests, 77 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Stream A (provider reality) merged (`a74131d`) — the LLM-officer findings are resolved (officer on multi-key Google flash-lite; keys via Settings). Remaining: A2 `[llm]` provider-doubling, A3 budget-refusal proof, Stream B (IDE reality), C1 delivery (PR/merge/backup) against a sandbox *remote*. Gemini keys live (env + gitignored `secrets/google.env`). |
 
@@ -59,6 +59,31 @@ free tier) is an operational matter, not a code bug — the engine already handl
 429 via model cooldown; the operator should pick a model with quota headroom
 (Gemini 2.5/3.7 Flash were green; Antigravity Agents tier has 60 RPM) or enable
 billing.
+
+**Auto-kickoff flow — filed tasks start themselves; console owns a Runner
+(2026-08-21):** two independent gaps had stranded filed tasks (filing
+enqueued no work; the console started no Runner). Both closed: `fileTask` now
+enqueues the `plan.cycle` job in the SAME transaction as the task insert
+(deterministic id `plan.cycle:<taskId>` via `engine/jobs/ids.ts`, INSERT OR
+IGNORE — idempotent by construction, `max_attempts:1`); a bounded reconciler
+(`engine/flow/reconcile.ts`, every Runner tick) sweeps queued tasks with ZERO
+cycle rows — failed cycles are NOT retried (explicit operator action); the
+console (`opts.serve` only) runs a background Runner with
+`excludeKinds:['intake.turn']` so it never races the inline intake drain
+(`claimJob` gained a parameterized exclusion), plus a standalone `npm run
+runner` that drains everything (durability/resume). Shutdown order:
+`runner.stop()` → server close. The done-gate (verifier exit 0 + human
+approval) is untouched — only planning auto-starts. Tests +14 (filing
+kickoff/idempotent, reconciler stranded/idempotent/bounded/non-queued,
+claimJob exclusion — all on fake AND real node:sqlite). Junior shipped no
+mutation evidence; Senior executed and recorded **M-AK1** (deterministic id —
+4 failures), **M-AK2** (kind exclusion — 2 failures), **M-AK3** (reconciler
+NOT EXISTS — NOT caught, correctly: the id constraint redundantly blocks
+re-enqueue; defense-in-depth) in `docs/mutation-evidence-phase7.md`. Merged
+`64d33cd` after Senior verdict `f8aceeb` for `592dc09`. **Operator advisory:
+the stranded "Department Assets" task (`82b97764…`, verified queued with zero
+cycles) will auto-kick a REAL plan cycle on the next console/runner start —
+supervise it or park it first.**
 
 **Phase 7 Stream A — multi-key Google provider + rate-limit steering
 (2026-08-21):** the officer's un-provisioned Ollama backend is off the
