@@ -11,10 +11,10 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console conversational intake merged at `baa5b74` (feature `11b4ad9`, Senior verdict `bbdf221`). |
-| Suite | 288/288 tests, 74 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console conversational intake merged at `baa5b74` (feature `11b4ad9`, Senior verdict `bbdf221`); Phase 7 Stream A google-provider merged at `a74131d` (feature `df7f442`, Senior verdict `65a0d5e`). |
+| Suite | 300/300 tests, 76 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Remaining for C1: add delivery (PR/merge/backup) against a sandbox *remote*, and the LLM-officer findings (role→model fallback when Ollama is down; seed id `gemini-2.5-flash` 404s, `gemini-flash-latest` works). Gemini key live (`.env`, gitignored). |
+| Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Stream A (provider reality) merged (`a74131d`) — the LLM-officer findings are resolved (officer on multi-key Google flash-lite; keys via Settings). Remaining: A2 `[llm]` provider-doubling, A3 budget-refusal proof, Stream B (IDE reality), C1 delivery (PR/merge/backup) against a sandbox *remote*. Gemini keys live (env + gitignored `secrets/google.env`). |
 
 **Pipeline verification (live, 2026-08-18):** a real task was driven end-to-end
 against the dept machinery on the sandbox repo, in an isolated temp DB —
@@ -59,6 +59,31 @@ free tier) is an operational matter, not a code bug — the engine already handl
 429 via model cooldown; the operator should pick a model with quota headroom
 (Gemini 2.5/3.7 Flash were green; Antigravity Agents tier has 60 RPM) or enable
 billing.
+
+**Phase 7 Stream A — multi-key Google provider + rate-limit steering
+(2026-08-21):** the officer's un-provisioned Ollama backend is off the
+critical path. `callModel` now rotates over (model × key) pairs — on a 429 it
+cools the specific pair (`cooldown:<model>:<keyIdx>`) and tries the next key,
+then the next model — and steers proactively: `eligibleGoogleKeyPairs` reads
+live RPM/RPD/TPM per pair from the journal and rides the flash-lite 500/day
+pools (limits transcribed from the operator's AI Studio page into
+`GOOGLE_MODEL_LIMITS`), spilling to the 20/day flash models only when
+saturated, Ollama last. Versioned reseed `seedGoogleRosterV2` (own meta key —
+reaches the live non-empty DB): officer → `gemini-3.1-flash-lite`, junior →
+`gemini-3.5-flash-lite` (roster/legacy-path only; the live junior stays the
+Antigravity harness), senior untouched. **Settings → Google API keys**:
+two masked fields; save validates `AIza…` shape, writes process.env +
+gitignored `secrets/google.env` (0600), enables the roster live (no restart),
+and journals `{ count }` only — never key material (T18; whole-DB scan test).
+Keys load at boot in both entrypoints (runner CLI + console) before the seed;
+explicit env wins over the file. Officer spans carry the serving slot
+`gkey-N`. Tests `tc_google_provider` (9) + `tc5_settings_keys_api` (3);
+mutations M-G1 (key hygiene — Senior re-executed: raw-key attribution fails
+3 tests incl. the whole-DB scan) + M-G2 (RPD steering) in
+`docs/mutation-evidence-phase7.md`. Merged `a74131d` after Senior verdict
+`65a0d5e` for `df7f442` (`docs/reviews/verdict-google-provider.md`). Still
+open: A2 `[llm]` provider-doubling, A3 budget-refusal proof; first live
+Gemini officer turn is an operator activity.
 
 **Console conversational intake — task-creation front door (2026-08-21):**
 the Operator Console can now originate tasks, not just view/approve them.
