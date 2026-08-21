@@ -105,6 +105,24 @@ describe.each(testImplementations)('engine/jobs ($name)', ({ create }) => {
     expect(claimed3).toBeNull();
   });
 
+  it('claimJob skips excluded kinds so an inline-drained kind is left for its owner', async () => {
+    // intake.turn is console-owned (drained inline via claimJobById); a
+    // background loop passing excludeKinds must step over it and claim the next.
+    const intakeJob = enqueueJob(db, { kind: 'intake.turn', payload: { sessionId: 's1' } });
+    await new Promise((res) => setTimeout(res, 5));
+    const flowJob = enqueueJob(db, { kind: 'plan.cycle', payload: { taskId: 't1' } });
+
+    const claimed = claimJob(db, 'runner-bg', 5000, ['intake.turn']);
+    expect(claimed?.id).toBe(flowJob.id);
+
+    // The intake job is still pending and claimable by its inline owner.
+    const stillPending = db.get<{ state: string }>(
+      'SELECT state FROM bureau_jobs WHERE id = ?',
+      intakeJob.id
+    );
+    expect(stillPending?.state).toBe('pending');
+  });
+
   it('claimJob handles run_after IS NULL predicate and ignores future run_after', () => {
     const futureIso = new Date(Date.now() + 100000).toISOString();
     enqueueJob(db, { kind: 'demo.sleep', run_after: futureIso });

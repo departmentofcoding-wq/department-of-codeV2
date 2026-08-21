@@ -129,6 +129,52 @@ describe.each(testImplementations)('Filing Door fileTask Unit Tests ($name)', ({
     expect(filedSpans[0].actor_role).toBe(officerAttr.actor_role);
   });
 
+  it('auto-kickoff: filing enqueues exactly one plan.cycle job for the task, keyed on the task id', () => {
+    const session = createSession(db, {
+      idempotencyKey: 'idem-kickoff-1',
+      attribution: officerAttr
+    });
+
+    updateSessionDraft(db, session.id, {
+      title: 'Auto Kickoff Task',
+      intent: 'Flow should start on its own',
+      verify_cmd: 'npm test'
+    });
+    confirmVerify(db, session.id, humanAttr);
+
+    const task = fileTask(db, session.id, officerAttr);
+
+    const cycleJobs = db.all<{ id: string; kind: string; task_id: string; state: string; max_attempts: number }>(
+      `SELECT id, kind, task_id, state, max_attempts FROM bureau_jobs WHERE kind = 'plan.cycle'`
+    );
+    expect(cycleJobs).toHaveLength(1);
+    expect(cycleJobs[0].id).toBe(`plan.cycle:${task.id}`);
+    expect(cycleJobs[0].task_id).toBe(task.id);
+    expect(cycleJobs[0].state).toBe('pending');
+    // plan.cycle drives live agents once per round — one attempt, surface on fail.
+    expect(cycleJobs[0].max_attempts).toBe(1);
+  });
+
+  it('auto-kickoff is idempotent: re-filing a session never spawns a second plan.cycle', () => {
+    const session = createSession(db, {
+      idempotencyKey: 'idem-kickoff-2',
+      attribution: officerAttr
+    });
+
+    updateSessionDraft(db, session.id, {
+      title: 'Idempotent Kickoff',
+      intent: 'One cycle only',
+      verify_cmd: 'npm test'
+    });
+    confirmVerify(db, session.id, humanAttr);
+
+    fileTask(db, session.id, officerAttr);
+    fileTask(db, session.id, officerAttr);
+
+    const cycleJobs = db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`);
+    expect(cycleJobs).toHaveLength(1);
+  });
+
   it('honors idempotency: re-filing an already filed session returns the existing task', () => {
     const session = createSession(db, {
       idempotencyKey: 'idem-file-repeat',

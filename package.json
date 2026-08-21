@@ -19,6 +19,7 @@
     "demo:phase5": "node --experimental-strip-types scripts/demo_phase5.ts",
     "dashboard": "node --experimental-strip-types scripts/dashboard.ts",
     "console": "node --experimental-strip-types scripts/console.ts",
+    "runner": "node --experimental-strip-types runner/main.ts",
     "junior": "node --experimental-strip-types scripts/run_junior.ts"
   },
   "devDependencies": {
