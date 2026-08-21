@@ -158,6 +158,66 @@ export interface ApproveTaskResult {
   span_id?: number;
 }
 
+// --- Conversational Intake DTOs (task creation front door) ---
+
+/** One turn in the intake conversation, flattened for display. */
+export interface IntakeMessageDTO {
+  id: string;
+  /** 'human' | 'officer' | 'tool' */
+  role: string;
+  /** Human-readable line for the chat panel (redacted). Empty string = skip. */
+  display: string;
+  created_at: string;
+}
+
+/** Live snapshot of an intake session and its derived gates. */
+export interface IntakeStateDTO {
+  session_id: string;
+  /** 'open' | 'filed' | 'abandoned' */
+  state: string;
+  title: string | null;
+  intent: string | null;
+  spec: string | null;
+  acceptance: string | null;
+  /** The verify command the officer drafted (never authored by the operator). */
+  verify_cmd: string | null;
+  verify_confirmed_at: string | null;
+  verify_confirmed_by: string | null;
+  model_calls: number;
+  messages: IntakeMessageDTO[];
+  /** Outstanding required fields: 'title' | 'intent' | 'verify_cmd' | 'verify_confirmed'. */
+  gaps: string[];
+  /** Latest officer question/statement awaiting the operator, if any. */
+  latest_question: string | null;
+  /** True when a non-vacuous verify command is drafted but not yet human-confirmed. */
+  awaiting_verify_confirmation: boolean;
+  /** True when confirm-and-file would succeed (all fields present, verify confirmable). */
+  can_file: boolean;
+  /** Set once the session has been filed into a task. */
+  task_id: string | null;
+}
+
+export interface StartIntakeRequest {
+  /** Plain-English description of what the operator wants. */
+  prompt: string;
+  /** Optional explicit title; defaults to the prompt. */
+  title?: string;
+  startedBy?: string;
+}
+
+export interface IntakeReplyRequest {
+  /** Plain-English answer to the officer's question. */
+  message: string;
+}
+
+export interface ConfirmFileResult {
+  ok: boolean;
+  task_id: string;
+  state: string;
+  title: string | null;
+  created_at: string;
+}
+
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
 
 export interface TriggerActionRequest {
@@ -237,5 +297,29 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/actions/trigger',
     auth: 'token',
     description: 'Enqueue an engine job (watchdog.sweep or backup.push)'
+  },
+  {
+    method: 'POST',
+    path: '/api/intake',
+    auth: 'token',
+    description: 'Start a conversational intake session; officer takes its first turn'
+  },
+  {
+    method: 'GET',
+    path: '/api/intake/:id',
+    auth: 'token',
+    description: 'Poll an intake session: draft, conversation, and derived gates'
+  },
+  {
+    method: 'POST',
+    path: '/api/intake/:id/reply',
+    auth: 'token',
+    description: 'Answer the intake officer in plain English; runs the next officer turn'
+  },
+  {
+    method: 'POST',
+    path: '/api/intake/:id/confirm-file',
+    auth: 'token',
+    description: 'Human confirms the drafted verify command and files the task (human gate)'
   }
 ] as const;

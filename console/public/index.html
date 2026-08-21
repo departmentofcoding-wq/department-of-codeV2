@@ -43,6 +43,7 @@
     <div id="view-tasks" class="view-section">
       <div class="section-header">
         <h2 class="section-title">Bureau Tasks</h2>
+        <button id="new-task-btn" class="btn btn-primary btn-sm">+ New Task</button>
       </div>
       <div id="tasks-container">
         <div class="card empty-state">Loading task list...</div>
@@ -94,6 +95,28 @@
       <div class="modal-actions">
         <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
         <button id="modal-confirm-btn" class="btn btn-primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conversational Intake Panel -->
+  <div id="intake-modal" class="modal-backdrop hidden">
+    <div class="modal intake-modal">
+      <div class="intake-header">
+        <h3>New Task</h3>
+        <button id="intake-close-btn" class="btn-icon" title="Close">✕</button>
+      </div>
+      <p class="intake-help metric-sub">
+        Describe what you want in plain English. The intake officer drafts the
+        technical details — including how the work will be checked. You never
+        write a command; you only approve the one it proposes.
+      </p>
+      <div id="intake-conversation" class="intake-conversation"></div>
+      <div id="intake-draft" class="intake-draft hidden"></div>
+      <div class="intake-input-row">
+        <textarea id="intake-input" class="intake-input" rows="2"
+          placeholder="e.g. Add a way to export the task list as CSV"></textarea>
+        <button id="intake-send-btn" class="btn btn-primary">Send</button>
       </div>
     </div>
   </div>
