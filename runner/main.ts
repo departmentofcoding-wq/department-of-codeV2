@@ -13,6 +13,7 @@ import {
   reapExpiredJobs,
   FOREMAN_ATTRIBUTION
 } from '../engine/jobs/jobs.ts';
+import { reconcileQueuedTasks } from '../engine/flow/reconcile.ts';
 // Importing the registry registers the job handlers as a module side effect.
 import { getJobDefinition } from '../engine/jobs/registry.ts';
 
@@ -80,7 +81,22 @@ export class Runner {
   private pollTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
-  constructor(db: DbConnection, config?: Partial<RunnerConfig>, notifier?: OperatorNotifier) {
+  /**
+   * Job kinds this Runner must not claim because another executor owns them.
+   * Per-Runner, not global: the console's in-process Runner excludes
+   * `intake.turn` (the console drains those inline via claimJobById, so the two
+   * would otherwise race), while a standalone `npm run runner` excludes nothing
+   * and drains every kind — including intake, which the durability/resume path
+   * relies on.
+   */
+  private excludeKinds: readonly string[];
+
+  constructor(
+    db: DbConnection,
+    config?: Partial<RunnerConfig>,
+    notifier?: OperatorNotifier,
+    options?: { excludeKinds?: readonly string[] }
+  ) {
     this.id = `runner-${crypto.randomUUID()}`;
     this.db = db;
     this.config = runnerConfigSchema.parse({
@@ -91,6 +107,7 @@ export class Runner {
       ...(config ?? {})
     });
     this.notifier = notifier ?? defaultNotifier;
+    this.excludeKinds = options?.excludeKinds ?? [];
 
     if (!getWorkspaceProviderOverride()) {
       setWorkspaceProvider(new GitWorkspaceProvider());
@@ -152,11 +169,16 @@ export class Runner {
   private async loop(): Promise<void> {
     while (!this.isStopping) {
       try {
+        // Reconcile queued tasks that have no cycle behind them
+        this.reconcileQueuedTasks();
+
         // Watchdog & Reaper tick
         this.runReaperAndWatchdog();
 
-        // Attempt job claim
-        const job = claimJob(this.db, this.id, this.config.BUREAU_LEASE_MS);
+        // Attempt job claim, skipping any kinds another executor owns (the
+        // console excludes intake.turn, which it drains inline via claimJobById;
+        // a standalone runner excludes nothing).
+        const job = claimJob(this.db, this.id, this.config.BUREAU_LEASE_MS, this.excludeKinds);
         if (job) {
           const jobPromise = this.executeJob(job);
           this.activeJobs.add(jobPromise);
@@ -171,6 +193,18 @@ export class Runner {
           this.pollTimer = setTimeout(res, this.config.BUREAU_POLL_MS);
         });
       }
+    }
+  }
+
+  /**
+   * Self-healing safety net for the auto-kickoff flow: enqueue a plan.cycle for
+   * any queued task that has none. Delegates to the engine reconcile door so the
+   * logic is unit-testable without constructing a full Runner. See
+   * engine/flow/reconcile.ts for why it is bounded and idempotent.
+   */
+  public reconcileQueuedTasks(): void {
+    for (const taskId of reconcileQueuedTasks(this.db)) {
+      log('INFO', 'reconciler_enqueued_plan_cycle', { taskId });
     }
   }
 

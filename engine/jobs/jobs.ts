@@ -99,9 +99,24 @@ export function enqueueJobIfAbsent(
   });
 }
 
-export function claimJob(db: DbConnection, leaseOwner: string, leaseDurationMs: number): BureauJobRow | null {
+export function claimJob(
+  db: DbConnection,
+  leaseOwner: string,
+  leaseDurationMs: number,
+  excludeKinds: readonly string[] = []
+): BureauJobRow | null {
   const now = new Date().toISOString();
   const leaseExpiresAt = new Date(Date.now() + leaseDurationMs).toISOString();
+
+  // Some job kinds are owned by another executor and must never be claimed by
+  // the general loop — chiefly `intake.turn`, which the console (and the demo
+  // scripts) drain inline and immediately via claimJobById. Excluding them here
+  // is what lets a background Runner coexist with the console's inline intake
+  // without the two racing for the same job row.
+  const kindFilter =
+    excludeKinds.length > 0
+      ? `AND kind NOT IN (${excludeKinds.map(() => '?').join(', ')})`
+      : '';
 
   return db.execTransaction(() => {
     const claimed = db.all<BureauJobRow>(
@@ -114,6 +129,7 @@ export function claimJob(db: DbConnection, leaseOwner: string, leaseDurationMs: 
          SELECT id FROM bureau_jobs
          WHERE state = 'pending'
            AND (run_after IS NULL OR run_after <= ?)
+           ${kindFilter}
          ORDER BY created_at ASC, id ASC
          LIMIT 1
        )
@@ -121,7 +137,8 @@ export function claimJob(db: DbConnection, leaseOwner: string, leaseDurationMs: 
       leaseOwner,
       leaseExpiresAt,
       now,
-      now
+      now,
+      ...excludeKinds
     );
 
     if (!claimed || claimed.length === 0) {

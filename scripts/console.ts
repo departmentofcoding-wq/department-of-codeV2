@@ -93,7 +93,22 @@ export async function main(
     loadGoogleKeysFromDisk();
     const db = openDbConnection(process.env.BUREAU_DB_PATH);
     const handle = await createConsoleServer({ port, token, db });
+
+    // Own a background Runner so filed tasks actually move: the filing door
+    // enqueues a plan.cycle, the reconciler sweeps up any stranded queued task,
+    // and this Runner drains the flow. It excludes intake.turn (the console
+    // drains those inline), so the two never race. A standalone `npm run runner`
+    // exists too for headless/parallel operation across projects.
+    const { Runner } = await import('../runner/main.ts');
+    const runner = new Runner(db, undefined, undefined, { excludeKinds: ['intake.turn'] });
+    runner.start();
+    console.log('[CONSOLE] Background runner started — filed tasks auto-kick the flow.');
+
+    let shuttingDown = false;
     const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      await runner.stop();
       await handle.close();
       closeDatabase();
       process.exit(0);

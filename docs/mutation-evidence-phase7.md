@@ -37,3 +37,18 @@ Settings key-entry hygiene (`POST /api/settings/google-keys`) is covered by
 `tc5_settings_keys_api.test.ts`: keys never appear in `bureau_journal`,
 `bureau_meta`, `bureau_models`, or `bureau_assignments`; the update span records
 `{ count }` only. Restoration verified: full suite 300/300, build clean.
+
+## Stream addendum — Auto-kickoff flow (`wt/junior-auto-kickoff-flow`, `592dc09`)
+
+The junior's walkthrough named the guard tests but shipped no mutation
+evidence; the Senior executed the representatives independently and recorded
+them here (verdict: `docs/reviews/verdict-auto-kickoff.md`).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-AK1 | Deterministic plan-cycle job id — one task → one cycle (`engine/jobs/ids.ts`) | `planCycleJobId` time-suffixed (`plan.cycle:<id>:<Date.now()>`) | `file_task.test.ts` "auto-kickoff… keyed on the task id" + `reconcile.test.ts` "enqueues exactly one" | 4 failed (both DB impls each) |
+| M-AK2 | claimJob kind exclusion — background runner never claims the console's inline-drained `intake.turn` (`engine/jobs/jobs.ts`) | `kindFilter` forced empty (and its params removed) | `jobs.test.ts` "claimJob skips excluded kinds so an inline-drained kind is left for its owner" | 2 failed (both DB impls) |
+| M-AK3 | Reconciler `NOT EXISTS` counts failed cycles (`engine/flow/reconcile.ts`) — **not caught, by design** | subquery gained `AND j.state != 'dead'` | none — the deterministic-id `INSERT OR IGNORE` redundantly blocks re-enqueue of a dead cycle, so the outcome holds with either mechanism removed | 8/8 pass; defense-in-depth, recorded as such |
+
+Restoration verified after each mutation: affected files re-ran green
+(18/18 file_task+reconcile, 20/20 jobs); working tree clean.
