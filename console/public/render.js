@@ -351,6 +351,37 @@ export function renderErrorToast(error) {
 }
 
 /**
+ * Renders the Google API key entry card. Shows masked status of configured
+ * keys and two password inputs to (re)enter them. Raw keys are never rendered.
+ * @param {{ count: number, masked: string[] } | undefined} status
+ * @returns {string}
+ */
+export function renderGoogleKeysCard(status) {
+  const masked = status && status.masked ? status.masked : [];
+  const statusLine = masked.length
+    ? `<div class="metric-sub">Configured: ${masked.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}</div>`
+    : `<div class="metric-sub text-warning">No Google API keys set — intake &amp; juniors can't run.</div>`;
+
+  return `
+    <div class="card table-card full-width" id="google-keys-card">
+      <h3>Google API Keys</h3>
+      <p class="metric-sub" style="margin-bottom:0.75rem;">
+        Powers the intake officer and junior engineers. Two keys are cycled and
+        rate-limit–steered automatically. Keys are stored in a gitignored local
+        file and never written to the database.
+      </p>
+      ${statusLine}
+      <div class="settings-key-form">
+        <input type="password" id="google-key-1" class="intake-input" autocomplete="off"
+          placeholder="Key 1 (AIza…)" />
+        <input type="password" id="google-key-2" class="intake-input" autocomplete="off"
+          placeholder="Key 2 (AIza…, optional)" />
+        <button id="save-google-keys-btn" class="btn btn-primary">Save keys</button>
+      </div>
+    </div>`;
+}
+
+/**
  * Renders the console settings view.
  * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string }} [settings]
  * @returns {string}
@@ -364,6 +395,8 @@ export function renderSettings(settings = {}) {
 
   return `
     <div class="dashboard-grid">
+      ${renderGoogleKeysCard(settings.googleKeys)}
+
       <div class="card stat-card">
         <h3>Operator Session</h3>
         <div class="metric-group">

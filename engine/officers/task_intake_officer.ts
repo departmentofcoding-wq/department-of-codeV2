@@ -136,8 +136,8 @@ export async function runOfficerTurn(
 ): Promise<OfficerTurnResult> {
   const officerAttr: AttributionTuple = {
     actor_role: 'task-intake-officer',
-    provider: 'ollama',
-    model: 'qwen2.5-coder',
+    provider: 'google',
+    model: 'gemini-3.1-flash-lite',
     account: null
   };
 

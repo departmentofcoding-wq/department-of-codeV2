@@ -13,6 +13,8 @@ import { taskGaps, isVacuousVerify } from '../engine/contract/validation.ts';
 import { createSession, appendIntakeMessage, getSession, getSessionWithMessages } from '../engine/intake/index.ts';
 import { confirmVerify } from '../engine/intake/confirm.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
+import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
+import { applyGoogleRoster } from '../engine/models/seed.ts';
 import { drainSingleJob } from '../runner/main.ts';
 import type { AttributionTuple, BureauJobRow, BureauIntakeMessageRow } from '../engine/contract/types.ts';
 import {
@@ -36,7 +38,9 @@ import {
   type IntakeStateDTO,
   type StartIntakeRequest,
   type IntakeReplyRequest,
-  type ConfirmFileResult
+  type ConfirmFileResult,
+  type GoogleKeyStatusDTO,
+  type SaveGoogleKeysRequest
 } from './contract.ts';
 
 export interface ConsoleServerOptions {
@@ -694,6 +698,54 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           return;
         }
         sendJson(res, 200, state);
+        return;
+      }
+
+      // --- Settings: masked status of configured Google keys ---
+      if (req.method === 'GET' && pathname === '/api/settings/google-keys') {
+        const status: GoogleKeyStatusDTO = googleKeyStatus();
+        sendJson(res, 200, status);
+        return;
+      }
+
+      // --- Settings: save Google keys (env + gitignored file, never the DB) ---
+      if (req.method === 'POST' && pathname === '/api/settings/google-keys') {
+        let body: SaveGoogleKeysRequest;
+        try {
+          body = (await parseJsonBody(req)) as SaveGoogleKeysRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        if (!Array.isArray(body.keys)) {
+          sendError(res, 400, 'BAD_REQUEST', 'Field "keys" must be an array of API keys');
+          return;
+        }
+
+        try {
+          const status = saveGoogleKeys(body.keys);
+          // Keys now available: enable the Google roster live (no restart).
+          applyGoogleRoster(db, 1);
+          // Journal COUNT ONLY — never any key material (T18 hygiene).
+          journal(db, {
+            kind: 'human',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'settings_keys_updated', provider: 'google', count: status.count }
+          });
+          sendJson(res, 200, status);
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'settings_keys_refused', provider: 'google', reason: err.message }
+          });
+          sendError(res, 400, 'INVALID_KEYS', err.message);
+        }
         return;
       }
 

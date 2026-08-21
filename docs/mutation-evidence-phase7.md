@@ -18,3 +18,22 @@ The reviewing Senior is expected to re-run representatives independently.
 Restoration verified after each mutation: the affected file's suite re-ran
 green (full suite 281/281 twice on the branch tip, build clean — see the
 walkthrough in `docs/reviews/walkthrough-flow-integration.md`).
+
+---
+
+## Stream A addendum — Multi-key Google provider (`wt/junior-a-google-provider`)
+
+Multi-key Google Gemini provider with rate-limit steering, replacing the
+un-provisioned Ollama officer backend. Every mutation below was really executed:
+mutated, the named test observed FAILING, restored, re-run green.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-G1 | Key hygiene — llm/guardrail spans carry the `gkey-N` slot label, never the key (`call_model.ts` serving attribution) | `servingAccount` set to `attempt.key` (the raw key) instead of `googleKeyAccount(keyIndex)` | `tc_google_provider.test.ts` — "never writes key material to the journal — only the gkey-N slot label" | 3 failed / 6 passed |
+| M-G2 | Proactive RPD steering — a key slot at its daily cap is skipped (`eligibleGoogleKeyPairs`) | Dropped the `u.rpd >= limit.rpd` term from the eligibility filter | `tc_google_provider.test.ts` — "proactively skips a key slot at its daily cap (RPD steering)" | 1 failed / 8 passed |
+| M-G3 | Human verify-confirm gate on filing (carried from intake stream) | see `docs/mutation-evidence-console.md` M-INTAKE-1/2 | — | — |
+
+Settings key-entry hygiene (`POST /api/settings/google-keys`) is covered by
+`tc5_settings_keys_api.test.ts`: keys never appear in `bureau_journal`,
+`bureau_meta`, `bureau_models`, or `bureau_assignments`; the update span records
+`{ count }` only. Restoration verified: full suite 300/300, build clean.

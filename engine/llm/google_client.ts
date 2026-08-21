@@ -1,17 +1,26 @@
 import { LlmError } from '../contract/index.ts';
 import type { LlmClient, LlmCompletionRequest, LlmCompletionResponse, LlmMessage, LlmToolCall } from '../contract/index.ts';
 
+/** Injectable transport so rotation/cooldown tests stay fully offline. */
+export type FetchLike = typeof fetch;
+
 export class GoogleClient implements LlmClient {
   private baseUrl: string;
+  private apiKey: string | undefined;
+  private fetchImpl: FetchLike;
 
-  constructor(baseUrl?: string) {
+  constructor(baseUrl?: string, apiKey?: string, fetchImpl?: FetchLike) {
     this.baseUrl = baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai';
+    // Caller-supplied key wins (multi-key rotation); fall back to env for the
+    // legacy single-key path.
+    this.apiKey = apiKey ?? process.env.GOOGLE_API_KEY;
+    this.fetchImpl = fetchImpl ?? globalThis.fetch;
   }
 
   public async complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse> {
-    const apiKey = process.env.GOOGLE_API_KEY;
+    const apiKey = this.apiKey;
     if (!apiKey) {
-      throw new LlmError('auth', 'GOOGLE_API_KEY environment variable is not set');
+      throw new LlmError('auth', 'No Google API key available (set one in the console Settings tab)');
     }
 
     const startTime = Date.now();
@@ -55,7 +64,7 @@ export class GoogleClient implements LlmClient {
     }
 
     try {
-      const res = await fetch(endpoint, {
+      const res = await this.fetchImpl(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -218,6 +218,20 @@ export interface ConfirmFileResult {
   created_at: string;
 }
 
+// --- Settings: Google API keys (env-only; never the DB/journal) ---
+
+/** Masked status of configured Google keys — safe for the browser. */
+export interface GoogleKeyStatusDTO {
+  count: number;
+  /** e.g. ["AIza…9f2c"] — never the raw key. */
+  masked: string[];
+}
+
+export interface SaveGoogleKeysRequest {
+  /** The operator's Google API keys, in priority order. */
+  keys: string[];
+}
+
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
 
 export interface TriggerActionRequest {
@@ -321,5 +335,17 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/intake/:id/confirm-file',
     auth: 'token',
     description: 'Human confirms the drafted verify command and files the task (human gate)'
+  },
+  {
+    method: 'GET',
+    path: '/api/settings/google-keys',
+    auth: 'token',
+    description: 'Masked status of configured Google API keys (never the raw values)'
+  },
+  {
+    method: 'POST',
+    path: '/api/settings/google-keys',
+    auth: 'token',
+    description: 'Save Google API keys to env + gitignored secrets file (never the DB)'
   }
 ] as const;

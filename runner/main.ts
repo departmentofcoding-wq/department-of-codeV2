@@ -305,6 +305,8 @@ export async function drainSingleJob(db: DbConnection, jobId: string): Promise<v
 
 async function main(): Promise<void> {
   const config = runnerConfigSchema.parse(process.env);
+  const { loadGoogleKeysFromDisk } = await import('../engine/llm/google_keys.ts');
+  loadGoogleKeysFromDisk();
   const conn = openDbConnection(config.BUREAU_DB_PATH);
   const runner = new Runner(conn, config);
 
