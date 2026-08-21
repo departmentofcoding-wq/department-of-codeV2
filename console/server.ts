@@ -8,7 +8,13 @@ import { journal } from '../engine/journal/writer.ts';
 import { dashboardSnapshot, workerRoster } from '../engine/dashboards/views.ts';
 import { timeline } from '../engine/journal/queries.ts';
 import { approveTask } from '../engine/state/machine.ts';
-import { enqueueJobIfAbsent } from '../engine/jobs/jobs.ts';
+import { enqueueJobIfAbsent, enqueueJob } from '../engine/jobs/jobs.ts';
+import { taskGaps, isVacuousVerify } from '../engine/contract/validation.ts';
+import { createSession, appendIntakeMessage, getSession, getSessionWithMessages } from '../engine/intake/index.ts';
+import { confirmVerify } from '../engine/intake/confirm.ts';
+import { fileTask } from '../engine/filing/file_task.ts';
+import { drainSingleJob } from '../runner/main.ts';
+import type { AttributionTuple, BureauJobRow, BureauIntakeMessageRow } from '../engine/contract/types.ts';
 import {
   CONSOLE_BIND_HOST,
   CONSOLE_TOKEN_HEADER,
@@ -25,7 +31,12 @@ import {
   type ApproveTaskResult,
   type TriggerActionRequest,
   type TriggerActionResult,
-  type ApiErrorResponse
+  type ApiErrorResponse,
+  type IntakeMessageDTO,
+  type IntakeStateDTO,
+  type StartIntakeRequest,
+  type IntakeReplyRequest,
+  type ConfirmFileResult
 } from './contract.ts';
 
 export interface ConsoleServerOptions {
@@ -137,6 +148,126 @@ function serveStaticFile(reqPath: string, publicDir: string, res: http.ServerRes
 
     fs.createReadStream(safePath).pipe(res);
   });
+}
+
+/** Attribution for every operator-originated act on the console. */
+const CONSOLE_HUMAN_ATTR: AttributionTuple = {
+  actor_role: 'human-operator',
+  provider: 'human',
+  model: 'operator',
+  account: 'operator'
+};
+
+/**
+ * Flatten one intake message into a redacted, human-readable chat line.
+ * Returns '' for messages the operator should not see (internal tool spans,
+ * empty officer turns) so the frontend can skip them.
+ */
+function flattenIntakeMessage(msg: BureauIntakeMessageRow): string {
+  if (msg.role === 'human') {
+    // Human content is stored as a raw string (or JSON of an object).
+    try {
+      const raw = JSON.parse(msg.content);
+      if (typeof raw === 'string') return redactOutput(raw);
+      const text = raw?.text ?? raw?.content;
+      return typeof text === 'string' ? redactOutput(text) : redactOutput(msg.content);
+    } catch {
+      return redactOutput(msg.content);
+    }
+  }
+  if (msg.role === 'officer') {
+    try {
+      const raw = JSON.parse(msg.content);
+      const parts: string[] = [];
+      if (typeof raw?.text === 'string' && raw.text.trim()) parts.push(raw.text.trim());
+      // The operator-facing question lives in the ask_human tool call arguments.
+      for (const tc of raw?.toolCalls ?? []) {
+        if (tc?.name === 'ask_human') {
+          const q = tc.arguments?.question ?? tc.arguments?.text;
+          if (typeof q === 'string' && q.trim()) parts.push(q.trim());
+        }
+      }
+      return parts.length ? redactOutput(parts.join('\n')) : '';
+    } catch {
+      return '';
+    }
+  }
+  // 'tool' and anything else: internal, not surfaced in the chat.
+  return '';
+}
+
+/** Build the live intake snapshot + derived gates for a session. */
+function buildIntakeState(db: DbConnection, sessionId: string): IntakeStateDTO | null {
+  const res = getSessionWithMessages(db, sessionId);
+  if (!res) return null;
+  const { session, messages } = res;
+
+  const dtoMessages: IntakeMessageDTO[] = messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    display: flattenIntakeMessage(m),
+    created_at: m.created_at
+  }));
+
+  const gaps = taskGaps(session);
+
+  // Latest officer line awaiting the operator.
+  let latestQuestion: string | null = null;
+  for (let i = dtoMessages.length - 1; i >= 0; i--) {
+    if (dtoMessages[i].role === 'officer' && dtoMessages[i].display) {
+      latestQuestion = dtoMessages[i].display;
+      break;
+    }
+  }
+
+  const hasRealVerify = Boolean(session.verify_cmd) && !isVacuousVerify(session.verify_cmd);
+  const awaitingVerifyConfirmation =
+    session.state === 'open' && hasRealVerify && !session.verify_confirmed_at;
+
+  // can_file: every field the officer must draft is present, verify is
+  // confirmable, and the session is still open. Confirmation itself is the
+  // operator's click — so treat a pending confirm as fileable.
+  const gapsIgnoringConfirm = gaps.filter((g) => g !== 'verify_confirmed');
+  const canFile = session.state === 'open' && gapsIgnoringConfirm.length === 0 && hasRealVerify;
+
+  const filedTask = session.state === 'filed'
+    ? db.get<{ id: string }>('SELECT id FROM bureau_tasks WHERE intake_session_id = ?', sessionId)
+    : null;
+
+  return {
+    session_id: session.id,
+    state: session.state,
+    title: session.title ? redactOutput(session.title) : null,
+    intent: session.intent ? redactOutput(session.intent) : null,
+    spec: session.spec ? redactOutput(session.spec) : null,
+    acceptance: session.acceptance ? redactOutput(session.acceptance) : null,
+    verify_cmd: session.verify_cmd ? redactOutput(session.verify_cmd) : null,
+    verify_confirmed_at: session.verify_confirmed_at,
+    verify_confirmed_by: session.verify_confirmed_by,
+    model_calls: session.model_calls,
+    messages: dtoMessages,
+    gaps,
+    latest_question: latestQuestion,
+    awaiting_verify_confirmation: awaitingVerifyConfirmation,
+    can_file: canFile,
+    task_id: filedTask?.id ?? null
+  };
+}
+
+/**
+ * Run a single intake officer turn synchronously and report whether it landed.
+ * The console has no background runner loop, so the turn must be drained inline
+ * (do NOT copy the enqueue-only trigger pattern). drainSingleJob swallows
+ * handler failures into the job row, so we re-read it and surface non-'done'.
+ */
+async function runIntakeTurn(db: DbConnection, sessionId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const job = enqueueJob(db, { kind: 'intake.turn', payload: { sessionId } });
+  await drainSingleJob(db, job.id);
+  const row = db.get<BureauJobRow>('SELECT state, last_error FROM bureau_jobs WHERE id = ?', job.id);
+  if (!row || row.state !== 'done') {
+    return { ok: false, error: row?.last_error || 'Intake officer turn did not complete' };
+  }
+  return { ok: true };
 }
 
 export async function createConsoleServer(options: ConsoleServerOptions): Promise<ConsoleServerHandle> {
@@ -409,6 +540,160 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           created_at: job.created_at
         };
         sendJson(res, 200, result);
+        return;
+      }
+
+      // --- Conversational intake: start a session (officer's first turn) ---
+      if (req.method === 'POST' && pathname === '/api/intake') {
+        let body: StartIntakeRequest;
+        try {
+          body = (await parseJsonBody(req)) as StartIntakeRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+        if (!prompt) {
+          sendError(res, 400, 'BAD_REQUEST', 'Field "prompt" is required');
+          return;
+        }
+
+        const attribution: AttributionTuple = { ...CONSOLE_HUMAN_ATTR, account: body.startedBy || 'operator' };
+        const session = createSession(db, {
+          title: (body.title && body.title.trim()) || prompt,
+          attribution
+        });
+        appendIntakeMessage(db, session.id, { role: 'human', content: prompt, attribution });
+
+        const turn = await runIntakeTurn(db, session.id);
+        if (!turn.ok) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            detail: { action: 'intake_turn_failed', sessionId: session.id, reason: turn.error }
+          });
+          sendError(res, 502, 'INTAKE_TURN_FAILED', turn.error);
+          return;
+        }
+
+        const state = buildIntakeState(db, session.id);
+        sendJson(res, 200, state);
+        return;
+      }
+
+      // --- Conversational intake: reply to the officer's question ---
+      if (req.method === 'POST' && pathname.startsWith('/api/intake/') && pathname.endsWith('/reply')) {
+        const sessionId = pathname.split('/')[3];
+        if (!sessionId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing session ID in path');
+          return;
+        }
+
+        let body: IntakeReplyRequest;
+        try {
+          body = (await parseJsonBody(req)) as IntakeReplyRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const message = typeof body.message === 'string' ? body.message.trim() : '';
+        if (!message) {
+          sendError(res, 400, 'BAD_REQUEST', 'Field "message" is required');
+          return;
+        }
+
+        const session = getSession(db, sessionId);
+        if (!session) {
+          sendError(res, 404, 'NOT_FOUND', `Intake session ${sessionId} not found`);
+          return;
+        }
+        if (session.state !== 'open') {
+          sendError(res, 409, 'SESSION_NOT_OPEN', `Cannot reply to session in state '${session.state}'`);
+          return;
+        }
+
+        appendIntakeMessage(db, sessionId, { role: 'human', content: message, attribution: CONSOLE_HUMAN_ATTR });
+
+        const turn = await runIntakeTurn(db, sessionId);
+        if (!turn.ok) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'intake_turn_failed', sessionId, reason: turn.error }
+          });
+          sendError(res, 502, 'INTAKE_TURN_FAILED', turn.error);
+          return;
+        }
+
+        const state = buildIntakeState(db, sessionId);
+        sendJson(res, 200, state);
+        return;
+      }
+
+      // --- Conversational intake: confirm verify + file the task (human gate) ---
+      if (req.method === 'POST' && pathname.startsWith('/api/intake/') && pathname.endsWith('/confirm-file')) {
+        const sessionId = pathname.split('/')[3];
+        if (!sessionId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing session ID in path');
+          return;
+        }
+
+        // Drain any oversized/garbage body but ignore contents (no fields needed).
+        try {
+          await parseJsonBody(req);
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          // A malformed body is harmless here; proceed.
+        }
+
+        try {
+          confirmVerify(db, sessionId, CONSOLE_HUMAN_ATTR);
+          const task = fileTask(db, sessionId, CONSOLE_HUMAN_ATTR);
+          const result: ConfirmFileResult = {
+            ok: true,
+            task_id: task.id,
+            state: task.state,
+            title: task.title ? redactOutput(task.title) : null,
+            created_at: task.created_at
+          };
+          sendJson(res, 200, result);
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'intake_confirm_file_refused', sessionId, reason: err.message }
+          });
+          sendError(res, 400, 'FILE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      // --- Conversational intake: poll session state ---
+      if (req.method === 'GET' && pathname.startsWith('/api/intake/')) {
+        const sessionId = pathname.split('/')[3];
+        if (!sessionId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing session ID in path');
+          return;
+        }
+        const state = buildIntakeState(db, sessionId);
+        if (!state) {
+          sendError(res, 404, 'NOT_FOUND', `Intake session ${sessionId} not found`);
+          return;
+        }
+        sendJson(res, 200, state);
         return;
       }
 

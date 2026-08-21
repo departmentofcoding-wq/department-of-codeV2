@@ -160,6 +160,75 @@ export function renderTaskTable(tasks) {
 }
 
 /**
+ * Renders the intake conversation log (human/officer turns only).
+ * @param {import('../contract.ts').IntakeStateDTO | null} state
+ * @returns {string}
+ */
+export function renderIntakeConversation(state) {
+  if (!state || !state.messages) {
+    return '<div class="intake-empty">Tell the officer what you need to get started.</div>';
+  }
+  const bubbles = state.messages
+    .filter(m => m.display && (m.role === 'human' || m.role === 'officer'))
+    .map(m => {
+      const who = m.role === 'human' ? 'You' : 'Intake officer';
+      return `
+        <div class="intake-bubble intake-${escapeHtml(m.role)}">
+          <div class="intake-who">${escapeHtml(who)}</div>
+          <div class="intake-text">${escapeHtml(m.display)}</div>
+        </div>`;
+    })
+    .join('');
+  return bubbles || '<div class="intake-empty">Waiting for the officer’s first reply…</div>';
+}
+
+/**
+ * Renders the draft summary + the verify-confirmation gate when ready to file.
+ * @param {import('../contract.ts').IntakeStateDTO | null} state
+ * @returns {string}
+ */
+export function renderIntakeDraft(state) {
+  if (!state) return '';
+
+  if (state.state === 'filed') {
+    return `<div class="intake-filed">✅ Task filed${state.task_id ? ` (<code>${escapeHtml(state.task_id)}</code>)` : ''}.</div>`;
+  }
+
+  const gapLabels = {
+    title: 'a title',
+    intent: 'what it should do',
+    verify_cmd: 'a way to check the work',
+    verify_confirmed: 'your approval of the check'
+  };
+  const outstanding = (state.gaps || [])
+    .filter(g => g !== 'verify_confirmed')
+    .map(g => gapLabels[g] || g);
+
+  const summary = `
+    <div class="intake-summary">
+      <div class="intake-field"><span class="intake-label">Title</span><span>${escapeHtml(state.title || '—')}</span></div>
+      <div class="intake-field"><span class="intake-label">What it will do</span><span>${escapeHtml(state.intent || '—')}</span></div>
+    </div>`;
+
+  if (state.can_file) {
+    return `
+      ${summary}
+      <div class="intake-verify">
+        <div class="intake-label">To check the work, the team will run:</div>
+        <pre class="intake-verify-cmd">${escapeHtml(state.verify_cmd || '')}</pre>
+        <div class="intake-verify-note">You are approving this check, not writing it.</div>
+        <button id="intake-file-btn" class="btn btn-primary">Approve &amp; File Task</button>
+      </div>`;
+  }
+
+  if (outstanding.length > 0) {
+    return `${summary}<div class="intake-pending">The officer still needs ${escapeHtml(outstanding.join(', '))}. Keep answering above.</div>`;
+  }
+
+  return summary;
+}
+
+/**
  * Renders active watchdog findings.
  * @param {import('../contract.ts').FindingDTO[]} findings
  * @returns {string}

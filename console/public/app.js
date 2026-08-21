@@ -6,7 +6,9 @@ import {
   renderJournalTimeline,
   renderSettings,
   renderRelaunchState,
-  renderErrorToast
+  renderErrorToast,
+  renderIntakeConversation,
+  renderIntakeDraft
 } from './render.js';
 
 // --- State Management ---
@@ -15,6 +17,8 @@ let activeTab = 'dashboard';
 let isPaused = false;
 let pollTimer = null;
 let pendingConfirmAction = null;
+let currentIntakeSessionId = null;
+let intakeBusy = false;
 
 // --- Token Initialization ---
 function initAuthToken() {
@@ -199,6 +203,102 @@ function attachTaskActionListeners() {
   });
 }
 
+// --- Conversational Intake ---
+function openIntake() {
+  currentIntakeSessionId = null;
+  const modal = document.getElementById('intake-modal');
+  document.getElementById('intake-conversation').innerHTML = renderIntakeConversation(null);
+  const draft = document.getElementById('intake-draft');
+  draft.innerHTML = '';
+  draft.classList.add('hidden');
+  const input = document.getElementById('intake-input');
+  input.value = '';
+  input.disabled = false;
+  modal.classList.remove('hidden');
+  input.focus();
+}
+
+function closeIntake() {
+  document.getElementById('intake-modal')?.classList.add('hidden');
+  currentIntakeSessionId = null;
+}
+
+function setIntakeBusy(busy) {
+  intakeBusy = busy;
+  const input = document.getElementById('intake-input');
+  const sendBtn = document.getElementById('intake-send-btn');
+  if (input) input.disabled = busy;
+  if (sendBtn) {
+    sendBtn.disabled = busy;
+    sendBtn.textContent = busy ? 'Thinking…' : 'Send';
+  }
+}
+
+function renderIntakeState(state) {
+  currentIntakeSessionId = state.session_id;
+  document.getElementById('intake-conversation').innerHTML = renderIntakeConversation(state);
+  const draft = document.getElementById('intake-draft');
+  const draftHtml = renderIntakeDraft(state);
+  draft.innerHTML = draftHtml;
+  draft.classList.toggle('hidden', !draftHtml);
+
+  // Scroll conversation to the newest turn.
+  const convo = document.getElementById('intake-conversation');
+  convo.scrollTop = convo.scrollHeight;
+
+  // Wire the file button when the verify gate is ready.
+  const fileBtn = document.getElementById('intake-file-btn');
+  if (fileBtn) fileBtn.addEventListener('click', fileIntakeTask);
+}
+
+async function sendIntakeMessage() {
+  if (intakeBusy) return;
+  const input = document.getElementById('intake-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  setIntakeBusy(true);
+  try {
+    let state;
+    if (!currentIntakeSessionId) {
+      state = await apiFetch('/api/intake', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: text })
+      });
+    } else {
+      state = await apiFetch(`/api/intake/${currentIntakeSessionId}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ message: text })
+      });
+    }
+    input.value = '';
+    renderIntakeState(state);
+  } catch (err) {
+    // Toast handled by apiFetch; keep the panel open so the operator can retry.
+  } finally {
+    setIntakeBusy(false);
+    input.focus();
+  }
+}
+
+async function fileIntakeTask() {
+  if (!currentIntakeSessionId || intakeBusy) return;
+  setIntakeBusy(true);
+  try {
+    const res = await apiFetch(`/api/intake/${currentIntakeSessionId}/confirm-file`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    showToast(`<div class="toast"><span class="toast-icon">✅</span> Task filed: ${res.task_id}</div>`);
+    closeIntake();
+    await refreshActiveView();
+  } catch (err) {
+    // Toast handled by apiFetch.
+  } finally {
+    setIntakeBusy(false);
+  }
+}
+
 function promptConfirm(title, bodyText, onConfirm) {
   const modal = document.getElementById('confirm-modal');
   document.getElementById('modal-title').textContent = title;
@@ -268,6 +368,18 @@ function setupEventListeners() {
       const act = pendingConfirmAction;
       closeModal();
       await act();
+    }
+  });
+
+  // Conversational intake
+  document.getElementById('new-task-btn')?.addEventListener('click', openIntake);
+  document.getElementById('intake-close-btn')?.addEventListener('click', closeIntake);
+  document.getElementById('intake-send-btn')?.addEventListener('click', sendIntakeMessage);
+  document.getElementById('intake-input')?.addEventListener('keydown', (e) => {
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendIntakeMessage();
     }
   });
 

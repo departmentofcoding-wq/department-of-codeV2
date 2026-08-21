@@ -115,3 +115,34 @@ Every PR in the Operator Console track records the guard it broke and the test t
   AssertionError: expected 'http://127.0.0.1:3100/' to be 'http://127.0.0.1:3100/?token=e481827f…'
   ```
 - **Verification**: Mutation caught by `test/unit/tCONSOLE_b3_launcher_shortcut.test.ts`. Restored code passes cleanly.
+
+---
+
+## M-INTAKE-1: Human Verify-Confirm Gate on Task Filing (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-console-intake` (Conversational Intake front door)
+- **Guard Broken**: The human-operator confirm gate in the `POST /api/intake/:id/confirm-file` handler — `confirmVerify(db, sessionId, CONSOLE_HUMAN_ATTR)` before `fileTask`.
+- **Mutation Applied**: Removed the `confirmVerify` call so filing proceeds without human confirmation of the officer-drafted verify command.
+- **Test Command**: `npx vitest run test/unit/tc4_intake_api.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tc4_intake_api.test.ts > T-C4 > drafts the verify command via the officer, then files on human confirm
+  AssertionError: expected 400 to be 200
+  ```
+  (`fileTask` refuses on the `verify_confirmed` gap in `taskGaps`, so filing 400s instead of 200 — the operator's confirmation is load-bearing.)
+- **Verification**: Mutation caught by `test/unit/tc4_intake_api.test.ts`. Restored code passes cleanly (7/7).
+
+---
+
+## M-INTAKE-2: Inline Officer-Turn Failure Surfacing (`console/server.ts`)
+
+- **Branch / Milestone**: `wt/junior-console-intake` (Conversational Intake front door)
+- **Guard Broken**: `runIntakeTurn` re-reads the drained `intake.turn` job and maps a non-`done` state to a failure. `drainSingleJob` swallows handler errors into the job row, so without this check a failed officer turn would be reported to the operator as success.
+- **Mutation Applied**: Returned `{ ok: true }` for a non-`done` job instead of `{ ok: false, error }`.
+- **Test Command**: `npx vitest run test/unit/tc4_intake_api.test.ts`
+- **Result Output**:
+  ```
+  FAIL  test/unit/tc4_intake_api.test.ts > T-C4 > surfaces a failed officer turn as 502 with a guardrail span
+  AssertionError: expected 200 to be 502
+  ```
+- **Verification**: Mutation caught by `test/unit/tc4_intake_api.test.ts`. Restored code passes cleanly (7/7).

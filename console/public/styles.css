@@ -324,6 +324,110 @@ body {
   margin-top: 1.5rem;
 }
 
+/* Conversational Intake */
+.intake-modal {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.intake-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.intake-help {
+  margin: 0.5rem 0 1rem;
+  line-height: 1.4;
+}
+.intake-conversation {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 120px;
+  max-height: 40vh;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background-color: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.intake-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  margin: auto;
+  text-align: center;
+}
+.intake-bubble {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  max-width: 85%;
+}
+.intake-human {
+  align-self: flex-end;
+  background-color: var(--accent-blue);
+  color: #04223a;
+}
+.intake-officer {
+  align-self: flex-start;
+  background-color: var(--bg-card-hover);
+  color: var(--text-main);
+}
+.intake-who {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.8;
+  margin-bottom: 0.15rem;
+}
+.intake-text { white-space: pre-wrap; word-break: break-word; }
+.intake-draft {
+  margin-top: 0.9rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.9rem;
+}
+.intake-draft.hidden { display: none; }
+.intake-summary { display: flex; flex-direction: column; gap: 0.4rem; }
+.intake-field { display: flex; flex-direction: column; gap: 0.1rem; }
+.intake-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.intake-verify { margin-top: 0.9rem; }
+.intake-verify-cmd {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.35rem;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+  color: var(--accent-green);
+  margin: 0.4rem 0;
+}
+.intake-verify-note { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.7rem; }
+.intake-pending { color: var(--accent-amber); margin-top: 0.6rem; font-size: 0.9rem; }
+.intake-filed { color: var(--accent-green); font-weight: 600; }
+.intake-input-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  align-items: flex-end;
+}
+.intake-input {
+  flex: 1;
+  resize: vertical;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.intake-input:disabled { opacity: 0.6; }
+
 /* Toasts & Relaunch */
 .toast-container {
   position: fixed;
