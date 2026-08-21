@@ -11,8 +11,8 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. |
-| Suite | 265/265 tests, 72 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console conversational intake merged at `baa5b74` (feature `11b4ad9`, Senior verdict `bbdf221`). |
+| Suite | 288/288 tests, 74 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Remaining for C1: add delivery (PR/merge/backup) against a sandbox *remote*, and the LLM-officer findings (role→model fallback when Ollama is down; seed id `gemini-2.5-flash` 404s, `gemini-flash-latest` works). Gemini key live (`.env`, gitignored). |
 
@@ -59,6 +59,27 @@ free tier) is an operational matter, not a code bug — the engine already handl
 429 via model cooldown; the operator should pick a model with quota headroom
 (Gemini 2.5/3.7 Flash were green; Antigravity Agents tier has 60 RPM) or enable
 billing.
+
+**Console conversational intake — task-creation front door (2026-08-21):**
+the Operator Console can now originate tasks, not just view/approve them.
+"+ New Task" opens a chat with the real Task Intake Officer over four new
+token-auth endpoints (`POST /api/intake`, `GET /api/intake/:id`,
+`POST …/reply`, `POST …/confirm-file`) that wrap the Phase 1 engine helpers —
+the same `runOfficerTurn` / `intake.turn` path the CLI uses, no intake logic
+duplicated. The operator writes plain English; the officer drafts every field
+including the verify command, which the operator only **approves**
+(`confirmVerify` + `fileTask`, human-operator attribution — the confirm-verify
+gate is untouched and contract-enforced). Turns drain inline; `runIntakeTurn`
+re-reads the job row because `drainSingleJob` swallows failures, surfacing
+non-`done` as 502 + guardrail span. ENDPOINTS 8 → 12 (`contract_d0_c`
+updated). Tests `tc4_intake_api` (7); mutation evidence M-INTAKE-1 (human
+gate — Senior independently re-executed: removing `confirmVerify` fails the
+gate test via `fileTask`'s own `verify_confirmed` gap refusal) + M-INTAKE-2
+(502 surfacing) in `docs/mutation-evidence-console.md`. Merged `baa5b74`
+after Senior verdict `bbdf221` for `11b4ad9`
+(`docs/reviews/verdict-console-intake.md`). Live LLM behavior (Ollama
+latency/timeouts) untested by design — fakes only per test law; first live
+use is an operator activity.
 
 **Adaptive completion wait — no hard cap on junior/senior time (2026-08-20):**
 replaced the fixed-ms completion ceiling with `engine/harness/agent-wait.ts`
