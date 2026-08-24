@@ -478,9 +478,47 @@ export class AntigravitySession {
   async newConversation(): Promise<boolean> {
     await this.pressKey('Escape', 'Escape', 27);
     return !!(await this.evaluate(`(() => {
-      const b = [...document.querySelectorAll('button,[role=button],a')]
-        .find(x => /^(new conversation|new task|new chat)$/i.test(((x.getAttribute('aria-label')||x.innerText)||'').trim()));
-      if (!b) return false; b.click(); return true;
+      // 1. Explicit "start fresh" control by accessible name. The label varies
+      // across Antigravity versions and between the two juniors ("New
+      // Conversation", "New chat", "New task", "New Cascade", "New thread"),
+      // sometimes suffixed with a keybinding ("New Chat (Ctrl+L)") or exposed via
+      // title/tooltip on a "+" button. Match on the accessible name (aria-label,
+      // then title, then text): it must contain the word "new" AND a
+      // conversation-ish noun, so an unrelated "new file"/"new terminal" is never
+      // clicked.
+      const INPUT = ${JSON.stringify(ANTIGRAVITY_INPUT_LABEL)};
+      const name = x => ((x.getAttribute && (x.getAttribute('aria-label') || x.getAttribute('title'))) || x.innerText || '').trim();
+      const wants = /\\bnew\\b/i;
+      const noun = /(conversation|chat|task|cascade|thread)/i;
+      const cands = [...document.querySelectorAll('button,[role=button],[role=menuitem],a')];
+      const hit = cands.find(x => { const n = name(x); return wants.test(n) && noun.test(n); });
+      if (hit) { hit.click(); return true; }
+
+      // 2. Antigravity IDE (the VS Code fork, Junior A) renders the agent panel's
+      // "new conversation" control as an UNLABELED header icon — no aria-label,
+      // title, or text — so step 1 can never find it. Rather than fail hard (and
+      // strand the task) or click a mislabeled control, fall back to proving the
+      // conversation is ALREADY empty: a freshly opened panel has no prior turns,
+      // so there is no stale task context to bleed in — exactly what the reset was
+      // guarding against. Proceed only when that is verifiably true.
+      const input = [...document.querySelectorAll('[contenteditable="true"],textarea')]
+        .find(e => (e.getAttribute('aria-label') || e.getAttribute('placeholder')) === INPUT);
+      if (!input) return false; // no chat at all — genuinely can't proceed
+      // Scope the conversation area by GEOMETRY (DOM ancestry walks straight out
+      // into the editor): it is the region directly ABOVE the input, in the same
+      // right-hand column. A real prior conversation fills that region with
+      // message bubbles; an empty one leaves it blank. Treat the panel as fresh
+      // only when no substantial text block sits above the input in its column.
+      const ir = input.getBoundingClientRect();
+      const colLeft = ir.left - 24;
+      const turns = [...document.querySelectorAll('div,p,article,li')].filter(e => {
+        if (e === input || e.contains(input) || input.contains(e)) return false;
+        const r = e.getBoundingClientRect();
+        const inColumn = r.left >= colLeft && r.right <= ir.right + 24;
+        const aboveInput = r.bottom <= ir.top && r.top >= 40; // below the titlebar
+        return inColumn && aboveInput && (e.innerText || '').trim().length > 80;
+      });
+      return turns.length === 0;
     })()`));
   }
 

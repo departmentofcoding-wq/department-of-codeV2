@@ -264,6 +264,18 @@ export function applySchema(db: DatabaseSync): void {
       detected_at TEXT NOT NULL,
       resolved_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS bureau_assets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Other',
+      url TEXT NOT NULL,
+      description TEXT,
+      owner TEXT,
+      status TEXT NOT NULL DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 

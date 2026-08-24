@@ -153,6 +153,6 @@ describe.each(testImplementations)('T41: Senior Work Review Gate ($name)', ({ cr
     );
     expect(reviewRows2.length).toBe(1);
     expect(reviewRows2[0].reviewed_commit).toBe(newTipCommit);
-    expect(['mock', 'ollama']).toContain(reviewRows2[0].provider);
+    expect(['mock', 'ollama', 'google']).toContain(reviewRows2[0].provider);
   }, 30000);
 });

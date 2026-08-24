@@ -18,6 +18,7 @@
       <button class="nav-tab" data-view="tasks">Tasks</button>
       <button class="nav-tab" data-view="findings">Findings</button>
       <button class="nav-tab" data-view="workers">Workers</button>
+      <button class="nav-tab" data-view="assets">Assets</button>
       <button class="nav-tab" data-view="journal">Journal</button>
       <button class="nav-tab" data-view="settings">Settings</button>
     </nav>
@@ -68,6 +69,16 @@
       </div>
     </div>
 
+    <div id="view-assets" class="view-section">
+      <div class="section-header">
+        <h2 class="section-title">Department Assets</h2>
+        <button id="new-asset-btn" class="btn btn-primary btn-sm">+ Add Asset</button>
+      </div>
+      <div id="assets-container">
+        <div class="card empty-state">Loading department assets...</div>
+      </div>
+    </div>
+
     <div id="view-journal" class="view-section">
       <div class="section-header">
         <h2 class="section-title">Journal Timeline</h2>
@@ -96,6 +107,58 @@
         <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
         <button id="modal-confirm-btn" class="btn btn-primary">Confirm</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Asset Create / Edit Modal -->
+  <div id="asset-modal" class="modal-backdrop hidden">
+    <div class="modal asset-modal">
+      <div class="intake-header">
+        <h3 id="asset-modal-title">Add Department Asset</h3>
+        <button id="asset-modal-close-btn" class="btn-icon" title="Close">✕</button>
+      </div>
+      <form id="asset-form" style="margin-top: 1rem;">
+        <input type="hidden" id="asset-form-id" value="" />
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <div>
+            <label for="asset-form-name" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Asset Name *</label>
+            <input type="text" id="asset-form-name" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. Primary GitHub Organization" required />
+          </div>
+          <div>
+            <label for="asset-form-category" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Category</label>
+            <select id="asset-form-category" class="intake-input" style="width: 100%; box-sizing: border-box;">
+              <option value="Google">Google</option>
+              <option value="GitHub">GitHub</option>
+              <option value="Cloud">Cloud</option>
+              <option value="Domain">Domain</option>
+              <option value="Other" selected>Other</option>
+            </select>
+          </div>
+          <div>
+            <label for="asset-form-url" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">URL *</label>
+            <input type="text" id="asset-form-url" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="https://github.com/my-org" required />
+          </div>
+          <div>
+            <label for="asset-form-description" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Description</label>
+            <textarea id="asset-form-description" class="intake-input" rows="2" style="width: 100%; box-sizing: border-box;" placeholder="Optional details or instructions..."></textarea>
+          </div>
+          <div>
+            <label for="asset-form-owner" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Owner / Custodian</label>
+            <input type="text" id="asset-form-owner" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. operator" />
+          </div>
+          <div>
+            <label for="asset-form-status" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Status</label>
+            <select id="asset-form-status" class="intake-input" style="width: 100%; box-sizing: border-box;">
+              <option value="Active" selected>Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions" style="margin-top: 1.25rem;">
+          <button type="button" id="asset-modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="asset-modal-save-btn" class="btn btn-primary">Save Asset</button>
+        </div>
+      </form>
     </div>
   </div>
 

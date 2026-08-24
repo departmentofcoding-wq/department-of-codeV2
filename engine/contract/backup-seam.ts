@@ -1,3 +1,5 @@
+import { ExecGitBackupProvider } from '../durability/git_backup_provider.ts';
+
 export interface BackupProvider {
   push(remote?: string, branch?: string): Promise<void>;
   getRemoteTip(remote?: string, branch?: string): Promise<string>;
@@ -18,6 +20,5 @@ export function getBackupProvider(): BackupProvider {
   if (backupProviderOverride) {
     return backupProviderOverride;
   }
-  const { ExecGitBackupProvider } = require('../durability/git_backup_provider.ts');
   return new ExecGitBackupProvider();
 }

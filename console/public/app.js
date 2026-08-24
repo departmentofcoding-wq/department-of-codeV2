@@ -3,6 +3,7 @@ import {
   renderTaskTable,
   renderFindingsList,
   renderWorkers,
+  renderAssetsTable,
   renderJournalTimeline,
   renderSettings,
   renderRelaunchState,
@@ -19,6 +20,7 @@ let pollTimer = null;
 let pendingConfirmAction = null;
 let currentIntakeSessionId = null;
 let intakeBusy = false;
+let currentAssets = [];
 
 // --- Token Initialization ---
 function initAuthToken() {
@@ -125,6 +127,18 @@ async function loadWorkersView() {
   }
 }
 
+async function loadAssetsView() {
+  const container = document.getElementById('assets-container');
+  try {
+    const assets = await apiFetch('/api/assets');
+    currentAssets = assets;
+    container.innerHTML = renderAssetsTable(assets);
+    attachAssetActionListeners();
+  } catch (e) {
+    // Error handled in apiFetch
+  }
+}
+
 async function loadJournalView() {
   const container = document.getElementById('journal-container');
   try {
@@ -200,6 +214,9 @@ async function refreshActiveView() {
     case 'workers':
       await loadWorkersView();
       break;
+    case 'assets':
+      await loadAssetsView();
+      break;
     case 'journal':
       await loadJournalView();
       break;
@@ -233,6 +250,115 @@ function attachTaskActionListeners() {
     });
   });
 }
+
+function attachAssetActionListeners() {
+  document.querySelectorAll('.btn-edit-asset').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const assetId = e.currentTarget.getAttribute('data-id');
+      const asset = currentAssets.find(a => a.id === assetId);
+      if (asset) openAssetModal(asset);
+    });
+  });
+
+  document.querySelectorAll('.btn-delete-asset').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const assetId = e.currentTarget.getAttribute('data-id');
+      const asset = currentAssets.find(a => a.id === assetId);
+      const assetName = asset ? asset.name : assetId;
+      promptConfirm(
+        'Delete Department Asset',
+        `Are you sure you want to delete asset "${assetName}"? This action cannot be undone.`,
+        async () => {
+          try {
+            await apiFetch(`/api/assets/${assetId}/delete`, {
+              method: 'POST'
+            });
+            showToast(`<div class="toast"><span class="toast-icon">🗑️</span> Asset deleted successfully</div>`);
+            await loadAssetsView();
+          } catch (err) {
+            // Error toast handled by apiFetch
+          }
+        }
+      );
+    });
+  });
+}
+
+function openAssetModal(asset = null) {
+  const modal = document.getElementById('asset-modal');
+  const title = document.getElementById('asset-modal-title');
+  const idInput = document.getElementById('asset-form-id');
+  const nameInput = document.getElementById('asset-form-name');
+  const categorySelect = document.getElementById('asset-form-category');
+  const urlInput = document.getElementById('asset-form-url');
+  const descInput = document.getElementById('asset-form-description');
+  const ownerInput = document.getElementById('asset-form-owner');
+  const statusSelect = document.getElementById('asset-form-status');
+
+  if (asset) {
+    if (title) title.textContent = 'Edit Department Asset';
+    if (idInput) idInput.value = asset.id;
+    if (nameInput) nameInput.value = asset.name;
+    if (categorySelect) categorySelect.value = asset.category || 'Other';
+    if (urlInput) urlInput.value = asset.url;
+    if (descInput) descInput.value = asset.description || '';
+    if (ownerInput) ownerInput.value = asset.owner || '';
+    if (statusSelect) statusSelect.value = asset.status || 'Active';
+  } else {
+    if (title) title.textContent = 'Add Department Asset';
+    if (idInput) idInput.value = '';
+    if (nameInput) nameInput.value = '';
+    if (categorySelect) categorySelect.value = 'Other';
+    if (urlInput) urlInput.value = '';
+    if (descInput) descInput.value = '';
+    if (ownerInput) ownerInput.value = '';
+    if (statusSelect) statusSelect.value = 'Active';
+  }
+
+  if (modal) modal.classList.remove('hidden');
+  if (nameInput) nameInput.focus();
+}
+
+function closeAssetModal() {
+  document.getElementById('asset-modal')?.classList.add('hidden');
+}
+
+async function saveAssetForm(e) {
+  e.preventDefault();
+  const id = document.getElementById('asset-form-id')?.value;
+  const name = document.getElementById('asset-form-name')?.value.trim();
+  const category = document.getElementById('asset-form-category')?.value;
+  const url = document.getElementById('asset-form-url')?.value.trim();
+  const description = document.getElementById('asset-form-description')?.value.trim() || undefined;
+  const owner = document.getElementById('asset-form-owner')?.value.trim() || undefined;
+  const status = document.getElementById('asset-form-status')?.value;
+
+  if (!name || !url) {
+    showToast(renderErrorToast('Asset Name and URL are required.'));
+    return;
+  }
+
+  try {
+    if (id) {
+      await apiFetch(`/api/assets/${id}/update`, {
+        method: 'POST',
+        body: JSON.stringify({ name, category, url, description, owner, status })
+      });
+      showToast(`<div class="toast"><span class="toast-icon">✅</span> Asset updated successfully</div>`);
+    } else {
+      await apiFetch('/api/assets', {
+        method: 'POST',
+        body: JSON.stringify({ name, category, url, description, owner, status })
+      });
+      showToast(`<div class="toast"><span class="toast-icon">✅</span> Asset created successfully</div>`);
+    }
+    closeAssetModal();
+    await loadAssetsView();
+  } catch (err) {
+    // Error toast handled by apiFetch
+  }
+}
+
 
 // --- Conversational Intake ---
 function openIntake() {
@@ -413,6 +539,12 @@ function setupEventListeners() {
       sendIntakeMessage();
     }
   });
+
+  // Department Assets modal & form
+  document.getElementById('new-asset-btn')?.addEventListener('click', () => openAssetModal(null));
+  document.getElementById('asset-modal-close-btn')?.addEventListener('click', closeAssetModal);
+  document.getElementById('asset-modal-cancel-btn')?.addEventListener('click', closeAssetModal);
+  document.getElementById('asset-form')?.addEventListener('submit', saveAssetForm);
 
   // Action buttons
   document.getElementById('trigger-sweep-btn')?.addEventListener('click', () => {

@@ -22,6 +22,21 @@ export function escapeHtml(str) {
 }
 
 /**
+ * Returns an escaped href ONLY for http(s) URLs. escapeHtml alone does not stop
+ * `javascript:alert(1)` (it contains no escapable chars), so a raw asset URL in
+ * an href is a live XSS vector when clicked. Anything that is not http/https —
+ * javascript:, data:, vbscript:, file:, etc. — yields '' so the caller renders
+ * it as inert text instead of a link.
+ * @param {unknown} url
+ * @returns {string} escaped href, or '' when the scheme is not http(s)
+ */
+export function safeHref(url) {
+  const raw = (url === null || url === undefined ? '' : String(url)).trim();
+  if (!/^https?:\/\//i.test(raw)) return '';
+  return escapeHtml(raw);
+}
+
+/**
  * Renders the dashboard overview tiles and metrics grid.
  * @param {import('../contract.ts').DashboardDTO} dto
  * @returns {string}
@@ -291,6 +306,70 @@ export function renderWorkers(workers) {
 }
 
 /**
+ * Renders the department assets inventory table.
+ * @param {import('../contract.ts').AssetDTO[]} assets
+ * @returns {string}
+ */
+export function renderAssetsTable(assets) {
+  if (!assets || assets.length === 0) {
+    return '<div class="card empty-state">No department assets tracked yet.</div>';
+  }
+
+  const rows = assets.map(a => {
+    const statusClass = a.status === 'Active' ? 'state-active' : 'state-inactive';
+    const safeUrl = escapeHtml(a.url);
+    // Only render a clickable link for http(s); other schemes (javascript:,
+    // data:, …) are shown as inert text so a malicious URL can't execute.
+    const hrefUrl = safeHref(a.url);
+    const safeName = escapeHtml(a.name);
+    const safeCategory = escapeHtml(a.category);
+    const safeDescription = escapeHtml(a.description || '—');
+    const safeOwner = escapeHtml(a.owner || '—');
+    const safeStatus = escapeHtml(a.status);
+    const safeUpdated = escapeHtml(a.updated_at);
+    const safeId = escapeHtml(a.id);
+
+    return `
+      <tr class="asset-row" data-asset-id="${safeId}">
+        <td><strong>${safeName}</strong></td>
+        <td><span class="badge category-badge">${safeCategory}</span></td>
+        <td>${hrefUrl ? `<a href="${hrefUrl}" target="_blank" rel="noopener noreferrer" class="asset-link">${safeUrl}</a>` : safeUrl}</td>
+        <td>${safeDescription}</td>
+        <td>${safeOwner}</td>
+        <td><span class="badge ${statusClass}">${safeStatus}</span></td>
+        <td class="metric-sub">${safeUpdated}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm btn-edit-asset" data-id="${safeId}">Edit</button>
+          <button class="btn btn-secondary btn-sm btn-delete-asset" data-id="${safeId}" style="color: var(--color-error, #f87171); margin-left: 0.25rem;">Delete</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="card table-card full-width">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Asset Name</th>
+            <th>Category</th>
+            <th>URL</th>
+            <th>Description</th>
+            <th>Owner / Custodian</th>
+            <th>Status</th>
+            <th>Last Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
  * Renders the journal timeline entries.
  * @param {import('../contract.ts').JournalEntryDTO[]} journal
  * @returns {string}
@@ -300,7 +379,28 @@ export function renderJournalTimeline(journal) {
     return '<div class="card empty-state">No journal entries found</div>';
   }
 
-  const items = journal.map(j => `
+  // Group entries by the task they acted on, so the history reads as "what the
+  // department did for each task" instead of an undifferentiated stream. Groups
+  // appear in first-seen order; entries with no task_id collect into one
+  // "Unattributed / system" group rendered last.
+  const UNATTRIBUTED = '__unattributed__';
+  const order = [];
+  const groups = new Map();
+  for (const j of journal) {
+    const key = j.task_id || UNATTRIBUTED;
+    if (!groups.has(key)) {
+      groups.set(key, { taskId: j.task_id || null, title: null, entries: [] });
+      order.push(key);
+    }
+    const g = groups.get(key);
+    // Prefer a real task title if any entry in the group carries one.
+    if (!g.title && j.work_title) g.title = j.work_title;
+    g.entries.push(j);
+  }
+  // System group always sorts last.
+  order.sort((a, b) => (a === UNATTRIBUTED ? 1 : 0) - (b === UNATTRIBUTED ? 1 : 0));
+
+  const renderEntry = (j) => `
     <div class="timeline-item kind-${escapeHtml(j.kind)}">
       <div class="timeline-meta">
         <span class="timeline-ts">${escapeHtml(j.ts)}</span>
@@ -309,12 +409,24 @@ export function renderJournalTimeline(journal) {
       </div>
       <div class="timeline-body">
         <div class="timeline-detail">${escapeHtml(j.detail)}</div>
-        ${j.task_id ? `<div class="timeline-sub">Task: <code>${escapeHtml(j.task_id)}</code></div>` : ''}
       </div>
     </div>
-  `).join('');
+  `;
 
-  return `<div class="timeline">${items}</div>`;
+  const sections = order.map((key) => {
+    const g = groups.get(key);
+    const heading = g.taskId
+      ? `${escapeHtml(g.title || 'Task')} <code>${escapeHtml(g.taskId)}</code>`
+      : 'Unattributed / system actions';
+    return `
+      <section class="timeline-group" ${g.taskId ? `data-task-id="${escapeHtml(g.taskId)}"` : ''}>
+        <h3 class="timeline-group-header">${heading} <span class="timeline-group-count">${g.entries.length}</span></h3>
+        <div class="timeline">${g.entries.map(renderEntry).join('')}</div>
+      </section>
+    `;
+  }).join('');
+
+  return `<div class="timeline-grouped">${sections}</div>`;
 }
 
 /**

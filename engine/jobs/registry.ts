@@ -382,3 +382,28 @@ defineJob(
   },
   { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
 );
+
+// 20. work.cycle — the post-implementation half of the flow: after the junior
+// implements (junior.dispatch with chainWorkReview), a senior READS THE
+// WALKTHROUGH and returns a verdict. Long timeout (a live GUI/CLI senior); one
+// attempt (a failure surfaces to the operator rather than re-driving the agent).
+const workCycleSchema = z.object({
+  taskId: z.string(),
+  seniorId: z.string().optional(),
+  seniorModel: z.string().optional(),
+  junior: z.string().optional(),
+  juniorModel: z.string().optional(),
+  folder: z.string().optional(),
+  walkthrough: z.string().optional()
+});
+
+defineJob(
+  'work.cycle',
+  workCycleSchema,
+  async (ctx) => {
+    const payload = workCycleSchema.parse(ctx.payload ?? {});
+    const { runWorkReviewCycle } = await import('../flow/work_review_cycle.ts');
+    await runWorkReviewCycle(ctx.db, { ...payload, signal: ctx.signal, jobId: ctx.job.id });
+  },
+  { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
+);

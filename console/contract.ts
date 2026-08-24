@@ -232,6 +232,43 @@ export interface SaveGoogleKeysRequest {
   keys: string[];
 }
 
+// --- Department Assets DTOs ---
+
+export interface AssetDTO {
+  id: string;
+  name: string;
+  category: string;
+  url: string;
+  description: string | null;
+  owner: string | null;
+  status: 'Active' | 'Inactive';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAssetRequest {
+  name: string;
+  category?: string;
+  url: string;
+  description?: string;
+  owner?: string;
+  status?: 'Active' | 'Inactive';
+}
+
+export interface UpdateAssetRequest {
+  name?: string;
+  category?: string;
+  url?: string;
+  description?: string;
+  owner?: string;
+  status?: 'Active' | 'Inactive';
+}
+
+export interface DeleteAssetResult {
+  ok: boolean;
+  id: string;
+}
+
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
 
 export interface TriggerActionRequest {
@@ -301,6 +338,30 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     description: 'Department worker roster with active/working status'
   },
   {
+    method: 'GET',
+    path: '/api/assets',
+    auth: 'token',
+    description: 'List all department assets'
+  },
+  {
+    method: 'POST',
+    path: '/api/assets',
+    auth: 'token',
+    description: 'Create a new department asset'
+  },
+  {
+    method: 'POST',
+    path: '/api/assets/:id/update',
+    auth: 'token',
+    description: 'Update an existing department asset'
+  },
+  {
+    method: 'POST',
+    path: '/api/assets/:id/delete',
+    auth: 'token',
+    description: 'Delete a department asset'
+  },
+  {
     method: 'POST',
     path: '/api/tasks/:id/approve',
     auth: 'token',
@@ -349,3 +410,4 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     description: 'Save Google API keys to env + gitignored secrets file (never the DB)'
   }
 ] as const;
+

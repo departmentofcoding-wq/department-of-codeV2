@@ -21,6 +21,15 @@ function seedTask(db: any, overrides: Record<string, unknown> = {}) {
   );
 }
 
+/** Pin the plan-rounds ceiling for a test, independent of the default constant. */
+function setCeiling(db: any, n: number) {
+  db.run(
+    `INSERT INTO bureau_meta (key, value) VALUES ('review:plan_rounds_ceiling', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    String(n)
+  );
+}
+
 /** A passing-plan shape: branch, scope, tests+mutation, walkthrough — satisfies the rubric. */
 const GOOD_PLAN = [
   'Implementation Plan',
@@ -62,6 +71,21 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(p).toContain('Build a clicker');
     expect(p).toContain('Branch: wt/x');
     expect(p).toMatch(/walkthrough/i);
+  });
+
+  it('buildImplementationPrompt is HONEST on the ceiling path — never claims approval, and threads the outstanding feedback', () => {
+    const p = buildImplementationPrompt({ title: 'Build a clicker' } as any, 'Branch: wt/x', {
+      approved: false,
+      feedback: 'handle the empty-input case',
+      roundsUsed: 7,
+      ceiling: 7
+    });
+    // Must NOT lie about approval.
+    expect(p).not.toMatch(/reviewed and APPROVED/i);
+    expect(p).toMatch(/ceiling/i);
+    // The senior's final required changes reach the junior.
+    expect(p).toContain('handle the empty-input case');
+    expect(p).toContain('Branch: wt/x');
   });
 
   it('APPROVE: records plan + review rows, and CONTINUES the pipeline — dispatch row + junior.dispatch job with the approved plan', async () => {
@@ -119,6 +143,24 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(payload.junior).toBe('B');
     expect(payload.prompt).toContain('wt/junior-b-clicker');
     expect(payload.prompt).toContain('Build a clicker');
+    // The loop is closed: the implementation dispatch chains a work review so a
+    // senior will read the walkthrough once the code lands.
+    expect(payload.chainWorkReview).toBe(true);
+  });
+
+  it('APPROVE from queued: the task leaves the planning queue (queued -> claimed), no longer a zombie', async () => {
+    const db = createFakeDb();
+    seedTask(db, { state: 'queued' });
+    setAntigravityDriverOverride({
+      runCommand: async () => ({ transcript: 'reply', plan: GOOD_PLAN, junior: 'A', launched: false })
+    });
+    setSeniorDriverOverride({
+      review: async () => ({ senior: 'claude', verdict: 'approve', feedback: 'ok', raw: 'VERDICT: APPROVE' })
+    });
+
+    const res = await runPlanReviewCycle(db, { taskId: 'task-pc', seniorId: 'claude' });
+    expect(res.outcome).toBe('approved');
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-pc').state).toBe('claimed');
   });
 
   it('REVISE: loops — next plan.cycle round is enqueued WITH the senior feedback, and the junior is told', async () => {
@@ -167,7 +209,8 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
 
   it('CEILING entry-guard: at plan_rounds >= ceiling the cycle REFUSES — guardrail span, task blocked, no junior invoked', async () => {
     const db = createFakeDb();
-    seedTask(db, { plan_rounds: 3 }); // default ceiling is 3
+    setCeiling(db, 3);
+    seedTask(db, { plan_rounds: 3 }); // at the pinned ceiling
 
     let juniorRan = false;
     setAntigravityDriverOverride({
@@ -192,6 +235,7 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
 
   it('STATE gate: a task outside queued/claimed is refused with a guardrail span, nothing runs', async () => {
     const db = createFakeDb();
+    setCeiling(db, 3);
     seedTask(db, { state: 'verifying' });
     let juniorRan = false;
     setAntigravityDriverOverride({
@@ -236,8 +280,9 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(JSON.parse(next.payload).priorFeedback).toMatch(/missing/i);
   });
 
-  it('AMEND at the ceiling: the task is blocked, the operator notified, and NO next round is enqueued', async () => {
+  it('AMEND at the ceiling: instead of blocking, the junior is sent to implement and the walkthrough review becomes the gate', async () => {
     const db = createFakeDb();
+    setCeiling(db, 3);
     seedTask(db, { plan_rounds: 2 }); // one round left (ceiling 3)
     setAntigravityDriverOverride({
       runCommand: async () => ({ transcript: 'reply', plan: GOOD_PLAN, junior: 'A', launched: false })
@@ -249,9 +294,23 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     const res = await runPlanReviewCycle(db, { taskId: 'task-pc', seniorId: 'claude' });
     expect(res.outcome).toBe('revise');
     expect((res as any).roundsUsed).toBe(3);
+    // No further plan round: the ceiling stops PLANNING, not the pipeline.
     expect((res as any).nextRoundEnqueued).toBe(false);
-    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-pc').state).toBe('blocked');
     expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'plan.cycle'`).n).toBe(0);
+    // Instead of blocking, the junior is dispatched to implement the best plan.
+    expect((res as any).ceilingDispatchJobId).toBeTruthy();
+    const dispatchJobs = db.all<any>(`SELECT payload FROM bureau_jobs WHERE kind = 'junior.dispatch'`);
+    expect(dispatchJobs.length).toBe(1);
+    const ceilingPayload = JSON.parse(dispatchJobs[0].payload);
+    expect(ceilingPayload.prompt).toContain(GOOD_PLAN);
+    // Even on the ceiling path, the walkthrough must still be reviewed.
+    expect(ceilingPayload.chainWorkReview).toBe(true);
+    // The prompt is honest — it does not claim the plan was approved.
+    expect(ceilingPayload.prompt).not.toMatch(/reviewed and APPROVED/i);
+    // A dispatch row was created for the same junior that planned.
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_dispatches`).n).toBe(1);
+    // The task is NOT blocked — it advances into implementation.
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-pc').state).not.toBe('blocked');
   });
 
   it('is wired as a real job kind: plan.cycle registered, single attempt, long timeout; junior.dispatch timeout fits GUI agents', () => {

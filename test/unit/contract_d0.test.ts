@@ -253,7 +253,7 @@ describe('Milestone D0 — Contract Freeze', () => {
     it('exports REVIEW_PR_META_KEYS and default ceiling/branch constants', () => {
       expect(REVIEW_PR_META_KEYS.REVIEW_PLAN_ROUNDS_CEILING).toBe('review:plan_rounds_ceiling');
       expect(REVIEW_PR_META_KEYS.PR_BASE_BRANCH).toBe('pr:base_branch');
-      expect(DEFAULT_PLAN_ROUNDS_CEILING).toBe(3);
+      expect(DEFAULT_PLAN_ROUNDS_CEILING).toBe(7);
       expect(DEFAULT_PR_BASE_BRANCH).toBe('main');
     });
   });

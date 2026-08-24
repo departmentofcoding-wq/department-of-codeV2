@@ -2,7 +2,8 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import url from 'node:url';
-import type { DbConnection, BureauTaskRow, BureauWatchdogFindingRow, BureauJournalRow } from '../engine/contract/types.ts';
+import crypto from 'node:crypto';
+import type { DbConnection, BureauTaskRow, BureauWatchdogFindingRow, BureauJournalRow, BureauAssetRow } from '../engine/contract/types.ts';
 import { redactOutput } from '../engine/contract/tools.ts';
 import { journal } from '../engine/journal/writer.ts';
 import { dashboardSnapshot, workerRoster } from '../engine/dashboards/views.ts';
@@ -29,6 +30,10 @@ import {
   type FindingDTO,
   type JournalEntryDTO,
   type WorkerDTO,
+  type AssetDTO,
+  type CreateAssetRequest,
+  type UpdateAssetRequest,
+  type DeleteAssetResult,
   type ApproveTaskRequest,
   type ApproveTaskResult,
   type TriggerActionRequest,
@@ -434,6 +439,200 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           last_activity_kind: w.last_activity_kind
         }));
         sendJson(res, 200, dtos);
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/assets') {
+        const rows = db.all<BureauAssetRow>('SELECT * FROM bureau_assets ORDER BY updated_at DESC');
+        const dtos: AssetDTO[] = rows.map(r => ({
+          id: r.id,
+          name: redactOutput(r.name),
+          category: redactOutput(r.category),
+          url: redactOutput(r.url),
+          description: r.description ? redactOutput(r.description) : null,
+          owner: r.owner ? redactOutput(r.owner) : null,
+          status: r.status,
+          created_at: r.created_at,
+          updated_at: r.updated_at
+        }));
+        sendJson(res, 200, dtos);
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/assets') {
+        let body: CreateAssetRequest;
+        try {
+          body = (await parseJsonBody(req)) as CreateAssetRequest;
+        } catch {
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const name = body.name?.trim();
+        const url = body.url?.trim();
+        if (!name || !url) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'name' and 'url' are required and cannot be blank");
+          return;
+        }
+
+        const id = crypto.randomUUID();
+        const category = body.category?.trim() || 'Other';
+        const description = body.description?.trim() || null;
+        const owner = body.owner?.trim() || null;
+        const status = body.status === 'Inactive' ? 'Inactive' : 'Active';
+        const nowIso = new Date().toISOString();
+
+        db.run(
+          `INSERT INTO bureau_assets (id, name, category, url, description, owner, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id,
+          name,
+          category,
+          url,
+          description,
+          owner,
+          status,
+          nowIso,
+          nowIso
+        );
+
+        journal(db, {
+          kind: 'human',
+          attribution: {
+            actor_role: 'human-operator',
+            provider: 'human',
+            model: 'operator',
+            account: 'operator'
+          },
+          detail: { action: 'asset_create', id, name }
+        });
+
+        const dto: AssetDTO = {
+          id,
+          name: redactOutput(name),
+          category: redactOutput(category),
+          url: redactOutput(url),
+          description: description ? redactOutput(description) : null,
+          owner: owner ? redactOutput(owner) : null,
+          status,
+          created_at: nowIso,
+          updated_at: nowIso
+        };
+        sendJson(res, 201, dto);
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/assets/') && pathname.endsWith('/update')) {
+        const parts = pathname.split('/');
+        const assetId = parts[3];
+        if (!assetId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing asset ID in path');
+          return;
+        }
+
+        const existing = db.get<BureauAssetRow>('SELECT * FROM bureau_assets WHERE id = ?', assetId);
+        if (!existing) {
+          sendError(res, 404, 'NOT_FOUND', `Asset '${assetId}' not found`);
+          return;
+        }
+
+        let body: UpdateAssetRequest;
+        try {
+          body = (await parseJsonBody(req)) as UpdateAssetRequest;
+        } catch {
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        if (body.name !== undefined && !body.name.trim()) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'name' cannot be blank");
+          return;
+        }
+        if (body.url !== undefined && !body.url.trim()) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'url' cannot be blank");
+          return;
+        }
+
+        const name = body.name !== undefined ? body.name.trim() : existing.name;
+        const category = body.category !== undefined ? (body.category.trim() || 'Other') : existing.category;
+        const url = body.url !== undefined ? body.url.trim() : existing.url;
+        const description = body.description !== undefined ? (body.description.trim() || null) : existing.description;
+        const owner = body.owner !== undefined ? (body.owner.trim() || null) : existing.owner;
+        const status = body.status !== undefined ? (body.status === 'Inactive' ? 'Inactive' : 'Active') : existing.status;
+        const nowIso = new Date().toISOString();
+
+        db.run(
+          `UPDATE bureau_assets
+           SET name = ?, category = ?, url = ?, description = ?, owner = ?, status = ?, updated_at = ?
+           WHERE id = ?`,
+          name,
+          category,
+          url,
+          description,
+          owner,
+          status,
+          nowIso,
+          assetId
+        );
+
+        journal(db, {
+          kind: 'human',
+          attribution: {
+            actor_role: 'human-operator',
+            provider: 'human',
+            model: 'operator',
+            account: 'operator'
+          },
+          detail: { action: 'asset_update', id: assetId }
+        });
+
+        const dto: AssetDTO = {
+          id: assetId,
+          name: redactOutput(name),
+          category: redactOutput(category),
+          url: redactOutput(url),
+          description: description ? redactOutput(description) : null,
+          owner: owner ? redactOutput(owner) : null,
+          status,
+          created_at: existing.created_at,
+          updated_at: nowIso
+        };
+        sendJson(res, 200, dto);
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/assets/') && pathname.endsWith('/delete')) {
+        const parts = pathname.split('/');
+        const assetId = parts[3];
+        if (!assetId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing asset ID in path');
+          return;
+        }
+
+        const existing = db.get<BureauAssetRow>('SELECT * FROM bureau_assets WHERE id = ?', assetId);
+        if (!existing) {
+          sendError(res, 404, 'NOT_FOUND', `Asset '${assetId}' not found`);
+          return;
+        }
+
+        db.run('DELETE FROM bureau_assets WHERE id = ?', assetId);
+
+        journal(db, {
+          kind: 'human',
+          attribution: {
+            actor_role: 'human-operator',
+            provider: 'human',
+            model: 'operator',
+            account: 'operator'
+          },
+          detail: { action: 'asset_delete', id: assetId }
+        });
+
+        const result: DeleteAssetResult = {
+          ok: true,
+          id: assetId
+        };
+        sendJson(res, 200, result);
         return;
       }
 

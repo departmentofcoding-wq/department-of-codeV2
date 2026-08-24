@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   escapeHtml,
+  safeHref,
   renderDashboardTileGrid,
   renderTaskTable,
   renderFindingsList,
@@ -92,5 +93,63 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('abc12345...');
     expect(html).toContain('AUTO_REFRESH_INTERVAL');
     expect(html).toContain('5000ms');
+  });
+
+  it('9. safeHref: only http(s) URLs become hrefs; javascript:/data: schemes are refused', () => {
+    expect(safeHref('https://aistudio.google.com')).toBe('https://aistudio.google.com');
+    expect(safeHref('http://localhost:3000')).toBe('http://localhost:3000');
+    // Dangerous schemes escapeHtml cannot neutralize (no escapable chars) → ''.
+    expect(safeHref('javascript:alert(1)')).toBe('');
+    expect(safeHref('JavaScript:alert(1)')).toBe('');
+    expect(safeHref('data:text/html,<script>alert(1)</script>')).toBe('');
+    expect(safeHref('vbscript:msgbox(1)')).toBe('');
+    expect(safeHref(null)).toBe('');
+    expect(safeHref('')).toBe('');
+  });
+
+  it('10. renderJournalTimeline: a javascript: string in a detail never becomes a live link', () => {
+    const html = renderJournalTimeline([
+      {
+        id: 1,
+        ts: '2026-08-24T00:00:00.000Z',
+        kind: 'human',
+        actor_role: 'human-operator',
+        provider: 'console',
+        model: 'operator',
+        account: null,
+        task_id: 'task-xyz',
+        work_uuid: 'w1',
+        work_title: 'Do the thing',
+        job_id: null,
+        detail: 'javascript:alert(1)'
+      } as any
+    ]);
+    expect(html).not.toContain('href="javascript:');
+  });
+
+  it('11. renderJournalTimeline: GROUPS entries by task, with a header per task and a system group last', () => {
+    const entries = [
+      { id: 1, ts: 't1', kind: 'transition', actor_role: 'foreman', provider: 'deterministic', model: 'core', account: null, task_id: 'task-A', work_uuid: 'wA', work_title: 'Assets tab', job_id: null, detail: 'queued->claimed' },
+      { id: 2, ts: 't2', kind: 'system', actor_role: 'system', provider: 'deterministic', model: 'core', account: null, task_id: null, work_uuid: null, work_title: null, job_id: null, detail: 'watchdog swept' },
+      { id: 3, ts: 't3', kind: 'observation', actor_role: 'junior-engineer', provider: 'antigravity', model: 'gemini', account: null, task_id: 'task-B', work_uuid: 'wB', work_title: 'Backup fix', job_id: null, detail: 'authored plan' },
+      { id: 4, ts: 't4', kind: 'review', actor_role: 'senior-engineer', provider: 'claude', model: 'opus', account: null, task_id: 'task-A', work_uuid: 'wA', work_title: 'Assets tab', job_id: null, detail: 'approved' }
+    ];
+    const html = renderJournalTimeline(entries as any);
+    // Each task gets a header naming it, with its title.
+    expect(html).toContain('timeline-group');
+    expect(html).toContain('Assets tab');
+    expect(html).toContain('task-A');
+    expect(html).toContain('Backup fix');
+    expect(html).toContain('task-B');
+    // The unattributed/system group is present and rendered last.
+    expect(html).toContain('Unattributed / system actions');
+    const idxTaskA = html.indexOf('task-A');
+    const idxSystem = html.indexOf('Unattributed / system actions');
+    expect(idxTaskA).toBeLessThan(idxSystem);
+    // Task A's two entries (queued->claimed and approved) are grouped together
+    // under a single header whose count is 2 (details are HTML-escaped).
+    expect(html).toContain('queued-&gt;claimed');
+    expect(html).toContain('approved');
+    expect(html).toContain('timeline-group-count">2<');
   });
 });
