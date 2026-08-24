@@ -494,8 +494,39 @@ export function renderGoogleKeysCard(status) {
 }
 
 /**
+ * Renders the Ntfy notification settings card.
+ * @param {import('../contract.ts').NtfySettingsDTO | undefined} status
+ * @returns {string}
+ */
+export function renderNtfySettingsCard(status) {
+  const serverUrl = status?.ntfy_server_url || 'https://ntfy.sh';
+  const topic = status?.ntfy_topic || '';
+  const isEnabled = Boolean(topic.trim());
+
+  const statusLine = isEnabled
+    ? `<div class="metric-sub">Active Topic: <code>${escapeHtml(topic)}</code> &bull; Server: <code>${escapeHtml(serverUrl)}</code></div>`
+    : `<div class="metric-sub text-muted">No topic configured &mdash; push notifications are disabled.</div>`;
+
+  return `
+    <div class="card table-card full-width" id="ntfy-settings-card">
+      <h3>Ntfy Push Notifications</h3>
+      <p class="metric-sub" style="margin-bottom:0.75rem;">
+        Sends instant mobile &amp; desktop alerts via <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" style="color:var(--accent-color);">ntfy.sh</a> when tasks transition to <code>blocked</code> or <code>done</code>.
+      </p>
+      ${statusLine}
+      <div class="settings-key-form" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+        <input type="text" id="ntfy-server-url" class="intake-input" style="flex:1; min-width:200px;"
+          placeholder="Server URL (default: https://ntfy.sh)" value="${escapeHtml(serverUrl)}" />
+        <input type="text" id="ntfy-topic" class="intake-input" style="flex:1; min-width:200px;"
+          placeholder="Topic (e.g. bureau-tasks-alerts)" value="${escapeHtml(topic)}" />
+        <button id="save-ntfy-settings-btn" class="btn btn-primary">Save Ntfy settings</button>
+      </div>
+    </div>`;
+}
+
+/**
  * Renders the console settings view.
- * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string }} [settings]
+ * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string, googleKeys?: any, ntfySettings?: any }} [settings]
  * @returns {string}
  */
 export function renderSettings(settings = {}) {
@@ -508,6 +539,7 @@ export function renderSettings(settings = {}) {
   return `
     <div class="dashboard-grid">
       ${renderGoogleKeysCard(settings.googleKeys)}
+      ${renderNtfySettingsCard(settings.ntfySettings)}
 
       <div class="card stat-card">
         <h3>Operator Session</h3>

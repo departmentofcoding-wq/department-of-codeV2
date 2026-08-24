@@ -9,6 +9,7 @@ import {
   renderFindingsList,
   renderJournalTimeline,
   renderSettings,
+  renderNtfySettingsCard,
   renderRelaunchState,
   renderErrorToast
 } from '../../console/public/render.js';
@@ -93,6 +94,19 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('abc12345...');
     expect(html).toContain('AUTO_REFRESH_INTERVAL');
     expect(html).toContain('5000ms');
+    expect(html).toContain('Ntfy Push Notifications');
+  });
+
+  it('8b. renderNtfySettingsCard: renders configured topic and inputs', () => {
+    const card = renderNtfySettingsCard({
+      ntfy_server_url: 'https://custom-ntfy.io',
+      ntfy_topic: 'my-alerts',
+      enabled: true
+    });
+    expect(card).toContain('Ntfy Push Notifications');
+    expect(card).toContain('my-alerts');
+    expect(card).toContain('https://custom-ntfy.io');
+    expect(card).toContain('save-ntfy-settings-btn');
   });
 
   it('9. safeHref: only http(s) URLs become hrefs; javascript:/data: schemes are refused', () => {

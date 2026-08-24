@@ -45,7 +45,9 @@ import {
   type IntakeReplyRequest,
   type ConfirmFileResult,
   type GoogleKeyStatusDTO,
-  type SaveGoogleKeysRequest
+  type SaveGoogleKeysRequest,
+  type NtfySettingsDTO,
+  type SaveNtfySettingsRequest
 } from './contract.ts';
 
 export interface ConsoleServerOptions {
@@ -945,6 +947,76 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           });
           sendError(res, 400, 'INVALID_KEYS', err.message);
         }
+        return;
+      }
+
+      // --- Settings: Ntfy notifications config ---
+      if (req.method === 'GET' && pathname === '/api/settings/ntfy') {
+        const serverUrlRow = db.get<{ value: string }>('SELECT value FROM bureau_meta WHERE key = ?', 'ntfy_server_url');
+        const topicRow = db.get<{ value: string }>('SELECT value FROM bureau_meta WHERE key = ?', 'ntfy_topic');
+        const ntfy_server_url = serverUrlRow?.value ?? 'https://ntfy.sh';
+        const ntfy_topic = topicRow?.value ?? '';
+        const dto: NtfySettingsDTO = {
+          ntfy_server_url,
+          ntfy_topic,
+          enabled: Boolean(ntfy_topic.trim())
+        };
+        sendJson(res, 200, dto);
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/settings/ntfy') {
+        let body: SaveNtfySettingsRequest;
+        try {
+          body = (await parseJsonBody(req)) as SaveNtfySettingsRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const serverUrl = body.ntfy_server_url !== undefined ? body.ntfy_server_url.trim() : 'https://ntfy.sh';
+        const topic = body.ntfy_topic !== undefined ? body.ntfy_topic.trim() : '';
+
+        if (serverUrl) {
+          try {
+            const parsed = new URL(serverUrl);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              sendError(res, 400, 'INVALID_URL', 'Server URL must use http or https protocol');
+              return;
+            }
+          } catch {
+            sendError(res, 400, 'INVALID_URL', 'Invalid server URL format');
+            return;
+          }
+        }
+
+        db.execTransaction(() => {
+          db.run(`
+            INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `, serverUrl || 'https://ntfy.sh');
+          db.run(`
+            INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `, topic);
+        });
+
+        journal(db, {
+          kind: 'human',
+          attribution: CONSOLE_HUMAN_ATTR,
+          detail: { action: 'settings_ntfy_updated', serverUrl: serverUrl || 'https://ntfy.sh', topic: topic ? 'configured' : 'empty' }
+        });
+
+        const dto: NtfySettingsDTO = {
+          ntfy_server_url: serverUrl || 'https://ntfy.sh',
+          ntfy_topic: topic,
+          enabled: Boolean(topic)
+        };
+        sendJson(res, 200, dto);
         return;
       }
 

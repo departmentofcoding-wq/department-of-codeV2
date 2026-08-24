@@ -95,3 +95,20 @@ The loop's revise-under-ceiling path (fix fed back to the same junior, chaining 
 re-review) and the honest fix prompt are covered by `tc_work_cycle.test.ts`
 ("REVISE under ceiling…", "buildFixPrompt is honest…"). Restoration verified:
 full suite 340/340 across 81 files, build clean.
+
+## Stream addendum — Ntfy task status notifications (`wt/junior-ntfy-notifications`)
+
+Integrate ntfy.sh push notifications for proactive alerts when tasks transition to
+`blocked` or `done` states. Operator Console settings schema and UI support
+`ntfy_server_url` and `ntfy_topic`, persisted in `bureau_meta`. Real test seam
+guarantees zero network calls during verification.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-NTFY-1 | Notification body formatting — Task ID inclusion (`engine/notifications/ntfy.ts`) | Removed `Task ID: ${payload.taskId}` line from formatted notification payload | `tc_ntfy_client.test.ts` "formats endpoint URL and message body correctly for blocked tasks" | 2 failed / 2 passed (AssertionError: expected body to contain 'Task ID: task-1234'); restored → 4/4 pass |
+| M-NTFY-2 | Blocked task status notification dispatch (`engine/state/machine.ts`) | Changed transition condition from `toState === 'blocked' \|\| toState === 'done'` to `toState === 'done'` (omits blocked alerts) | `tc_ntfy_task_notifications.test.ts` "triggers formatted ntfy notification when task transitions to blocked" | 2 failed / 2 passed (AssertionError: expected +0 to be 1); restored → 4/4 pass |
+| M-NTFY-3 | Ntfy settings persistence in `bureau_meta` (`console/server.ts` `POST /api/settings/ntfy`) | Omitted `bureau_meta` update transaction inside the POST route handler | `tc_ntfy_settings_api.test.ts` "persists ntfy settings to bureau_meta and journals update" | 1 failed / 3 passed (AssertionError: expected undefined to be 'https://ntfy.mycorp.internal'); restored → 4/4 pass |
+
+Restoration verified after each mutation: all affected unit and integration tests re-ran
+green; full suite 353/353 across 84 files, `npm run build` clean twice.
+

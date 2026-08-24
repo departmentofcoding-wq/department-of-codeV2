@@ -3,6 +3,7 @@ import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/
 import { formatActor } from '../contract/validation.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
+import { notifyTaskStateChange } from './notifications.ts';
 
 const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
   'claimed->blocked': ['senior-engineer'],
@@ -34,7 +35,7 @@ export function transition(
 ): BureauTaskRow {
   const now = new Date().toISOString();
 
-  return db.execTransaction(() => {
+  const updatedTask = db.execTransaction(() => {
     // The read, the validation, and the write share one write-locked
     // transaction: no other connection can move the state between the check
     // and the UPDATE. The state predicate on the UPDATE is belt-and-braces
@@ -48,14 +49,14 @@ export function transition(
       throw new Error(`Illegal state transition from ${task.state} to ${toState} by role ${attribution.actor_role}`);
     }
 
-    const updatedTask = db.get<BureauTaskRow>(`
+    const updated = db.get<BureauTaskRow>(`
       UPDATE bureau_tasks
       SET state = ?, updated_at = ?
       WHERE id = ? AND state = ?
       RETURNING *
     `, toState, now, taskId, task.state);
 
-    if (!updatedTask) {
+    if (!updated) {
       throw new Error(`Task ${taskId} changed state concurrently; refusing to overwrite`);
     }
 
@@ -66,8 +67,22 @@ export function transition(
       detail: detail ?? { fromState: task.state, toState }
     });
 
-    return updatedTask;
+    return updated;
   });
+
+  if (toState === 'blocked' || toState === 'done') {
+    const reason = (detail?.reason as string) || (detail?.action as string) || undefined;
+    notifyTaskStateChange(db, {
+      taskId: updatedTask.id,
+      title: updatedTask.title,
+      state: toState,
+      reason
+    }).catch(() => {
+      // Notification errors are non-blocking and already logged
+    });
+  }
+
+  return updatedTask;
 }
 
 /**

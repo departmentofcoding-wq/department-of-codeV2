@@ -232,6 +232,19 @@ export interface SaveGoogleKeysRequest {
   keys: string[];
 }
 
+// --- Settings: Ntfy notifications ---
+
+export interface NtfySettingsDTO {
+  ntfy_server_url: string;
+  ntfy_topic: string;
+  enabled: boolean;
+}
+
+export interface SaveNtfySettingsRequest {
+  ntfy_server_url?: string;
+  ntfy_topic?: string;
+}
+
 // --- Department Assets DTOs ---
 
 export interface AssetDTO {
@@ -408,6 +421,18 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/settings/google-keys',
     auth: 'token',
     description: 'Save Google API keys to env + gitignored secrets file (never the DB)'
+  },
+  {
+    method: 'GET',
+    path: '/api/settings/ntfy',
+    auth: 'token',
+    description: 'Get configured ntfy server URL and topic'
+  },
+  {
+    method: 'POST',
+    path: '/api/settings/ntfy',
+    auth: 'token',
+    description: 'Save ntfy server URL and topic'
   }
 ] as const;
 

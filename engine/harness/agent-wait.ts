@@ -22,6 +22,18 @@ import { HarnessError } from './errors.ts';
  * department's cancellation machinery governs even its longest operations.
  */
 
+/**
+ * A live "still generating" status label is a SMALL standalone indicator whose
+ * ENTIRE text is a progress word ("Working", "Generating…", "Thinking…",
+ * "Running"), optionally with trailing dots/ellipsis. It must NOT match the word
+ * embedded in the agent's own reply prose — e.g. a GLM review that says "working
+ * tree clean" once made the waiter believe the agent was still generating forever,
+ * so the review ran to the job timeout and its verdict was never captured. The
+ * harness probes inject this regex and additionally require a childless (leaf)
+ * element, so only a real status widget qualifies. Anchored (^…$) on purpose.
+ */
+export const AGENT_PROGRESS_LABEL_RE = /^(working|generating|thinking|running)(\s*(\.\.\.|…))?$/i;
+
 export interface AgentActivity {
   /** The agent is actively generating (Stop/Cancel visible or a working indicator). */
   working: boolean;
