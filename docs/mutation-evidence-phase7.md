@@ -112,3 +112,24 @@ guarantees zero network calls during verification.
 Restoration verified after each mutation: all affected unit and integration tests re-ran
 green; full suite 353/353 across 84 files, `npm run build` clean twice.
 
+
+## Stream addendum — Console task archive + Workers flow view (`wt/console-tasks-archive-flow`, Senior-executed)
+
+The junior shipped no mutation evidence for this stream; the Senior executed
+these three live (mutate → watch the real test fail → restore → re-run green),
+matching the auto-kickoff precedent (M-AK1/2/3).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-ARCH-1 | Archive is human-operator-gated (`engine/state/archive.ts`) | deleted the `actor_role !== 'human-operator'` refusal from `archiveTask` | `tc_task_archive.test.ts` "refuses a non-operator actor (fail-closed)" | 1 failed / 5 passed (a junior role archived a task); restored → 6/6 pass |
+| M-ARCH-2 | Live task list excludes archived rows (`console/server.ts` `GET /api/tasks`) | dropped `WHERE archived_at IS NULL` from the live-list query | `tc7_archive_flow_api.test.ts` "1. archive removes a task from the live list…" | 1 failed / 5 passed (archived task still listed live); restored → 6/6 pass |
+| M-SENR-1 | Senior review reuses the conversation on continuation rounds (`engine/flow/work_review_cycle.ts`) | hardcoded `freshConversation: true` (always a cold window, the pre-fix behavior) | `tc_work_cycle.test.ts` "continuation round reuses the senior conversation (freshConversation false when cycles > 0)" | 1 failed / 6 passed; restored → 7/7 pass |
+
+The remaining guards are covered by direct tests, not mutation (verified by
+inspection): the done-gate CHECK is asserted un-bypassable by
+`tc_task_archive.test.ts` ("does NOT let archiving forge a done"), the
+plan-cycle threading by `tc_plan_cycle.test.ts` (round-1 fresh / REVISE
+continue), unarchive idempotence + unknown-task refusal by `tc_task_archive`,
+and the fail-closed (no-token) behavior for all four new endpoints by
+`tc7_archive_flow_api.test.ts` #5. Restoration verified after each mutation;
+full suite 375/375 across 87 files, `npm run build` clean, twice.
