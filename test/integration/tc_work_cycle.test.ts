@@ -42,10 +42,12 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
 
     let sawKind = '';
     let sawWalkthrough = '';
+    let sawFresh: boolean | undefined;
     setSeniorDriverOverride({
       review: async (input: any) => {
         sawKind = input.kind;
         sawWalkthrough = input.walkthrough;
+        sawFresh = input.freshConversation;
         return { senior: 'zai', verdict: 'approve', feedback: 'work matches the task', raw: 'VERDICT: APPROVE', model: 'glm-test' };
       }
     });
@@ -56,6 +58,8 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
 
     expect(sawKind).toBe('walkthrough');
     expect(sawWalkthrough).toContain('t_clicker.test.ts');
+    // First work review starts a fresh senior conversation.
+    expect(sawFresh).toBe(true);
 
     const review = db.get<any>('SELECT * FROM bureau_work_reviews WHERE task_id = ?', 'task-wc');
     expect(review.verdict).toBe('approved');
@@ -65,6 +69,21 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
     expect(db.get<any>('SELECT cycles FROM bureau_tasks WHERE id = ?', 'task-wc').cycles).toBe(1);
     // No fix dispatch on approval.
     expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'junior.dispatch'`).n).toBe(0);
+  });
+
+  it('continuation round reuses the senior conversation (freshConversation false when cycles > 0)', async () => {
+    const db = createFakeDb();
+    setWorkCeiling(db, 5);
+    seedTask(db, { cycles: 1, state: 'claimed' }); // a later round of the same task
+    let sawFresh: boolean | undefined;
+    setSeniorDriverOverride({
+      review: async (input: any) => {
+        sawFresh = input.freshConversation;
+        return { senior: 'zai', verdict: 'approve', feedback: 'ok now', raw: 'VERDICT: APPROVE', model: 'glm-test' };
+      }
+    });
+    await runWorkReviewCycle(db, { taskId: 'task-wc', seniorId: 'zai', walkthrough: WALKTHROUGH });
+    expect(sawFresh).toBe(false);
   });
 
   it('REVISE under ceiling: loops — the senior fixes are fed back to the junior as a fix dispatch that will re-review', async () => {

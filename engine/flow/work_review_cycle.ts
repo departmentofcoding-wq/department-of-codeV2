@@ -202,7 +202,10 @@ export async function runWorkReviewCycle(
     taskSpec: task.spec ?? undefined,
     taskAcceptance: task.acceptance ?? undefined,
     walkthrough,
-    model: opts.seniorModel
+    model: opts.seniorModel,
+    // First work review starts fresh; later rounds reuse the same senior
+    // conversation/window so context carries across the up-to-ceiling rounds.
+    freshConversation: (task.cycles ?? 0) === 0
   });
 
   const verdict = review.verdict === 'approve' ? 'approved' : 'amend';

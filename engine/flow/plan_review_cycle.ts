@@ -346,7 +346,11 @@ export async function runPlanReviewCycle(
     taskSpec: task.spec ?? undefined,
     taskAcceptance: task.acceptance ?? undefined,
     plan: planText,
-    model: opts.seniorModel
+    model: opts.seniorModel,
+    // Round 1 (no prior feedback) starts a fresh senior conversation; a REVISE
+    // round reuses it so the senior keeps its prior critique in context — the
+    // same conversation across all rounds, not a new window each time.
+    freshConversation: !opts.priorFeedback
   });
 
   if (review.verdict === 'approve') {

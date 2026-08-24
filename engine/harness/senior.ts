@@ -41,6 +41,15 @@ export interface SeniorReviewInput {
   walkthrough?: string;
   /** Model to review with. Claude: passed to `--model`. ZCode: driven in the GUI picker. */
   model?: string;
+  /**
+   * Whether this review starts a FRESH senior conversation (default true). The
+   * first round of a task's review cycle starts fresh; subsequent rounds pass
+   * false so the SAME senior conversation/window is reused — the reviewer keeps
+   * the prior round's artifact and its own feedback in context, instead of a
+   * cold new window each round (wasteful of both time and context). Mirrors the
+   * junior side's freshConversation handling.
+   */
+  freshConversation?: boolean;
 }
 
 export interface SeniorVerdict {
@@ -542,16 +551,24 @@ export class ZCodeSenior implements SeniorDriver {
     const prompt = `${system}\n\n${user}`;
     const session = await ZCodeSession.attach(port);
     try {
-      const fresh = await session.newConversation();
-      if (!fresh) {
-        throw new HarnessError(
-          'ZCode: could not start a fresh conversation (no New task/conversation/chat control). ' +
-            'Refusing to review against unknown prior context — recalibrate the selector.'
-        );
+      // First round starts a fresh conversation; a continuation round (round 2+
+      // of the SAME task's review cycle) REUSES the existing conversation so the
+      // GLM senior keeps the prior artifact + its own feedback in context — no
+      // cold new window per round. The model was already picked on round 1, so we
+      // don't re-open the picker mid-thread.
+      const startFresh = input.freshConversation !== false;
+      let model: string | undefined = input.model;
+      if (startFresh) {
+        const fresh = await session.newConversation();
+        if (!fresh) {
+          throw new HarnessError(
+            'ZCode: could not start a fresh conversation (no New task/conversation/chat control). ' +
+              'Refusing to review against unknown prior context — recalibrate the selector.'
+          );
+        }
+        await new Promise(r => setTimeout(r, 800));
+        if (input.model) model = await session.selectModel(input.model);
       }
-      await new Promise(r => setTimeout(r, 800));
-      let model: string | undefined;
-      if (input.model) model = await session.selectModel(input.model);
       await session.sendPrompt(prompt);
       // No hard cap: GLM often verifies claims by re-running the suite/build/browser
       // itself (good!). Keep waiting while it's active; only the inactivity window

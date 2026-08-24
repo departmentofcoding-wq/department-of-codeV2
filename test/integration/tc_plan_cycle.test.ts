@@ -94,6 +94,7 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
 
     let seniorSawTask = '';
     let seniorSawPlan = '';
+    let seniorSawFresh: boolean | undefined;
     setAntigravityDriverOverride({
       runCommand: async () => ({ transcript: 'reply', plan: GOOD_PLAN, junior: 'B', launched: false, model: 'Gemini 3.7 Flash' })
     });
@@ -101,6 +102,7 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
       review: async (input: any) => {
         seniorSawTask = input.taskTitle + '|' + (input.taskIntent ?? '') + '|' + (input.taskAcceptance ?? '');
         seniorSawPlan = input.plan;
+        seniorSawFresh = input.freshConversation;
         return { senior: 'claude', verdict: 'approve', feedback: 'aligned with task', raw: 'VERDICT: APPROVE', model: 'opus-test' };
       }
     });
@@ -112,6 +114,8 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(seniorSawPlan).toContain('wt/junior-b-clicker');
     expect(seniorSawTask).toContain('Build a clicker');
     expect(seniorSawTask).toContain('one button increments a number');
+    // Round 1 (no prior feedback) starts a fresh senior conversation.
+    expect(seniorSawFresh).toBe(true);
 
     // Plan row authored by the junior with HONEST model attribution.
     const plan = db.get<any>('SELECT * FROM bureau_plans WHERE id = ?', (res as any).planId);
@@ -169,14 +173,20 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     setAntigravityDriverOverride({
       runCommand: async () => ({ transcript: 'reply', plan: GOOD_PLAN, junior: 'A', launched: false })
     });
+    let seniorSawFresh: boolean | undefined;
     setSeniorDriverOverride({
-      review: async () => ({ senior: 'zai', verdict: 'revise', feedback: 'narrow the scope to one file', raw: 'VERDICT: REVISE' })
+      review: async (input: any) => {
+        seniorSawFresh = input.freshConversation;
+        return { senior: 'zai', verdict: 'revise', feedback: 'narrow the scope to one file', raw: 'VERDICT: REVISE' };
+      }
     });
 
     const res = await runPlanReviewCycle(db, { taskId: 'task-pc', seniorId: 'zai' });
     expect(res.outcome).toBe('revise');
     expect((res as any).by).toBe('senior');
     expect((res as any).nextRoundEnqueued).toBe(true);
+    // Round 1 started fresh.
+    expect(seniorSawFresh).toBe(true);
 
     // Amend review recorded.
     const review = db.get<any>('SELECT verdict FROM bureau_plan_reviews WHERE plan_id = ?', (res as any).planId);
@@ -205,6 +215,8 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(juniorPrompt).toContain('PREVIOUS plan');
     expect(juniorPrompt).toContain('narrow the scope to one file');
     expect(db.get<any>('SELECT plan_rounds FROM bureau_tasks WHERE id = ?', 'task-pc').plan_rounds).toBe(2);
+    // Round 2 (with prior feedback) reuses the senior conversation — not fresh.
+    expect(seniorSawFresh).toBe(false);
   });
 
   it('CEILING entry-guard: at plan_rounds >= ceiling the cycle REFUSES — guardrail span, task blocked, no junior invoked', async () => {
