@@ -107,7 +107,10 @@ export async function notifyTaskStateChange(
         detail: {
           action: 'ntfy_notification',
           state: event.state,
-          topic,
+          // Record only THAT a topic was configured, never its value — an ntfy
+          // topic is the address anyone can publish/subscribe to, so keep it out of
+          // the journal (mirrors the settings-save span's 'configured'/'empty').
+          topicConfigured: true,
           success
         }
       });
