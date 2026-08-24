@@ -34,6 +34,10 @@ export interface JuniorDispatchPayload {
    *  the junior's walkthrough. Set by the plan cycle's implementation dispatch so
    *  the flow reaches a work review instead of dead-ending after the code lands. */
   chainWorkReview?: boolean;
+  /** Carried across work-review fix rounds so the SAME senior re-reviews and the
+   *  chained work.cycle knows which senior/model to use. */
+  workSeniorId?: string;
+  workSeniorModel?: string;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -253,7 +257,16 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         enqueueJob(ctx.db, {
           kind: 'work.cycle',
           task_id: dispatch.task_id,
-          payload: { taskId: dispatch.task_id },
+          payload: {
+            taskId: dispatch.task_id,
+            // Carry who to drive on a REVISE: the SAME junior that implemented,
+            // and the SAME senior across fix rounds (when known).
+            ...(payload.junior ? { junior: payload.junior } : {}),
+            ...(payload.model ? { juniorModel: payload.model } : {}),
+            ...(payload.folder ? { folder: payload.folder } : {}),
+            ...(payload.workSeniorId ? { seniorId: payload.workSeniorId } : {}),
+            ...(payload.workSeniorModel ? { seniorModel: payload.workSeniorModel } : {})
+          },
           max_attempts: 1
         });
       }

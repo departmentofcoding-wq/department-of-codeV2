@@ -116,6 +116,7 @@ export const HARNESS_META_KEYS = {
 
 export const REVIEW_PR_META_KEYS = {
   REVIEW_PLAN_ROUNDS_CEILING: 'review:plan_rounds_ceiling',
+  REVIEW_WORK_ROUNDS_CEILING: 'review:work_rounds_ceiling',
   PR_BASE_BRANCH: 'pr:base_branch'
 } as const;
 
@@ -124,6 +125,12 @@ export const REVIEW_PR_META_KEYS = {
 // longer blocks — it proceeds to implementation with the outstanding feedback and
 // gates on the walkthrough review (see engine/flow/plan_review_cycle.ts).
 export const DEFAULT_PLAN_ROUNDS_CEILING = 7;
+
+// The senior reviews the junior's walkthrough; on REVISE the junior implements the
+// fixes and the senior re-reviews, looping until APPROVE. Bounded to 5 rounds so a
+// senior that never approves surfaces to the operator instead of looping forever.
+export const DEFAULT_WORK_ROUNDS_CEILING = 5;
+
 export const DEFAULT_PR_BASE_BRANCH = 'main';
 
 export const DEFAULT_LEASE_MS = 120_000;

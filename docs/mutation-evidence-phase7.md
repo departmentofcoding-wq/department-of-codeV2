@@ -79,3 +79,19 @@ pinned the ceiling explicitly in the exhaustion tests (`t39_t40`, `tc_plan_cycle
 
 Restoration verified after each mutation: affected files re-ran green; full
 suite 338/338 across 81 files, `npm run build` clean, twice.
+
+## Stream addendum — Bounded work-review loop (`wt/junior-assets-tab`, operator-directed)
+
+The work review now CYCLES: on REVISE the senior's fixes are fed back to the
+junior, which implements them and its new walkthrough is re-reviewed, looping
+until APPROVE — bounded to 5 rounds (`review:work_rounds_ceiling`), at which the
+task is blocked for the operator rather than looping the live agents forever.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-WLOOP | Work-review ceiling blocks the task instead of looping forever (`engine/flow/work_review_cycle.ts`) | disabled the ceiling check (`if (false && roundsUsed >= ceiling)`) so it re-dispatches at the ceiling | `tc_work_cycle.test.ts` "REVISE at the ceiling: stops looping — the task is BLOCKED" | 1 failed (task not blocked, runaway fix dispatch enqueued); restored → 6/6 pass |
+
+The loop's revise-under-ceiling path (fix fed back to the same junior, chaining a
+re-review) and the honest fix prompt are covered by `tc_work_cycle.test.ts`
+("REVISE under ceiling…", "buildFixPrompt is honest…"). Restoration verified:
+full suite 340/340 across 81 files, build clean.

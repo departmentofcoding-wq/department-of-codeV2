@@ -391,6 +391,9 @@ const workCycleSchema = z.object({
   taskId: z.string(),
   seniorId: z.string().optional(),
   seniorModel: z.string().optional(),
+  junior: z.string().optional(),
+  juniorModel: z.string().optional(),
+  folder: z.string().optional(),
   walkthrough: z.string().optional()
 });
 

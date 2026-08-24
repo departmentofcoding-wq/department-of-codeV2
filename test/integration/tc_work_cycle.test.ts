@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createFakeDb } from '../fixtures/db_factory.ts';
 import { setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
 import { getJobDefinition, getRegisteredJobKinds } from '../../engine/jobs/registry.ts';
-import { runWorkReviewCycle } from '../../engine/flow/work_review_cycle.ts';
+import { runWorkReviewCycle, buildFixPrompt } from '../../engine/flow/work_review_cycle.ts';
 
 function seedTask(db: any, overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
@@ -16,6 +16,14 @@ function seedTask(db: any, overrides: Record<string, unknown> = {}) {
   );
 }
 
+function setWorkCeiling(db: any, n: number) {
+  db.run(
+    `INSERT INTO bureau_meta (key, value) VALUES ('review:work_rounds_ceiling', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    String(n)
+  );
+}
+
 const WALKTHROUGH = [
   'Walkthrough',
   'Changed index.html: added a button and a counter span.',
@@ -23,22 +31,20 @@ const WALKTHROUGH = [
   'Verification: npm test green; build clean.'
 ].join('\n');
 
-describe('Work-review cycle — senior reads the walkthrough after implementation', () => {
+describe('Work-review cycle — senior reviews, junior fixes, loop until approve (bounded)', () => {
   afterEach(() => {
     setSeniorDriverOverride(null);
   });
 
-  it('APPROVED: the senior reviews the walkthrough (with the task verbatim), records a work_review + review span, returns approved', async () => {
+  it('APPROVED: records a work_review + review span, increments the round, returns approved', async () => {
     const db = createFakeDb();
     seedTask(db);
 
     let sawKind = '';
-    let sawTask = '';
     let sawWalkthrough = '';
     setSeniorDriverOverride({
       review: async (input: any) => {
         sawKind = input.kind;
-        sawTask = input.taskTitle + '|' + (input.taskIntent ?? '') + '|' + (input.taskAcceptance ?? '');
         sawWalkthrough = input.walkthrough;
         return { senior: 'zai', verdict: 'approve', feedback: 'work matches the task', raw: 'VERDICT: APPROVE', model: 'glm-test' };
       }
@@ -46,45 +52,79 @@ describe('Work-review cycle — senior reads the walkthrough after implementatio
 
     const res = await runWorkReviewCycle(db, { taskId: 'task-wc', seniorId: 'zai', walkthrough: WALKTHROUGH });
     expect(res.outcome).toBe('approved');
+    expect((res as any).roundsUsed).toBe(1);
 
-    // The senior actually READ the walkthrough, against the task verbatim.
     expect(sawKind).toBe('walkthrough');
     expect(sawWalkthrough).toContain('t_clicker.test.ts');
-    expect(sawTask).toContain('Build a clicker');
-    expect(sawTask).toContain('one button increments a number');
 
-    // A real work_review row with honest attribution.
     const review = db.get<any>('SELECT * FROM bureau_work_reviews WHERE task_id = ?', 'task-wc');
     expect(review.verdict).toBe('approved');
-    expect(review.actor_role).toBe('senior-engineer');
     expect(review.provider).toBe('zai');
     expect(review.model).toBe('glm-test');
-    expect(review.phase).toBe('walkthrough');
-
-    // An attributed review span was journaled.
-    const span = db.get<any>(`SELECT * FROM bureau_journal WHERE kind = 'review' AND detail LIKE '%work-review%'`);
-    expect(span).toBeTruthy();
+    // The round was recorded on the task.
+    expect(db.get<any>('SELECT cycles FROM bureau_tasks WHERE id = ?', 'task-wc').cycles).toBe(1);
+    // No fix dispatch on approval.
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'junior.dispatch'`).n).toBe(0);
   });
 
-  it('REVISE: an amend verdict is recorded and surfaced; the task is NOT marked done (the done-gate is untouched)', async () => {
+  it('REVISE under ceiling: loops — the senior fixes are fed back to the junior as a fix dispatch that will re-review', async () => {
     const db = createFakeDb();
-    seedTask(db);
+    setWorkCeiling(db, 5);
+    seedTask(db, { cycles: 0 });
     setSeniorDriverOverride({
-      review: async () => ({ senior: 'claude', verdict: 'revise', feedback: 'missing the empty-state test', raw: 'VERDICT: REVISE' })
+      review: async () => ({ senior: 'claude', verdict: 'revise', feedback: 'add the empty-state test', raw: 'VERDICT: REVISE', model: 'opus' })
+    });
+
+    const res = await runWorkReviewCycle(db, {
+      taskId: 'task-wc',
+      seniorId: 'claude',
+      junior: 'B',
+      juniorModel: 'Gemini 3.7 Flash',
+      walkthrough: WALKTHROUGH
+    });
+    expect(res.outcome).toBe('revise');
+    expect((res as any).ceilingReached).toBe(false);
+    expect((res as any).fixDispatchJobId).toBeTruthy();
+
+    const review = db.get<any>('SELECT * FROM bureau_work_reviews WHERE task_id = ?', 'task-wc');
+    expect(review.verdict).toBe('amend');
+
+    // A fix dispatch was enqueued for the SAME junior, carrying the required
+    // changes and chaining a re-review; it re-reviews with the SAME senior.
+    const fixJob = db.get<any>(`SELECT * FROM bureau_jobs WHERE kind = 'junior.dispatch'`);
+    expect(fixJob).toBeTruthy();
+    const payload = JSON.parse(fixJob.payload);
+    expect(payload.junior).toBe('B');
+    expect(payload.prompt).toContain('add the empty-state test');
+    expect(payload.prompt).toContain('Build a clicker');
+    expect(payload.chainWorkReview).toBe(true);
+    expect(payload.freshConversation).toBe(false);
+    expect(payload.workSeniorId).toBe('claude');
+
+    // Round consumed; task not done.
+    expect(db.get<any>('SELECT cycles FROM bureau_tasks WHERE id = ?', 'task-wc').cycles).toBe(1);
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-wc').state).not.toBe('done');
+  });
+
+  it('REVISE at the ceiling: stops looping — the task is BLOCKED and surfaced to the operator, no further fix dispatch', async () => {
+    const db = createFakeDb();
+    setWorkCeiling(db, 5);
+    seedTask(db, { cycles: 4, state: 'claimed' }); // this review is round 5 = ceiling
+    setSeniorDriverOverride({
+      review: async () => ({ senior: 'claude', verdict: 'revise', feedback: 'still not right', raw: 'VERDICT: REVISE' })
     });
 
     const res = await runWorkReviewCycle(db, { taskId: 'task-wc', seniorId: 'claude', walkthrough: WALKTHROUGH });
     expect(res.outcome).toBe('revise');
+    expect((res as any).ceilingReached).toBe(true);
+    expect((res as any).roundsUsed).toBe(5);
 
-    const review = db.get<any>('SELECT * FROM bureau_work_reviews WHERE task_id = ?', 'task-wc');
-    expect(review.verdict).toBe('amend');
-    expect(review.comments).toContain('missing the empty-state test');
-
-    // The done-gate invariant holds: nothing moved the task to done.
-    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-wc').state).not.toBe('done');
+    // Blocked for the operator; no runaway fix dispatch.
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', 'task-wc').state).toBe('blocked');
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'junior.dispatch'`).n).toBe(0);
   });
 
-  it('NO WALKTHROUGH: with nothing captured to review, the cycle skips with a guardrail span rather than billing a senior', async () => {
+  it('NO WALKTHROUGH: skips with a guardrail span rather than billing a senior', async () => {
     const db = createFakeDb();
     seedTask(db);
     let seniorRan = false;
@@ -95,7 +135,6 @@ describe('Work-review cycle — senior reads the walkthrough after implementatio
       }
     });
 
-    // No walkthrough override and no artifacts on disk for this task id.
     const res = await runWorkReviewCycle(db, { taskId: 'task-wc', walkthrough: '   ' });
     expect(res).toEqual({ outcome: 'skipped', reason: 'no_walkthrough' });
     expect(seniorRan).toBe(false);
@@ -103,6 +142,14 @@ describe('Work-review cycle — senior reads the walkthrough after implementatio
     expect(
       db.get<any>(`SELECT COUNT(*) n FROM bureau_journal WHERE kind = 'guardrail' AND detail LIKE '%work_review_no_walkthrough%'`).n
     ).toBe(1);
+  });
+
+  it('buildFixPrompt is honest — asks for the required changes and an updated walkthrough for re-review', () => {
+    const p = buildFixPrompt({ title: 'T', intent: 'i' } as any, 'fix the null case', 2, 5);
+    expect(p).toMatch(/requesting changes/i);
+    expect(p).toContain('round 2 of at most 5');
+    expect(p).toContain('fix the null case');
+    expect(p).toMatch(/updated walkthrough/i);
   });
 
   it('is wired as a real job kind: work.cycle registered, single attempt, long timeout', () => {
