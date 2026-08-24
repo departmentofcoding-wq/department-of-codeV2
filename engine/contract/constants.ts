@@ -119,7 +119,11 @@ export const REVIEW_PR_META_KEYS = {
   PR_BASE_BRANCH: 'pr:base_branch'
 } as const;
 
-export const DEFAULT_PLAN_ROUNDS_CEILING = 3;
+// Raised 3 → 7: real plans often need several revise rounds to converge, and the
+// department would rather keep iterating than stall. At the ceiling the flow no
+// longer blocks — it proceeds to implementation with the outstanding feedback and
+// gates on the walkthrough review (see engine/flow/plan_review_cycle.ts).
+export const DEFAULT_PLAN_ROUNDS_CEILING = 7;
 export const DEFAULT_PR_BASE_BRANCH = 'main';
 
 export const DEFAULT_LEASE_MS = 120_000;

@@ -138,15 +138,48 @@ export function buildJuniorPlanPrompt(task: BureauTaskRow, priorFeedback?: strin
   );
 }
 
+/** How the junior arrived at implementation: an approved plan, or the review-round
+ *  ceiling reached with feedback still outstanding. The prompt must tell the
+ *  junior the truth — never claim "approved" on the ceiling path. */
+export interface ImplementationBasis {
+  /** True only when a senior actually returned APPROVE on this plan. */
+  approved: boolean;
+  /** The final review feedback (senior or rubric), threaded to the junior so it
+   *  implements against the last-known required changes — especially on the
+   *  ceiling path, where that feedback was never addressed in a further round. */
+  feedback?: string;
+  /** How many plan rounds were spent (for the honest ceiling wording). */
+  roundsUsed?: number;
+  ceiling?: number;
+}
+
 /**
- * The implementation prompt handed to the junior via `junior.dispatch` once a
- * plan is approved: the task verbatim plus the approved plan, with the
- * department's working rules (branch, tests, walkthrough when done).
+ * The implementation prompt handed to the junior via `junior.dispatch`. The
+ * task verbatim plus the plan, with the department's working rules (branch,
+ * tests, walkthrough when done). The header is HONEST about how we got here:
+ *  - approved  → "reviewed and APPROVED; implement exactly as planned";
+ *  - ceiling   → "review-round ceiling reached with feedback still outstanding;
+ *    implement on this plan and ADDRESS the final required changes below."
  */
-export function buildImplementationPrompt(task: BureauTaskRow, planText: string): string {
+export function buildImplementationPrompt(
+  task: BureauTaskRow,
+  planText: string,
+  basis: ImplementationBasis = { approved: true }
+): string {
+  const header = basis.approved
+    ? 'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
+      'it now, exactly as planned.\n\n'
+    : `Your plan went through ${basis.roundsUsed ?? 'the maximum'} review round(s) and the ` +
+      `review-round ceiling${basis.ceiling ? ` (${basis.ceiling})` : ''} was reached with the ` +
+      "senior's feedback still outstanding. Rather than stall the task, implement now on this " +
+      'plan — but you MUST address the final required changes below as you do.\n\n';
+  const feedbackBlock =
+    basis.feedback && basis.feedback.trim()
+      ? `\n===== SENIOR'S FINAL REQUIRED CHANGES =====\n${basis.feedback.trim()}\n`
+      : '';
+  const planLabel = basis.approved ? 'APPROVED PLAN' : 'PLAN (implement, addressing the changes above)';
   return (
-    'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
-    'it now, exactly as planned.\n\n' +
+    header +
     'Rules: work on the branch named in the plan; add the tests the plan names; ' +
     'when done, finish with a walkthrough section summarizing what changed, the ' +
     'test results, and the verification you ran.\n\n' +
@@ -155,7 +188,8 @@ export function buildImplementationPrompt(task: BureauTaskRow, planText: string)
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
-    `\n===== APPROVED PLAN =====\n${planText}\n`
+    feedbackBlock +
+    `\n===== ${planLabel} =====\n${planText}\n`
   );
 }
 
@@ -383,7 +417,10 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
   };
 
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, p.planText);
+  const implPrompt = buildImplementationPrompt(task, p.planText, {
+    approved: true,
+    feedback: p.feedback
+  });
 
   const dispatchJob = db.execTransaction(() => {
     db.run(
@@ -406,6 +443,12 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       nowIso,
       task.id
     );
+    // The task leaves the planning queue: an approved plan claims it. Without this
+    // the task sat in `queued` forever even though implementation was dispatched
+    // (the zombie the first real run exposed). queued→claimed is the legal edge.
+    if (task.state === 'queued') {
+      transition(db, task.id, 'claimed', seniorAttribution, { reason: 'plan_approved' });
+    }
     journal(db, {
       kind: 'review',
       attribution: seniorAttribution,
@@ -436,6 +479,9 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
         junior: p.junior,
         // Continue in the planning conversation (see enqueueImplementationDispatch).
         freshConversation: false,
+        // When the implementation finishes, the senior must READ THE WALKTHROUGH:
+        // chain a work-review cycle so the flow reaches a review, not a dead end.
+        chainWorkReview: true,
         // Pin the model the planning round actually used, when it is known —
         // never pin the 'unspecified' sentinel.
         ...(p.juniorModel !== UNSPECIFIED_MODEL ? { model: p.juniorModel } : {}),
@@ -466,11 +512,19 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
 function enqueueImplementationDispatch(
   db: DbConnection,
   task: BureauTaskRow,
-  opts: { planText: string; junior: string; juniorProvider: string; juniorModel: string; folder?: string }
+  opts: {
+    planText: string;
+    junior: string;
+    juniorProvider: string;
+    juniorModel: string;
+    folder?: string;
+    /** Honest basis for the prompt header — the ceiling path is NOT an approval. */
+    basis: ImplementationBasis;
+  }
 ) {
   const nowIso = new Date().toISOString();
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, opts.planText);
+  const implPrompt = buildImplementationPrompt(task, opts.planText, opts.basis);
   db.run(
     `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
      VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
@@ -491,6 +545,8 @@ function enqueueImplementationDispatch(
       // Continue in the planning conversation: the junior already holds its
       // approved plan + the senior's review, and the IDE may expose no reset.
       freshConversation: false,
+      // The walkthrough must still be reviewed — chain the work-review cycle.
+      chainWorkReview: true,
       ...(opts.juniorModel !== UNSPECIFIED_MODEL ? { model: opts.juniorModel } : {}),
       ...(opts.folder ? { folder: opts.folder } : {})
     }
@@ -561,12 +617,22 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
   // The plan history and every amend verdict remain on the record for that
   // review, so nothing is silently waved through.
   if (roundsUsed >= p.ceiling) {
+    // The task leaves the planning queue and starts implementing on the
+    // best-available plan — the walkthrough review is the compensating gate.
+    if (task.state === 'queued') {
+      transition(db, task.id, 'claimed', p.reviewAttribution, {
+        reason: 'plan_ceiling_proceed_to_implementation'
+      });
+    }
     const dispatchJob = enqueueImplementationDispatch(db, task, {
       planText: p.planText,
       junior: p.junior,
       juniorProvider: p.juniorProvider,
       juniorModel: p.juniorModel,
-      folder: p.carry.folder
+      folder: p.carry.folder,
+      // Honest: this is the ceiling path, not an approval — thread the final
+      // feedback so the junior implements against the outstanding required changes.
+      basis: { approved: false, feedback: p.feedback, roundsUsed, ceiling: p.ceiling }
     });
     journal(db, {
       kind: 'review',

@@ -2,6 +2,7 @@ import { getIdeDriver } from '../contract/ide-driver-seam.ts';
 import type { AttributionTuple, BureauDispatchRow, JobContext, JobDefinition } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
 import { acquireLease, releaseLease } from './lease-manager.ts';
+import { enqueueJob } from '../jobs/jobs.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
@@ -29,6 +30,10 @@ export interface JuniorDispatchPayload {
    *  conversation it planned in — it already holds the approved plan + review
    *  context, and the IDE may expose no reset control to open a fresh one. */
   freshConversation?: boolean;
+  /** When true, on successful completion enqueue a `work.cycle` so a senior reads
+   *  the junior's walkthrough. Set by the plan cycle's implementation dispatch so
+   *  the flow reaches a work review instead of dead-ending after the code lands. */
+  chainWorkReview?: boolean;
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -241,6 +246,17 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         finishIso,
         dispatch.id
       );
+      // Close the loop: a plan-originated implementation dispatch chains into a
+      // work review so a senior reads the walkthrough. Enqueued in the SAME
+      // transaction as completion so it is durable (nothing fire-and-forget).
+      if (payload.chainWorkReview && dispatch.task_id) {
+        enqueueJob(ctx.db, {
+          kind: 'work.cycle',
+          task_id: dispatch.task_id,
+          payload: { taskId: dispatch.task_id },
+          max_attempts: 1
+        });
+      }
     });
 
     journal(ctx.db, {
@@ -282,6 +298,8 @@ export const juniorDispatchJobDefinition: JobDefinition = {
   handler: handleJuniorDispatch,
   options: {
     maxAttempts: 3,
-    timeoutMs: 120000
+    // The live path is registered in engine/jobs/registry.ts; keep this in sync.
+    // A junior implementation dispatch drives a GUI agent for many minutes.
+    timeoutMs: 30 * 60 * 1000
   }
 };

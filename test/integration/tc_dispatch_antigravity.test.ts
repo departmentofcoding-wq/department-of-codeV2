@@ -64,4 +64,44 @@ describe('junior.dispatch → Antigravity prompt path', () => {
     expect(detail.transcriptTail).toContain('DEPARTMENT ONLINE');
     expect(detail.prompt).toBe('add a function add(a,b) with a test');
   });
+
+  it('chainWorkReview: on completion, a plan-originated implementation dispatch enqueues a work.cycle so a senior reads the walkthrough', async () => {
+    setAntigravityDriverOverride({
+      async runCommand() {
+        return { transcript: 'agent: implemented + walkthrough', launched: false };
+      }
+    });
+
+    const ctx: any = {
+      db,
+      job: { id: 'job-ag', task_id: 'task-ag' },
+      payload: { dispatchId: 'disp-ag', prompt: 'implement the approved plan', chainWorkReview: true },
+      signal: new AbortController().signal
+    };
+    await handleJuniorDispatch(ctx);
+
+    // The loop is closed: a work.cycle job for this task is now pending.
+    const work = db.get<any>(
+      `SELECT * FROM bureau_jobs WHERE kind = 'work.cycle' AND task_id = 'task-ag'`
+    );
+    expect(work).toBeTruthy();
+    expect(work.state).toBe('pending');
+    expect(JSON.parse(work.payload).taskId).toBe('task-ag');
+  });
+
+  it('NO chaining by default: an ordinary dispatch (no chainWorkReview) enqueues no work.cycle', async () => {
+    setAntigravityDriverOverride({
+      async runCommand() {
+        return { transcript: 'agent: did a thing', launched: false };
+      }
+    });
+    const ctx: any = {
+      db,
+      job: { id: 'job-ag', task_id: 'task-ag' },
+      payload: { dispatchId: 'disp-ag', prompt: 'do a thing' },
+      signal: new AbortController().signal
+    };
+    await handleJuniorDispatch(ctx);
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'work.cycle'`).n).toBe(0);
+  });
 });

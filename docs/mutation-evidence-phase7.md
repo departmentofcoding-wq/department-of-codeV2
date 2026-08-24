@@ -52,3 +52,30 @@ them here (verdict: `docs/reviews/verdict-auto-kickoff.md`).
 
 Restoration verified after each mutation: affected files re-ran green
 (18/18 file_task+reconcile, 20/20 jobs); working tree clean.
+
+## Stream addendum — First-run fixes (`wt/junior-assets-tab`, operator-directed)
+
+Fixes cut against the gaps the first real end-to-end run exposed (the
+"Department Assets" task, `82b97764`): a dead backup job, an unhonest
+implementation prompt, a `javascript:` URL vector in the new Assets tab, the
+plan→work loop dead-ending after implementation, and the plan-review ceiling
+raised 3 → 7. Two representative guards were mutated and re-run live; the
+backup fix is a regression proof (the pre-fix `require` threw at call time).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-HREF | URL-scheme guard on rendered links — only http(s) becomes an `href` (`console/public/render.js` `safeHref`) | removed the `!/^https?:\/\//i` scheme check (return the raw url) | `tCONSOLE_assets_render.test.ts` "2b. URL scheme guard… inert" + `tCONSOLE_b1_render.test.ts` "9. safeHref…" | 2 failed (`javascript:alert(1)` rendered as a live href); restored → 15/15 pass |
+| M-LOOP | Implementation dispatch chains a work review so a senior reads the walkthrough (`engine/harness/dispatch-job.ts`) | disabled the `chainWorkReview` enqueue (`if (false && …)`) | `tc_dispatch_antigravity.test.ts` "chainWorkReview: … enqueues a work.cycle" | 1 failed (no `work.cycle` enqueued); the negative "NO chaining by default" test still passed; restored → 3/3 pass |
+| M-BACKUP | Real backup provider resolves without `require` in ESM (`engine/contract/backup-seam.ts`) | (regression) the pre-fix `require('../durability/git_backup_provider.ts')` — `require` is undefined in an ES module, so every `backup.push` job died | `tc_backup_seam.test.ts` "resolves the real ExecGitBackupProvider without throwing" | pre-fix: throws "require is not defined"; post-fix (top-level import): provider instantiates, suite green |
+
+Also covered by new/updated tests (not separately mutated here): the honest
+implementation prompt on the ceiling path (`tc_plan_cycle.test.ts` "buildImplementationPrompt
+is HONEST on the ceiling path"), the `queued→claimed` transition on plan
+approval ("APPROVE from queued… no longer a zombie"), the work-review cycle
+approve/revise/no-walkthrough paths (`tc_work_cycle.test.ts`), and the
+task-grouped history log (`tCONSOLE_b1_render.test.ts` "11. … GROUPS entries by
+task"). The plan-rounds ceiling raise (3 → 7) updated `contract_d0.test.ts` and
+pinned the ceiling explicitly in the exhaustion tests (`t39_t40`, `tc_plan_cycle`).
+
+Restoration verified after each mutation: affected files re-ran green; full
+suite 338/338 across 81 files, `npm run build` clean, twice.

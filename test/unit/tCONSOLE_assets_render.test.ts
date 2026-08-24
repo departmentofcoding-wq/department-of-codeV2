@@ -76,6 +76,28 @@ describe('T-CONSOLE: Department Assets Render Core', () => {
     expect(html).toContain('&lt;svg onload=alert(&quot;owner&quot;)&gt;');
   });
 
+  it('2b. URL scheme guard: a javascript: asset URL is rendered inert, never as a clickable href', () => {
+    const jsUrlAsset: AssetDTO[] = [
+      {
+        id: 'asset-js',
+        name: 'Sneaky',
+        category: 'Other',
+        url: 'javascript:alert(document.cookie)',
+        description: null,
+        owner: null,
+        status: 'Active',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z'
+      }
+    ];
+    const html = renderAssetsTable(jsUrlAsset);
+    // No live link with a javascript: scheme.
+    expect(html).not.toContain('href="javascript:');
+    expect(html).not.toContain('<a href="javascript');
+    // The raw text is still shown (escaped), just not as an anchor.
+    expect(html).toContain('javascript:alert(document.cookie)');
+  });
+
   it('3. Empty State: renders fallback empty state card when asset list is empty or null', () => {
     const emptyHtml = renderAssetsTable([]);
     expect(emptyHtml).toContain('No department assets tracked yet.');

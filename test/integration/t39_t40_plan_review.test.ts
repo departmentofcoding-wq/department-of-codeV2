@@ -175,6 +175,11 @@ describe.each(testImplementations)('T39 & T40: Senior Plan Review & Ceiling Exha
     setMockClientOverride(mockClient);
 
     const now = new Date().toISOString();
+    // Pin the ceiling to 3 for this exhaustion test (the default is now 7).
+    db.run(
+      `INSERT INTO bureau_meta (key, value) VALUES ('review:plan_rounds_ceiling', '3')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    );
     // Task already at plan_rounds = 2 (ceiling is 3)
     db.run(
       `INSERT INTO bureau_tasks (id, title, state, work_uuid, plan_rounds, created_at, updated_at)
