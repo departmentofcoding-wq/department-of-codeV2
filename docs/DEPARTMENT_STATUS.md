@@ -11,10 +11,42 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 7 — Live operation: IN PROGRESS. The department has now shipped TWO real tasks end-to-end. Task `82b97764` (assets tab, `c7f9b37`). Task `e489b734` (ntfy notifications, `1c14534`) went filed → auto-kickoff → plan review → ZAI approve → junior IMPLEMENTED + COMMITTED (`1bbee8d`) → ZAI walkthrough review → merge — and en route surfaced + fixed two live-harness bugs that had blocked completion (junior new-conversation readiness; senior completion-detection false-positive). The plan→work flow loop is CLOSED and now runs without hanging. (Phase 6 Operator Console: complete.)** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`); **ntfy flow `1c14534`** (feature tip `f349a13`, Senior verdict `d398b53`). |
-| Suite | 355/355 tests, 84 files, `npm run build` clean (on merged main, Senior + operator re-run). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`); **ntfy flow `1c14534`** (feature tip `f349a13`, Senior verdict `d398b53`); **console task archive + Workers flow view + senior conversation reuse `1710098`** (features `27b85e5` + `60be286`, Senior verdict `docs/reviews/verdict-console-archive-flow.md`). |
+| Suite | 375/375 tests, 87 files, `npm run build` clean (on merged main, Senior re-run twice). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers` + `GET /api/flow` pipeline stepper, `workerRoster`/`taskFlow`) — department roster with live active/idle status plus per-task stage + stuck flag, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
+
+**Console task archive + Workers flow view + senior conversation reuse
+(2026-08-24, merged `1710098`):** the Tasks view carried test artifacts and
+out-of-band shipments with no way to clear them, the Approve button could never
+fire, and the pipeline had no visual. All closed on `wt/console-tasks-archive-flow`
+(features `27b85e5` + `60be286`, Senior verdict
+`docs/reviews/verdict-console-archive-flow.md`, Senior-executed mutations
+M-ARCH-1/2 + M-SENR-1 in `docs/mutation-evidence-phase7.md`): (1) **Archive** —
+`archived_at/archived_by/archive_reason` columns + `engine/state/archive.ts`
+(operator-gated, journaled, idempotent, `WHERE archived_at IS NULL`-guarded) +
+4 console endpoints (`GET /api/tasks` live-only, `GET /api/tasks/archived`,
+`POST /api/tasks/:id/{archive,unarchive}`); **archiving never touches `state`,
+so the done-gate CHECK stays absolute**; dashboards + flow exclude archived.
+(2) **Approve-gate fix** — the button checked `state==='verifying'` but
+`approveTask` requires `needs-review`; corrected to match the engine. (3)
+**Workers flow view** — `GET /api/flow` (`taskFlow`) projects every in-flight
+task onto Intake → Queued → In progress → Verify → Review → Done with owner,
+budgets, and a stuck flag (blocked/failed or stalled >15m). (4) **Senior
+conversation reuse** — `ZCodeSenior.review` now reuses one conversation across
+a task's review rounds (`freshConversation` threaded by both cycles), mirroring
+the junior side; reviews stay self-contained each round. (5) **Live-DB
+reconciled** — backed up (`db/backups/bureau.pre-reconcile-20260824-231612.db`)
+then the two "Add subtract()" test artifacts and the two shipped-out-of-band
+tasks (assets `c7f9b37`, ntfy `1c14534`) archived with reasons; states
+preserved, zero `done` rows forged, four `human` journal spans (250–253).
+Suite 375/375 across 87 files on merged main, build clean. **Operator
+advisories:** (a) an external process is auto-committing
+`docs/junior-artifacts/` transcripts straight to `main` (`465fc64`, `bbe1830`)
+— docs-only but it bypasses the verdict gate; identify/retire it. (b) A live
+console (`scripts/console.ts`) runs a background Runner from this tree; its
+dispatches keep writing `docs/junior-artifacts/` (one untracked transcript
+dir present at merge time).
 
 **ntfy notifications — second real task shipped, two harness bugs fixed
 (2026-08-24, merged `1c14534`):** task `e489b734` (filed via the live Gemini intake
