@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HarnessError } from './errors.ts';
 import { sliceAfterPrompt } from './antigravity.ts';
-import { ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
+import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -481,7 +481,16 @@ export class ZCodeSession {
     return (await this.evaluate(`(() => {
       const btns = [...document.querySelectorAll('button,[role=button]')];
       const has = re => btns.some(b => re.test(((b.getAttribute('aria-label')||b.innerText)||'').trim()));
-      const working = has(/^(stop|cancel)$/i) || /\\b(Working|Generating|Thinking)\\b/i.test(document.body.innerText);
+      // A live progress indicator is a SMALL standalone status label ("Working",
+      // "Generating…", "Thinking…") — NOT the word buried in the agent's own reply
+      // prose (e.g. "working tree clean"), which used to make the waiter believe the
+      // agent was still generating forever and run to the job timeout with no
+      // verdict captured. Match a leaf element whose ENTIRE text is a progress word
+      // (optional trailing dots/ellipsis); Stop/Cancel stays the primary signal.
+      const progressRe = new RegExp(${JSON.stringify(AGENT_PROGRESS_LABEL_RE.source)}, 'i');
+      const statusWorking = [...document.querySelectorAll('span,div,p,button,[role=status],[aria-live]')]
+        .some(e => e.children.length === 0 && progressRe.test((e.innerText||'').trim()));
+      const working = has(/^(stop|cancel)$/i) || statusWorking;
       const canSend = has(/^send$/i);
       return { working, canSend, len: document.body.innerText.length };
     })()`)) as AgentActivity;

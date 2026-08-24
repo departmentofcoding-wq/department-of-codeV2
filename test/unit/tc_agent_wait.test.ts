@@ -1,5 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { ensureCompleted, waitForAgentIdle, type AgentActivity } from '../../engine/harness/agent-wait.ts';
+import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentActivity } from '../../engine/harness/agent-wait.ts';
+
+describe('AGENT_PROGRESS_LABEL_RE — only a standalone status label counts as "working"', () => {
+  const re = () => new RegExp(AGENT_PROGRESS_LABEL_RE.source, 'i');
+  it('matches real progress-indicator labels', () => {
+    for (const s of ['Working', 'working', 'Generating', 'Generating…', 'Generating...', 'Thinking', 'Thinking…', 'Running']) {
+      expect(re().test(s.trim())).toBe(true);
+    }
+  });
+  it('does NOT match the word inside the agent\'s own reply prose (the real bug)', () => {
+    // A GLM review that said "working tree clean" once made the waiter conclude the
+    // agent was still generating forever → review ran to the job timeout, no verdict.
+    for (const s of [
+      'exists on wt/junior-ntfy-notifications, working tree clean apart from the untracked',
+      'working tree clean',
+      'I am working on it',
+      'the network is running slowly',
+      'regenerating the plan output',
+      'Thinking about edge cases here'
+    ]) {
+      expect(re().test(s.trim())).toBe(false);
+    }
+  });
+});
 
 // Deterministic tests: scripted activity sequences + instant sleep, so no wall clock.
 function scriptedProbe(frames: AgentActivity[]): () => Promise<AgentActivity> {
