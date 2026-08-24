@@ -156,8 +156,14 @@ async function loadSettingsView() {
   const tokenPreview = consoleToken ? `${consoleToken.slice(0, 8)}...` : undefined;
 
   let googleKeys = { count: 0, masked: [] };
+  let ntfySettings = { ntfy_server_url: 'https://ntfy.sh', ntfy_topic: '', enabled: false };
   try {
-    googleKeys = await apiFetch('/api/settings/google-keys');
+    const [keysRes, ntfyRes] = await Promise.allSettled([
+      apiFetch('/api/settings/google-keys'),
+      apiFetch('/api/settings/ntfy')
+    ]);
+    if (keysRes.status === 'fulfilled') googleKeys = keysRes.value;
+    if (ntfyRes.status === 'fulfilled') ntfySettings = ntfyRes.value;
   } catch (e) {
     // Non-fatal; render with empty status.
   }
@@ -167,10 +173,12 @@ async function loadSettingsView() {
     isPaused,
     hasToken: Boolean(consoleToken),
     tokenPreview,
-    googleKeys
+    googleKeys,
+    ntfySettings
   });
 
   document.getElementById('save-google-keys-btn')?.addEventListener('click', saveGoogleKeys);
+  document.getElementById('save-ntfy-settings-btn')?.addEventListener('click', saveNtfySettings);
 }
 
 async function saveGoogleKeys() {
@@ -187,6 +195,23 @@ async function saveGoogleKeys() {
       body: JSON.stringify({ keys })
     });
     showToast(`<div class="toast"><span class="toast-icon">🔑</span> Saved ${res.count} Google key(s)</div>`);
+    await loadSettingsView();
+  } catch (err) {
+    // Error toast handled by apiFetch.
+  }
+}
+
+async function saveNtfySettings() {
+  const ntfy_server_url = document.getElementById('ntfy-server-url')?.value.trim() || 'https://ntfy.sh';
+  const ntfy_topic = document.getElementById('ntfy-topic')?.value.trim() || '';
+
+  try {
+    const res = await apiFetch('/api/settings/ntfy', {
+      method: 'POST',
+      body: JSON.stringify({ ntfy_server_url, ntfy_topic })
+    });
+    const topicMsg = res.ntfy_topic ? `topic "${res.ntfy_topic}"` : 'push notifications disabled';
+    showToast(`<div class="toast"><span class="toast-icon">🔔</span> Saved Ntfy settings (${topicMsg})</div>`);
     await loadSettingsView();
   } catch (err) {
     // Error toast handled by apiFetch.

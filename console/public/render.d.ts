@@ -5,7 +5,8 @@ import type {
   JournalEntryDTO,
   WorkerDTO,
   AssetDTO,
-  ApiErrorResponse
+  ApiErrorResponse,
+  NtfySettingsDTO
 } from '../contract.ts';
 
 export function escapeHtml(str: unknown): string;
@@ -16,7 +17,8 @@ export function renderFindingsList(findings: FindingDTO[]): string;
 export function renderWorkers(workers: WorkerDTO[]): string;
 export function renderAssetsTable(assets: AssetDTO[]): string;
 export function renderJournalTimeline(journal: JournalEntryDTO[]): string;
-export function renderSettings(settings?: { theme?: string; isPaused?: boolean; hasToken?: boolean; tokenPreview?: string }): string;
+export function renderNtfySettingsCard(status?: NtfySettingsDTO): string;
+export function renderSettings(settings?: { theme?: string; isPaused?: boolean; hasToken?: boolean; tokenPreview?: string; googleKeys?: any; ntfySettings?: NtfySettingsDTO }): string;
 export function renderRelaunchState(reason?: string): string;
 export function renderErrorToast(error: ApiErrorResponse | string): string;
 
