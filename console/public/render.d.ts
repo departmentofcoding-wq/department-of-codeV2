@@ -1,6 +1,7 @@
 import type {
   DashboardDTO,
   TaskSummaryDTO,
+  FlowSnapshotDTO,
   FindingDTO,
   JournalEntryDTO,
   WorkerDTO,
@@ -13,6 +14,8 @@ export function escapeHtml(str: unknown): string;
 export function safeHref(url: unknown): string;
 export function renderDashboardTileGrid(dto: DashboardDTO): string;
 export function renderTaskTable(tasks: TaskSummaryDTO[]): string;
+export function renderArchivedTaskTable(tasks: TaskSummaryDTO[]): string;
+export function renderFlowPipeline(snapshot: FlowSnapshotDTO | null): string;
 export function renderFindingsList(findings: FindingDTO[]): string;
 export function renderWorkers(workers: WorkerDTO[]): string;
 export function renderAssetsTable(assets: AssetDTO[]): string;

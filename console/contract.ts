@@ -89,8 +89,40 @@ export interface TaskSummaryDTO {
   attempts: number;
   recover_attempts: number;
   pull_request_url: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * One in-flight task projected onto the department pipeline (Workers tab flow
+ * view). Mirrors engine FlowTask.
+ */
+export interface FlowTaskDTO {
+  task_id: string;
+  title: string;
+  state: string;
+  stage_index: number;
+  stage_label: string;
+  responsible_role: string;
+  last_actor_role: string | null;
+  last_activity_ts: string | null;
+  last_activity_kind: string | null;
+  is_stuck: boolean;
+  stuck_reason: string | null;
+  plan_rounds: number;
+  verify_fixes: number;
+  cycles: number;
+  attempts: number;
+}
+
+/** The ordered department pipeline stages, shipped with the flow snapshot so the
+ * frontend renders the same stepper the engine reasons about. */
+export interface FlowSnapshotDTO {
+  stages: string[];
+  tasks: FlowTaskDTO[];
 }
 
 /** Watchdog finding DTO (maps bureau_watchdog_findings columns). */
@@ -156,6 +188,21 @@ export interface ApproveTaskResult {
   approved_at: string;
   approved_by: string;
   span_id?: number;
+}
+
+export interface ArchiveTaskRequest {
+  /** Why the task is being set aside (test artifact, shipped out-of-band, …). */
+  reason?: string;
+  archivedBy?: string;
+}
+
+export interface ArchiveTaskResult {
+  ok: boolean;
+  task_id: string;
+  archived: boolean;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
 }
 
 // --- Conversational Intake DTOs (task creation front door) ---
@@ -330,7 +377,19 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     method: 'GET',
     path: '/api/tasks',
     auth: 'token',
-    description: 'List all task summaries'
+    description: 'List live (non-archived) task summaries'
+  },
+  {
+    method: 'GET',
+    path: '/api/tasks/archived',
+    auth: 'token',
+    description: 'List archived task summaries (test artifacts, out-of-band shipments)'
+  },
+  {
+    method: 'GET',
+    path: '/api/flow',
+    auth: 'token',
+    description: 'Department pipeline: every in-flight task, its stage, and whether it is stuck'
   },
   {
     method: 'GET',
@@ -379,6 +438,18 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/tasks/:id/approve',
     auth: 'token',
     description: 'Approve a verified task (human-operator door)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/archive',
+    auth: 'token',
+    description: 'Archive a task — set it aside without touching its state (human-operator door)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/unarchive',
+    auth: 'token',
+    description: 'Restore an archived task to the live list (human-operator door)'
   },
   {
     method: 'POST',

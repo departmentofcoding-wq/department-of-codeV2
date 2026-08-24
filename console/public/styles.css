@@ -561,3 +561,85 @@ body {
   max-width: 540px;
 }
 
+
+/* --- Task list: state badges, header actions & row actions --- */
+.state-intake { background-color: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
+.state-queued { background-color: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
+.state-claimed { background-color: rgba(192, 132, 252, 0.15); color: var(--accent-purple); }
+.state-needs-review { background-color: rgba(251, 191, 36, 0.15); color: var(--accent-amber); }
+.state-blocked { background-color: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+.state-failed { background-color: rgba(248, 113, 113, 0.2); color: var(--accent-red); }
+
+.section-actions { display: flex; gap: 0.5rem; align-items: center; }
+.task-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+
+/* --- Workers tab: department flow pipeline --- */
+.flow-pipeline { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+.flow-summary { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.25rem; }
+
+.flow-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+}
+.flow-card.is-stuck { border-color: var(--accent-red); }
+
+.flow-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+.flow-card-title { font-weight: 600; }
+
+.flow-steps { display: flex; align-items: center; flex-wrap: wrap; gap: 0.15rem; }
+.flow-step {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.flow-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-color);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.flow-step.done { color: var(--accent-green); }
+.flow-step.done .flow-dot { background: rgba(74, 222, 128, 0.15); border-color: var(--accent-green); color: var(--accent-green); }
+.flow-step.current { color: var(--accent-blue); font-weight: 700; }
+.flow-step.current .flow-dot { background: rgba(56, 189, 248, 0.18); border-color: var(--accent-blue); color: var(--accent-blue); }
+.flow-step.current.stuck { color: var(--accent-red); }
+.flow-step.current.stuck .flow-dot { background: rgba(248, 113, 113, 0.18); border-color: var(--accent-red); color: var(--accent-red); }
+.flow-connector { flex: 0 0 16px; height: 2px; background: var(--border-color); }
+
+.flow-stuck-banner {
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.375rem;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--accent-red);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.flow-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  margin-top: 0.85rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.flow-last-activity { font-style: italic; }

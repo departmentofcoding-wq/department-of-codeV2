@@ -6,6 +6,8 @@ import {
   safeHref,
   renderDashboardTileGrid,
   renderTaskTable,
+  renderArchivedTaskTable,
+  renderFlowPipeline,
   renderFindingsList,
   renderJournalTimeline,
   renderSettings,
@@ -45,10 +47,52 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     const html = renderTaskTable(tasksFixture);
     expect(html).toContain('task-101');
     expect(html).toContain('Fix memory leak in CDP client');
-    expect(html).toContain('btn-approve'); // Approve button for task-101 (verifying & code 0)
+    expect(html).toContain('btn-approve'); // Approve button for task-101 (needs-review & code 0)
+    // Every live row offers an Archive action.
+    expect(html).toContain('btn-archive');
+    // Cycles / Attempts column is surfaced (task-101: cycles 3, attempts 4).
+    expect(html).toContain('Cycles / Attempts');
     // Assert XSS string in task title is HTML escaped
     expect(html).toContain('&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;');
     expect(html).not.toContain('<script>alert');
+  });
+
+  it('3b. renderTaskTable: does NOT offer approve for a still-verifying task (only needs-review)', () => {
+    const html = renderTaskTable([
+      { id: 'v1', title: 'Still verifying', state: 'verifying', verifier_exit_code: 0, approved_at: null, approved_by: null, plan_rounds: 0, verify_fixes: 0, cycles: 0, attempts: 0, pull_request_url: null } as any
+    ]);
+    expect(html).not.toContain('btn-approve');
+    // but it still offers archive
+    expect(html).toContain('btn-archive');
+  });
+
+  it('3c. renderArchivedTaskTable: shows reason + Unarchive, empty state when none', () => {
+    expect(renderArchivedTaskTable([])).toContain('No archived tasks');
+    const html = renderArchivedTaskTable([
+      { id: 'arc-1', title: 'Old test task', state: 'blocked', archive_reason: 'test artifact', archived_by: 'operator', archived_at: '2026-08-24T00:00:00.000Z' } as any
+    ]);
+    expect(html).toContain('arc-1');
+    expect(html).toContain('test artifact');
+    expect(html).toContain('btn-unarchive');
+    // Archived rows never offer approve.
+    expect(html).not.toContain('btn-approve');
+  });
+
+  it('3d. renderFlowPipeline: draws a stepper per in-flight task and flags stuck ones', () => {
+    expect(renderFlowPipeline({ stages: [], tasks: [] })).toContain('The line is idle');
+    const html = renderFlowPipeline({
+      stages: ['Intake', 'Queued', 'In progress', 'Verify', 'Review', 'Done'],
+      tasks: [
+        { task_id: 'f1', title: 'Moving task', state: 'claimed', stage_index: 2, stage_label: 'In progress', responsible_role: 'junior-engineer', last_actor_role: 'junior-engineer', last_activity_ts: '2026-08-24T00:00:00.000Z', last_activity_kind: 'observation', is_stuck: false, stuck_reason: null, plan_rounds: 1, verify_fixes: 0, cycles: 1, attempts: 1 },
+        { task_id: 'f2', title: 'Stuck task', state: 'blocked', stage_index: 2, stage_label: 'In progress', responsible_role: 'junior-engineer', last_actor_role: 'senior-engineer', last_activity_ts: '2026-08-24T00:00:00.000Z', last_activity_kind: 'review', is_stuck: true, stuck_reason: 'Blocked — needs operator to re-arm', plan_rounds: 3, verify_fixes: 0, cycles: 5, attempts: 2 }
+      ]
+    } as any);
+    expect(html).toContain('Moving task');
+    expect(html).toContain('Stuck task');
+    expect(html).toContain('2 tasks in flight');
+    expect(html).toContain('1 stuck');
+    expect(html).toContain('Blocked — needs operator to re-arm');
+    expect(html).toContain('junior-engineer');
   });
 
   it('4. renderFindingsList: renders watchdog findings with subject_kind and subject_id', () => {

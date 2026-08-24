@@ -31,6 +31,9 @@ export interface BureauTaskRow {
   recover_attempts: number;
   pull_request_url: string | null;
   intake_session_id: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -44,19 +44,25 @@ export interface DashboardSnapshot {
   guardrailCount: number;
 }
 
-/** Task counts grouped by state — how much work sits where. */
+/** Task counts grouped by state — how much work sits where. Archived rows (test
+ * artifacts, out-of-band shipments) are excluded so the health view reflects the
+ * live pipeline only. */
 export function statePopulations(db: DbConnection): StatePopulation[] {
   return db.all<StatePopulation>(
-    `SELECT state, COUNT(*) AS count FROM bureau_tasks GROUP BY state ORDER BY count DESC, state ASC`
+    `SELECT state, COUNT(*) AS count FROM bureau_tasks
+     WHERE archived_at IS NULL
+     GROUP BY state ORDER BY count DESC, state ASC`
   );
 }
 
-/** Per-task budget spend — the columns that bound every async loop. */
+/** Per-task budget spend — the columns that bound every async loop. Archived
+ * tasks are excluded (they no longer spend budget). */
 export function budgetSpend(db: DbConnection): TaskBudgetSpend[] {
   return db.all<TaskBudgetSpend>(
     `SELECT id AS task_id, title, state,
             plan_rounds, verify_fixes, cycles, attempts, recover_attempts
      FROM bureau_tasks
+     WHERE archived_at IS NULL
      ORDER BY (plan_rounds + verify_fixes + cycles + attempts + recover_attempts) DESC, id ASC`
   );
 }
@@ -163,6 +169,120 @@ export function workerRoster(db: DbConnection, nowMs: number = Date.now()): Work
   return roster.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
     return (b.last_activity_ts ?? '').localeCompare(a.last_activity_ts ?? '');
+  });
+}
+
+/**
+ * The department's assembly line, in order. Every in-flight task sits at exactly
+ * one of these stages; the Workers tab draws them as a stepper so the operator
+ * can see, at a glance, which step each task is on and where it is stuck.
+ */
+export const FLOW_STAGES = ['Intake', 'Queued', 'In progress', 'Verify', 'Review', 'Done'] as const;
+
+/** Which worker owns each stage — who the operator should look to for movement. */
+const STAGE_ROLE: readonly string[] = [
+  'task-intake-officer',
+  'foreman',
+  'junior-engineer',
+  'verifier',
+  'senior-engineer',
+  '—'
+];
+
+/**
+ * Map a task state onto a pipeline stage index. The off-track states (blocked,
+ * failed) are pinned to the stage where they came to rest so the stepper still
+ * highlights a real position while the stuck flag explains the halt.
+ */
+const STATE_TO_STAGE: Record<string, number> = {
+  intake: 0,
+  queued: 1,
+  claimed: 2,
+  verifying: 3,
+  'needs-review': 4,
+  done: 5,
+  blocked: 2,
+  failed: 3
+};
+
+/** No journal activity for this long on a non-terminal task reads as stalled. */
+export const FLOW_STALL_WINDOW_MS = 900_000; // 15 minutes
+
+export interface FlowTask {
+  task_id: string;
+  title: string;
+  state: string;
+  stage_index: number;
+  stage_label: string;
+  responsible_role: string;
+  last_actor_role: string | null;
+  last_activity_ts: string | null;
+  last_activity_kind: string | null;
+  is_stuck: boolean;
+  stuck_reason: string | null;
+  plan_rounds: number;
+  verify_fixes: number;
+  cycles: number;
+  attempts: number;
+}
+
+/**
+ * Every in-flight task (not archived, not done) projected onto the department
+ * pipeline: which stage it is on, who owns that stage, the last act recorded
+ * against it, and whether it is stuck (blocked, failed, or stalled with no
+ * recent activity). Read-only. Newest-touched first.
+ */
+export function taskFlow(db: DbConnection, nowMs: number = Date.now()): FlowTask[] {
+  const tasks = db.all<{
+    id: string; title: string; state: string;
+    plan_rounds: number; verify_fixes: number; cycles: number; attempts: number;
+  }>(
+    `SELECT id, title, state, plan_rounds, verify_fixes, cycles, attempts
+     FROM bureau_tasks
+     WHERE archived_at IS NULL AND state <> 'done'
+     ORDER BY updated_at DESC, id ASC`
+  );
+
+  return tasks.map((t) => {
+    const stageIndex = STATE_TO_STAGE[t.state] ?? 0;
+    const last = db.get<{ ts: string; kind: string; actor_role: string }>(
+      `SELECT ts, kind, actor_role FROM bureau_journal WHERE task_id = ? ORDER BY id DESC LIMIT 1`,
+      t.id
+    );
+
+    let isStuck = false;
+    let stuckReason: string | null = null;
+    if (t.state === 'blocked') {
+      isStuck = true;
+      stuckReason = 'Blocked — needs operator to re-arm';
+    } else if (t.state === 'failed') {
+      isStuck = true;
+      stuckReason = 'Failed — needs operator';
+    } else if (last?.ts) {
+      const idleMs = nowMs - Date.parse(last.ts);
+      if (idleMs > FLOW_STALL_WINDOW_MS) {
+        isStuck = true;
+        stuckReason = `Stalled — no activity for ${Math.floor(idleMs / 60_000)} min`;
+      }
+    }
+
+    return {
+      task_id: t.id,
+      title: t.title,
+      state: t.state,
+      stage_index: stageIndex,
+      stage_label: FLOW_STAGES[stageIndex] ?? 'Intake',
+      responsible_role: STAGE_ROLE[stageIndex] ?? '—',
+      last_actor_role: last?.actor_role ?? null,
+      last_activity_ts: last?.ts ?? null,
+      last_activity_kind: last?.kind ?? null,
+      is_stuck: isStuck,
+      stuck_reason: stuckReason,
+      plan_rounds: t.plan_rounds,
+      verify_fixes: t.verify_fixes,
+      cycles: t.cycles,
+      attempts: t.attempts
+    };
   });
 }
 

@@ -6,9 +6,10 @@ import crypto from 'node:crypto';
 import type { DbConnection, BureauTaskRow, BureauWatchdogFindingRow, BureauJournalRow, BureauAssetRow } from '../engine/contract/types.ts';
 import { redactOutput } from '../engine/contract/tools.ts';
 import { journal } from '../engine/journal/writer.ts';
-import { dashboardSnapshot, workerRoster } from '../engine/dashboards/views.ts';
+import { dashboardSnapshot, workerRoster, taskFlow, FLOW_STAGES } from '../engine/dashboards/views.ts';
 import { timeline } from '../engine/journal/queries.ts';
 import { approveTask } from '../engine/state/machine.ts';
+import { archiveTask, unarchiveTask } from '../engine/state/archive.ts';
 import { enqueueJobIfAbsent, enqueueJob } from '../engine/jobs/jobs.ts';
 import { taskGaps, isVacuousVerify } from '../engine/contract/validation.ts';
 import { createSession, appendIntakeMessage, getSession, getSessionWithMessages } from '../engine/intake/index.ts';
@@ -30,6 +31,9 @@ import {
   type FindingDTO,
   type JournalEntryDTO,
   type WorkerDTO,
+  type FlowSnapshotDTO,
+  type ArchiveTaskRequest,
+  type ArchiveTaskResult,
   type AssetDTO,
   type CreateAssetRequest,
   type UpdateAssetRequest,
@@ -159,6 +163,34 @@ function serveStaticFile(reqPath: string, publicDir: string, res: http.ServerRes
 
     fs.createReadStream(safePath).pipe(res);
   });
+}
+
+/** Map a task row to its redacted summary DTO (shared by live + archived lists). */
+function toTaskSummaryDTO(t: BureauTaskRow): TaskSummaryDTO {
+  return {
+    id: t.id,
+    title: redactOutput(t.title),
+    state: t.state,
+    verifier_exit_code: t.verifier_exit_code,
+    approved_at: t.approved_at,
+    approved_by: t.approved_by,
+    merged_at: t.merged_at,
+    merged_by: t.merged_by,
+    priority: t.priority,
+    work_uuid: t.work_uuid,
+    work_title: t.work_title ? redactOutput(t.work_title) : null,
+    plan_rounds: t.plan_rounds,
+    verify_fixes: t.verify_fixes,
+    cycles: t.cycles,
+    attempts: t.attempts,
+    recover_attempts: t.recover_attempts,
+    pull_request_url: t.pull_request_url,
+    archived_at: t.archived_at,
+    archived_by: t.archived_by ? redactOutput(t.archived_by) : null,
+    archive_reason: t.archive_reason ? redactOutput(t.archive_reason) : null,
+    created_at: t.created_at,
+    updated_at: t.updated_at
+  };
 }
 
 /** Attribution for every operator-originated act on the console. */
@@ -349,30 +381,47 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         return;
       }
 
+      // Archived tasks list — matched before the live list (both GET /api/tasks*).
+      if (req.method === 'GET' && pathname === '/api/tasks/archived') {
+        const tasks = db.all<BureauTaskRow>(
+          'SELECT * FROM bureau_tasks WHERE archived_at IS NOT NULL ORDER BY archived_at DESC'
+        );
+        sendJson(res, 200, tasks.map(toTaskSummaryDTO));
+        return;
+      }
+
       if (req.method === 'GET' && pathname === '/api/tasks') {
-        const tasks = db.all<BureauTaskRow>('SELECT * FROM bureau_tasks ORDER BY created_at DESC');
-        const dtos: TaskSummaryDTO[] = tasks.map(t => ({
-          id: t.id,
-          title: redactOutput(t.title),
-          state: t.state,
-          verifier_exit_code: t.verifier_exit_code,
-          approved_at: t.approved_at,
-          approved_by: t.approved_by,
-          merged_at: t.merged_at,
-          merged_by: t.merged_by,
-          priority: t.priority,
-          work_uuid: t.work_uuid,
-          work_title: t.work_title ? redactOutput(t.work_title) : null,
-          plan_rounds: t.plan_rounds,
-          verify_fixes: t.verify_fixes,
-          cycles: t.cycles,
-          attempts: t.attempts,
-          recover_attempts: t.recover_attempts,
-          pull_request_url: t.pull_request_url,
-          created_at: t.created_at,
-          updated_at: t.updated_at
-        }));
-        sendJson(res, 200, dtos);
+        const tasks = db.all<BureauTaskRow>(
+          'SELECT * FROM bureau_tasks WHERE archived_at IS NULL ORDER BY created_at DESC'
+        );
+        sendJson(res, 200, tasks.map(toTaskSummaryDTO));
+        return;
+      }
+
+      // Department pipeline snapshot for the Workers-tab flow view.
+      if (req.method === 'GET' && pathname === '/api/flow') {
+        const flow = taskFlow(db);
+        const dto: FlowSnapshotDTO = {
+          stages: [...FLOW_STAGES],
+          tasks: flow.map(f => ({
+            task_id: f.task_id,
+            title: redactOutput(f.title),
+            state: f.state,
+            stage_index: f.stage_index,
+            stage_label: f.stage_label,
+            responsible_role: f.responsible_role,
+            last_actor_role: f.last_actor_role,
+            last_activity_ts: f.last_activity_ts,
+            last_activity_kind: f.last_activity_kind,
+            is_stuck: f.is_stuck,
+            stuck_reason: f.stuck_reason,
+            plan_rounds: f.plan_rounds,
+            verify_fixes: f.verify_fixes,
+            cycles: f.cycles,
+            attempts: f.attempts
+          }))
+        };
+        sendJson(res, 200, dto);
         return;
       }
 
@@ -684,6 +733,89 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             detail: { action: 'approve_refused', reason: err.message }
           });
           sendError(res, 400, 'APPROVAL_REFUSED', err.message);
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/archive')) {
+        const taskId = pathname.split('/')[3];
+        if (!taskId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
+          return;
+        }
+
+        let body: ArchiveTaskRequest = {};
+        try {
+          body = (await parseJsonBody(req)) as ArchiveTaskRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const attribution: AttributionTuple = { ...CONSOLE_HUMAN_ATTR, account: body.archivedBy || 'operator' };
+        try {
+          const row = archiveTask(db, taskId, attribution, body.reason);
+          const result: ArchiveTaskResult = {
+            ok: true,
+            task_id: row.id,
+            archived: row.archived_at !== null,
+            archived_at: row.archived_at,
+            archived_by: row.archived_by ? redactOutput(row.archived_by) : null,
+            archive_reason: row.archive_reason ? redactOutput(row.archive_reason) : null
+          };
+          sendJson(res, 200, result);
+        } catch (err: any) {
+          // No taskId on the span: the refusal may be "task not found", and the
+          // journal's task_id carries a FK that an unknown id would violate.
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            detail: { action: 'archive_refused', taskId, reason: err.message }
+          });
+          sendError(res, 400, 'ARCHIVE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/unarchive')) {
+        const taskId = pathname.split('/')[3];
+        if (!taskId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
+          return;
+        }
+
+        // Drain any body; unarchive takes no fields.
+        try {
+          await parseJsonBody(req);
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+        }
+
+        try {
+          const row = unarchiveTask(db, taskId, CONSOLE_HUMAN_ATTR);
+          const result: ArchiveTaskResult = {
+            ok: true,
+            task_id: row.id,
+            archived: row.archived_at !== null,
+            archived_at: row.archived_at,
+            archived_by: row.archived_by ? redactOutput(row.archived_by) : null,
+            archive_reason: row.archive_reason ? redactOutput(row.archive_reason) : null
+          };
+          sendJson(res, 200, result);
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'unarchive_refused', taskId, reason: err.message }
+          });
+          sendError(res, 400, 'UNARCHIVE_REFUSED', err.message);
         }
         return;
       }

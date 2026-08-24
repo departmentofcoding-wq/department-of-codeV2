@@ -130,10 +130,16 @@ export function renderTaskTable(tasks) {
   }
 
   const rows = tasks.map(t => {
-    const isApproveable = t.state === 'verifying' && t.verifier_exit_code === 0 && !t.approved_at;
+    // Approval is a needs-review → done act (see approveTask): the button must
+    // appear for a task sitting in needs-review with a green verifier, not while
+    // it is still verifying. Getting this predicate wrong is why finished tasks
+    // showed "needs review" with no way to move them forward.
+    const isApproveable = t.state === 'needs-review' && t.verifier_exit_code === 0 && !t.approved_at;
     const approveBtn = isApproveable
       ? `<button class="btn btn-primary btn-sm btn-approve" data-task-id="${escapeHtml(t.id)}">Approve</button>`
-      : (t.approved_at ? `<span class="text-muted">Approved by ${escapeHtml(t.approved_by || 'human')}</span>` : '-');
+      : (t.approved_at ? `<span class="text-muted">Approved by ${escapeHtml(t.approved_by || 'human')}</span>` : '');
+
+    const archiveBtn = `<button class="btn btn-secondary btn-sm btn-archive" data-task-id="${escapeHtml(t.id)}" title="Set this task aside">Archive</button>`;
 
     const prLink = t.pull_request_url
       ? `<a href="${escapeHtml(t.pull_request_url)}" target="_blank" rel="noopener">PR</a>`
@@ -146,8 +152,9 @@ export function renderTaskTable(tasks) {
         <td><span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span></td>
         <td>${t.verifier_exit_code !== null ? `<code>code ${escapeHtml(t.verifier_exit_code)}</code>` : '-'}</td>
         <td>${escapeHtml(t.plan_rounds)} / ${escapeHtml(t.verify_fixes)}</td>
+        <td>${escapeHtml(t.cycles)} / ${escapeHtml(t.attempts)}</td>
         <td>${prLink}</td>
-        <td>${approveBtn}</td>
+        <td class="task-actions">${approveBtn}${archiveBtn}</td>
       </tr>
     `;
   }).join('');
@@ -162,6 +169,7 @@ export function renderTaskTable(tasks) {
             <th>State</th>
             <th>Verifier</th>
             <th>Rounds / Fixes</th>
+            <th>Cycles / Attempts</th>
             <th>PR</th>
             <th>Actions</th>
           </tr>
@@ -172,6 +180,109 @@ export function renderTaskTable(tasks) {
       </table>
     </div>
   `;
+}
+
+/**
+ * Renders the archived-tasks table: what was set aside, why, and an Unarchive
+ * action to bring it back. Archived rows never carry live actions (approve).
+ * @param {import('../contract.ts').TaskSummaryDTO[]} tasks
+ * @returns {string}
+ */
+export function renderArchivedTaskTable(tasks) {
+  if (!tasks || tasks.length === 0) {
+    return '<div class="card empty-state">No archived tasks. Nothing has been set aside.</div>';
+  }
+
+  const rows = tasks.map(t => `
+      <tr data-task-id="${escapeHtml(t.id)}">
+        <td><code>${escapeHtml(t.id)}</code></td>
+        <td class="task-title-cell">${escapeHtml(t.title)}</td>
+        <td><span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span></td>
+        <td>${escapeHtml(t.archive_reason || '—')}</td>
+        <td>${escapeHtml(t.archived_by || 'operator')}</td>
+        <td class="metric-sub">${escapeHtml(t.archived_at || '')}</td>
+        <td class="task-actions"><button class="btn btn-secondary btn-sm btn-unarchive" data-task-id="${escapeHtml(t.id)}">Unarchive</button></td>
+      </tr>
+    `).join('');
+
+  return `
+    <div class="card table-card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Last State</th>
+            <th>Reason</th>
+            <th>Archived By</th>
+            <th>Archived At</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
+ * Renders the department pipeline as a per-task stepper — the Workers-tab flow
+ * view. Each in-flight task shows the ordered stages with its current stage
+ * highlighted, who owns that stage, and a stuck banner when it has halted.
+ * @param {import('../contract.ts').FlowSnapshotDTO | null} snapshot
+ * @returns {string}
+ */
+export function renderFlowPipeline(snapshot) {
+  const stages = (snapshot && snapshot.stages) || [];
+  const tasks = (snapshot && snapshot.tasks) || [];
+
+  if (tasks.length === 0) {
+    return '<div class="card empty-state">No work in flight. The line is idle.</div>';
+  }
+
+  const stuckCount = tasks.filter(t => t.is_stuck).length;
+
+  const cards = tasks.map(t => {
+    const steps = stages.map((label, i) => {
+      let cls = 'flow-step';
+      if (i < t.stage_index) cls += ' done';
+      else if (i === t.stage_index) cls += t.is_stuck ? ' current stuck' : ' current';
+      return `
+        <div class="${cls}">
+          <span class="flow-dot">${i < t.stage_index ? '✓' : (i === t.stage_index && t.is_stuck ? '!' : i + 1)}</span>
+          <span class="flow-step-label">${escapeHtml(label)}</span>
+        </div>`;
+    }).join('<span class="flow-connector"></span>');
+
+    const stuckBanner = t.is_stuck
+      ? `<div class="flow-stuck-banner">⚠️ ${escapeHtml(t.stuck_reason || 'Stuck')}</div>`
+      : '';
+
+    const lastActivity = t.last_activity_ts
+      ? `${escapeHtml(t.last_activity_kind || 'act')} by ${escapeHtml(t.last_actor_role || '—')} @ ${escapeHtml(t.last_activity_ts)}`
+      : 'no activity yet';
+
+    return `
+      <div class="flow-card ${t.is_stuck ? 'is-stuck' : ''}" data-task-id="${escapeHtml(t.task_id)}">
+        <div class="flow-card-head">
+          <span class="flow-card-title">${escapeHtml(t.title)}</span>
+          <span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span>
+        </div>
+        <div class="flow-steps">${steps}</div>
+        ${stuckBanner}
+        <div class="flow-card-foot">
+          <span>Stage owner: <strong>${escapeHtml(t.responsible_role)}</strong></span>
+          <span>Rounds ${escapeHtml(t.plan_rounds)} · Cycles ${escapeHtml(t.cycles)} · Attempts ${escapeHtml(t.attempts)} · Fixes ${escapeHtml(t.verify_fixes)}</span>
+          <span class="flow-last-activity">${lastActivity}</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  const summary = `<div class="flow-summary">${tasks.length} task${tasks.length === 1 ? '' : 's'} in flight${stuckCount ? ` · <span class="text-warning">${stuckCount} stuck</span>` : ' · all moving'}</div>`;
+
+  return `<div class="flow-pipeline">${summary}${cards}</div>`;
 }
 
 /**

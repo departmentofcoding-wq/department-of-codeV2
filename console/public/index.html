@@ -44,7 +44,10 @@
     <div id="view-tasks" class="view-section">
       <div class="section-header">
         <h2 class="section-title">Bureau Tasks</h2>
-        <button id="new-task-btn" class="btn btn-primary btn-sm">+ New Task</button>
+        <div class="section-actions">
+          <button id="toggle-archived-btn" class="btn btn-secondary btn-sm">View Archived</button>
+          <button id="new-task-btn" class="btn btn-primary btn-sm">+ New Task</button>
+        </div>
       </div>
       <div id="tasks-container">
         <div class="card empty-state">Loading task list...</div>
@@ -62,6 +65,12 @@
 
     <div id="view-workers" class="view-section">
       <div class="section-header">
+        <h2 class="section-title">Work in Flight</h2>
+      </div>
+      <div id="flow-container">
+        <div class="card empty-state">Loading department flow...</div>
+      </div>
+      <div class="section-header" style="margin-top: 1.5rem;">
         <h2 class="section-title">Department Workers</h2>
       </div>
       <div id="workers-container">

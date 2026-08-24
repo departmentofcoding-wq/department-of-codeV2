@@ -1,6 +1,8 @@
 import {
   renderDashboardTileGrid,
   renderTaskTable,
+  renderArchivedTaskTable,
+  renderFlowPipeline,
   renderFindingsList,
   renderWorkers,
   renderAssetsTable,
@@ -21,6 +23,7 @@ let pendingConfirmAction = null;
 let currentIntakeSessionId = null;
 let intakeBusy = false;
 let currentAssets = [];
+let showArchived = false;
 
 // --- Token Initialization ---
 function initAuthToken() {
@@ -98,10 +101,19 @@ async function loadDashboardView() {
 
 async function loadTasksView() {
   const container = document.getElementById('tasks-container');
+  const toggleBtn = document.getElementById('toggle-archived-btn');
   try {
-    const tasks = await apiFetch('/api/tasks');
-    container.innerHTML = renderTaskTable(tasks);
-    attachTaskActionListeners();
+    if (showArchived) {
+      const tasks = await apiFetch('/api/tasks/archived');
+      container.innerHTML = renderArchivedTaskTable(tasks);
+      if (toggleBtn) toggleBtn.textContent = `← Live Tasks`;
+      attachArchivedActionListeners();
+    } else {
+      const tasks = await apiFetch('/api/tasks');
+      container.innerHTML = renderTaskTable(tasks);
+      if (toggleBtn) toggleBtn.textContent = `View Archived`;
+      attachTaskActionListeners();
+    }
   } catch (e) {
     // Error handled in apiFetch
   }
@@ -118,10 +130,19 @@ async function loadFindingsView() {
 }
 
 async function loadWorkersView() {
+  const flowContainer = document.getElementById('flow-container');
   const container = document.getElementById('workers-container');
   try {
-    const workers = await apiFetch('/api/workers');
-    container.innerHTML = renderWorkers(workers);
+    const [flowRes, workersRes] = await Promise.allSettled([
+      apiFetch('/api/flow'),
+      apiFetch('/api/workers')
+    ]);
+    if (flowContainer && flowRes.status === 'fulfilled') {
+      flowContainer.innerHTML = renderFlowPipeline(flowRes.value);
+    }
+    if (workersRes.status === 'fulfilled') {
+      container.innerHTML = renderWorkers(workersRes.value);
+    }
   } catch (e) {
     // Error handled in apiFetch
   }
@@ -269,6 +290,49 @@ function attachTaskActionListeners() {
             await refreshActiveView();
           } catch (err) {
             // Guardrail error toast handled by apiFetch
+          }
+        }
+      );
+    });
+  });
+
+  document.querySelectorAll('.btn-archive').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const taskId = e.currentTarget.getAttribute('data-task-id');
+      promptConfirm(
+        'Archive Task',
+        `Set task ${taskId} aside? It moves to the archived list (state unchanged) and can be restored anytime.`,
+        async () => {
+          try {
+            await apiFetch(`/api/tasks/${taskId}/archive`, {
+              method: 'POST',
+              body: JSON.stringify({ reason: 'Archived from console' })
+            });
+            showToast(`<div class="toast"><span class="toast-icon">🗄️</span> Task ${taskId} archived</div>`);
+            await refreshActiveView();
+          } catch (err) {
+            // Error toast handled by apiFetch
+          }
+        }
+      );
+    });
+  });
+}
+
+function attachArchivedActionListeners() {
+  document.querySelectorAll('.btn-unarchive').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const taskId = e.currentTarget.getAttribute('data-task-id');
+      promptConfirm(
+        'Restore Task',
+        `Bring task ${taskId} back to the live task list?`,
+        async () => {
+          try {
+            await apiFetch(`/api/tasks/${taskId}/unarchive`, { method: 'POST' });
+            showToast(`<div class="toast"><span class="toast-icon">♻️</span> Task ${taskId} restored</div>`);
+            await refreshActiveView();
+          } catch (err) {
+            // Error toast handled by apiFetch
           }
         }
       );
@@ -551,6 +615,12 @@ function setupEventListeners() {
       closeModal();
       await act();
     }
+  });
+
+  // Tasks: toggle between the live list and the archived list.
+  document.getElementById('toggle-archived-btn')?.addEventListener('click', () => {
+    showArchived = !showArchived;
+    loadTasksView();
   });
 
   // Conversational intake

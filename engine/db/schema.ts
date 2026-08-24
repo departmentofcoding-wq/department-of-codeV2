@@ -21,6 +21,7 @@ export function applySchema(db: DatabaseSync): void {
       attempts INTEGER NOT NULL DEFAULT 0,
       pull_request_url TEXT,
       intake_session_id TEXT,
+      archived_at TEXT, archived_by TEXT, archive_reason TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       CHECK (state <> 'done'
              OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
@@ -309,6 +310,13 @@ export function applyAddedColumns(
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // Archive is orthogonal to the state machine: archiving records that the
+  // operator has set a task aside (test artifact, or shipped out-of-band via
+  // the Senior review+merge path) WITHOUT touching `state`, so the done-gate
+  // CHECK constraints stay absolute. archived_at IS NULL == a live task.
+  { table: 'bureau_tasks', name: 'archived_at', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'archived_by', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'archive_reason', definition: 'TEXT' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
@@ -355,6 +363,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           recover_attempts INTEGER NOT NULL DEFAULT 0,
           pull_request_url TEXT,
           intake_session_id TEXT,
+          archived_at TEXT, archived_by TEXT, archive_reason TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           CHECK (state <> 'done'
                  OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
@@ -365,13 +374,15 @@ export function applyBootMigrations(db: DatabaseSync): void {
           id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
-          attempts, pull_request_url, intake_session_id, created_at, updated_at
+          attempts, recover_attempts, pull_request_url, intake_session_id,
+          archived_at, archived_by, archive_reason, created_at, updated_at
         )
         SELECT
           id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
-          attempts, pull_request_url, intake_session_id, created_at, updated_at
+          attempts, recover_attempts, pull_request_url, intake_session_id,
+          archived_at, archived_by, archive_reason, created_at, updated_at
         FROM bureau_tasks;
 
         DROP TABLE bureau_tasks;
