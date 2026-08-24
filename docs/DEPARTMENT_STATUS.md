@@ -11,8 +11,8 @@ phase plan, then git. Nothing important lives only in a chat window.
 | | |
 |---|---|
 | **Phase** | **Phase 6 — Operator Console: COMPLETE. D0-C + Stream A (backend) + Stream B (frontend/launcher) merged; launcher wired to the live server; desktop shortcut installed.** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`). |
-| Suite | 314/314 tests, 77 files, `npm run build` clean. **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`). |
+| Suite | 340/340 tests, 81 files, `npm run build` clean (on merged main, Senior re-run). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 in progress → `docs/phase-7-plan.md`.** Real end-to-end pipeline verified live (see record below) — task reached `needs-review` with full journaling. Stream A (provider reality) merged (`a74131d`) — the LLM-officer findings are resolved (officer on multi-key Google flash-lite; keys via Settings). Remaining: A2 `[llm]` provider-doubling, A3 budget-refusal proof, Stream B (IDE reality), C1 delivery (PR/merge/backup) against a sandbox *remote*. Gemini keys live (env + gitignored `secrets/google.env`). |
 
@@ -84,6 +84,33 @@ re-enqueue; defense-in-depth) in `docs/mutation-evidence-phase7.md`. Merged
 the stranded "Department Assets" task (`82b97764…`, verified queued with zero
 cycles) will auto-kick a REAL plan cycle on the next console/runner start —
 supervise it or park it first.**
+
+**Assets tab + first-run fixes + bounded work-review loop (2026-08-24, merged
+`c7f9b37`):** the first real run (task `82b97764`, transcript committed as
+`146f427`) drove the whole flow and exposed four gaps, all closed on
+`wt/junior-assets-tab` (feature tip `05dd8fb`, Senior verdict `0a1100a` /
+`docs/reviews/verdict-assets-tab.md`): (1) **dead backup** — `backup-seam.ts`
+called `require()` in an ES module so every `backup.push` died since 08-20; now
+a top-level import (regression `tc_backup_seam`). (2) **Plan→work loop closed**
+— plan approve/ceiling transitions `queued→claimed` (no zombie), the
+implementation dispatch chains `work.cycle` in the dispatch-completion
+transaction, prompts are honest (the ceiling path never claims APPROVED and
+threads the senior's final required changes). (3) **Bounded work-review loop**
+(`engine/flow/work_review_cycle.ts`) — on REVISE the fixes go back to the SAME
+junior (conversation continued, `chainWorkReview`), re-reviewed by the SAME
+senior until APPROVE, bounded by `review:work_rounds_ceiling` (default 5) at
+which the task is **blocked** for the operator; `cycles` counts rounds
+transactionally. (4) **Department Assets tab** — `bureau_assets` CRUD behind
+the fail-closed token check with `safeHref` XSS guard (`javascript:`/`data:`
+render inert). Policy change (reviewed + accepted): the **plan** ceiling no
+longer blocks — it proceeds to implementation with feedback threaded and the
+walkthrough review gates (ceiling raised 3→7). Done-gate untouched (empty diff
+over `state/machine`, verify, filing, intake — Senior-verified). Suite 340/340
+across 81 files on merged main, build clean; Senior re-executed M-HREF and
+M-WLOOP live (both reproduced → restored → green). Still open: the harness
+junior writes in its own IDE workspace, not a bureau worktree, so automatic
+`verify.run → needs-review` against the junior's branch remains a separate
+stream.
 
 **Phase 7 Stream A — multi-key Google provider + rate-limit steering
 (2026-08-21):** the officer's un-provisioned Ollama backend is off the
