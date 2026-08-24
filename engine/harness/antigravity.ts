@@ -471,13 +471,63 @@ export class AntigravitySession {
   }
 
   /**
+   * Ensure the Agent (Cascade) panel is open and its chat input is rendered
+   * BEFORE we try to drive it. On a cold launch the workbench window attaches a
+   * beat before the agent panel mounts, so the input ('Message input') is briefly
+   * absent — the harness used to call newConversation()/sendPrompt() into that gap
+   * and hard-fail ("could not start a fresh conversation … recalibrate the
+   * selector"), which is exactly what stranded the first real task. Poll for the
+   * input; if it does not appear promptly and the Agent toggle is not already
+   * active, click it once to open the panel, then keep polling. Returns true once
+   * the input is present, false on timeout.
+   */
+  async ensureChatInputReady(timeoutMs = 20000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    const label = JSON.stringify(ANTIGRAVITY_INPUT_LABEL);
+    let triedToggle = false;
+    const inputPresent = () =>
+      this.evaluate(
+        `(() => !![...document.querySelectorAll('[contenteditable="true"],textarea,[role=combobox]')]` +
+          `.find(e => (e.getAttribute('aria-label') || e.getAttribute('placeholder')) === ${label}))()`
+      );
+    while (Date.now() < deadline) {
+      if (await inputPresent()) return true;
+      // First miss only: open the Agent panel if its toggle is not already active.
+      // Guarded on the toggle's "checked" state so we never CLOSE an open panel
+      // (the input may simply not have mounted yet — for that we just keep polling).
+      if (!triedToggle) {
+        triedToggle = true;
+        await this.evaluate(`(() => {
+          const t = [...document.querySelectorAll('a,button,[role=button]')]
+            .find(e => /toggle agent/i.test(e.getAttribute('aria-label') || ''))
+            || document.querySelector('.codicon-layout-sidebar-right');
+          if (t && !/\\bchecked\\b/.test((t.className || '').toString())) { t.click(); return true; }
+          return false;
+        })()`);
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    return false;
+  }
+
+  /**
    * Start a fresh conversation so an earlier task's context/plan can't bleed into
-   * this one. Best-effort: clicks a "New Conversation"/"New task"/"New chat"
-   * control if present; a no-op otherwise.
+   * this one. Prefers the Antigravity IDE's explicit new-conversation control
+   * (a stable `data-tooltip-id="new-conversation-tooltip"` header icon, verified
+   * live); falls back to a labelled control, then to proving the panel is already
+   * empty.
    */
   async newConversation(): Promise<boolean> {
     await this.pressKey('Escape', 'Escape', 27);
     return !!(await this.evaluate(`(() => {
+      // 0. Antigravity IDE (Junior A) exposes its new-conversation control as an
+      // unlabelled panel-header icon carrying a STABLE data attribute
+      // (data-tooltip-id="new-conversation-tooltip") — verified live. Prefer it:
+      // it starts a genuinely fresh conversation even when a prior one exists, so
+      // we no longer depend on the emptiness heuristic below.
+      const explicit = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+      if (explicit) { explicit.click(); return true; }
+
       // 1. Explicit "start fresh" control by accessible name. The label varies
       // across Antigravity versions and between the two juniors ("New
       // Conversation", "New chat", "New task", "New Cascade", "New thread"),

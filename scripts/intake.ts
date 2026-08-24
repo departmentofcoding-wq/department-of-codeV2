@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { AttributionTuple } from '../engine/contract/index.ts';
 import { openDbConnection } from '../engine/db/index.ts';
-import { fileTask } from '../filing/file_task.ts';
+import { fileTask } from '../engine/filing/file_task.ts';
 import { confirmVerify, createSession, getOpenSessions, getSessionWithMessages, updateSessionDraft, appendIntakeMessage } from '../engine/intake/index.ts';
 import { enqueueJob } from '../engine/jobs/jobs.ts';
 import { drainSingleJob } from '../runner/main.ts';

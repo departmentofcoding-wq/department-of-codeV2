@@ -1,6 +1,7 @@
 import { ensureCompleted } from './agent-wait.ts';
 import {
   ANTIGRAVITY_DEFAULT_PORT,
+  ANTIGRAVITY_INPUT_LABEL,
   AntigravitySession,
   ensureAntigravityRunning,
   ensureJuniorRunning,
@@ -85,6 +86,17 @@ class RealAntigravityDriver implements AntigravityDriver {
     const session = new AntigravitySession(wsUrl);
     await session.connect();
     try {
+      // Wait for the Agent panel + chat input to actually be mounted before
+      // driving it. A cold-launched workbench attaches before the panel renders;
+      // proceeding into that gap is what stranded the first real task with
+      // "could not start a fresh conversation … recalibrate the selector".
+      const ready = await session.ensureChatInputReady();
+      if (!ready) {
+        throw new HarnessError(
+          `${cfg.label}: Agent chat input ('${ANTIGRAVITY_INPUT_LABEL}') did not appear — the Agent ` +
+            `panel may be unavailable in this build. Open it (Toggle Agent) and retry.`
+        );
+      }
       let model: string | undefined;
       let folderSelected: boolean | undefined;
       // Fresh conversation per task (unless disabled) prevents an earlier task's
