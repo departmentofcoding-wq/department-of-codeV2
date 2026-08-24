@@ -9,8 +9,10 @@ Senior review + merge. This replaces the raw-diff artifact the first review flag
 - `d1a978c` fix(harness): completion detection no longer reads "working" from agent prose
 - (this commit) finish ntfy: topic-hygiene + this walkthrough
 
-Full stack vs `main`: **21 files, +966 / −19**. `git show --stat 1bbee8d` for the
-feature alone: **15 files, +844 / −11**.
+Full stack vs `main`: **22 files, +1032 / −19** (Senior-corrected at review: the
+draft's "21 files, +966 / −19" measured the stack before this walkthrough commit
+itself existed). `git show --stat 1bbee8d` for the feature alone: **15 files,
++844 / −11**.
 
 ## 1. ntfy feature (the task — `e489b734`, `1bbee8d`)
 The department pushes an ntfy notification when a task gets **stuck** (`blocked`) or
@@ -55,8 +57,10 @@ senior's own prose ("…working tree clean…") and never concluded.
 ## Verification (re-runnable)
 - `npm run build` → `tsc --noEmit` clean.
 - `npx vitest run` → **355/355 across 84 files** (t38 is the known browser-contention
-  flake, green in isolation). ntfy: `tc_ntfy_client` (5), `tc_ntfy_settings_api` (3),
-  `tc_ntfy_task_notifications` (4). Completion-detection regression:
+flake, green in isolation). ntfy: `tc_ntfy_client` (4), `tc_ntfy_settings_api` (4),
+`tc_ntfy_task_notifications` (4) (Senior-corrected at review: the draft said 5/3/4;
+the total, 12, and the suite total, 355/355, were right). Completion-detection
+regression:
   `tc_agent_wait` (incl. the "working tree clean" cases).
 - Mutation evidence **M-NTFY-1…3** in `docs/mutation-evidence-phase7.md`.
 - Harness fixes verified live against Antigravity 9333 (panel ready + fresh
