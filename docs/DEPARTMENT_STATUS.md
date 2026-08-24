@@ -10,11 +10,35 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 7 — Live operation: IN PROGRESS. The department shipped its first real task end-to-end — task `82b97764` went filed → auto-kickoff → plan review → implement → bounded work-review (senior iterates the junior to approval) → merge (`c7f9b37`, ZAI-approved, main green 340/340). The plan→work flow loop is now CLOSED. (Phase 6 Operator Console: complete.)** |
-| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`). |
-| Suite | 340/340 tests, 81 files, `npm run build` clean (on merged main, Senior re-run). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| **Phase** | **Phase 7 — Live operation: IN PROGRESS. The department has now shipped TWO real tasks end-to-end. Task `82b97764` (assets tab, `c7f9b37`). Task `e489b734` (ntfy notifications, `1c14534`) went filed → auto-kickoff → plan review → ZAI approve → junior IMPLEMENTED + COMMITTED (`1bbee8d`) → ZAI walkthrough review → merge — and en route surfaced + fixed two live-harness bugs that had blocked completion (junior new-conversation readiness; senior completion-detection false-positive). The plan→work flow loop is CLOSED and now runs without hanging. (Phase 6 Operator Console: complete.)** |
+| Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`); **ntfy flow `1c14534`** (feature tip `f349a13`, Senior verdict `d398b53`). |
+| Suite | 355/355 tests, 84 files, `npm run build` clean (on merged main, Senior + operator re-run). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers`, `workerRoster`) — department roster with live active/idle status, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** The flow loop is closed and proven end-to-end (task `82b97764` merged `c7f9b37`). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
+| Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
+
+**ntfy notifications — second real task shipped, two harness bugs fixed
+(2026-08-24, merged `1c14534`):** task `e489b734` (filed via the live Gemini intake
+officer) ran the whole flow — plan authored → ZAI approved → junior **implemented
+AND committed** ntfy (`1bbee8d`, 15 files +844/−11: `engine/notifications/ntfy.ts`
++ seam, trigger hooks in `state/notifications.ts`/`machine.ts`, Console Settings →
+ntfy, 4 test files, M-NTFY-1…3) → ZAI walkthrough review → merge (Senior verdict
+`docs/reviews/verdict-ntfy.md`). En route the run exposed and fixed two live-harness
+bugs, each committed with a regression test: (1) **junior new-conversation** — the
+harness drove the Antigravity Agent panel before it mounted and hard-failed;
+`ensureChatInputReady()` (opens the panel, waits for the input) + `newConversation()`
+now clicks the stable `data-tooltip-id="new-conversation-tooltip"` control
+(`5235175`). (2) **senior completion-detection** — the waiter matched the word
+"working" ANYWHERE in the page, so ZAI's own "…working tree clean…" made it wait to
+the 45-min job timeout with no verdict captured (and wedged the runner); a shared,
+unit-tested `AGENT_PROGRESS_LABEL_RE` now requires a standalone status label
+(`d1a978c`). **Correction on the record:** an earlier read of this run wrongly
+concluded the junior's changes "don't persist" — they DO (the junior branches +
+commits); the real blocker was the completion-detection false-positive. Scars: the
+`review:work_rounds_ceiling`=5 loop and the done-gate are untouched; the DB task row
+for `e489b734` stays `claimed` (the work shipped via the Senior review+merge path,
+not the worktree/verify path — same decoupling as the assets task, and the reason
+the worktree/verify reconciliation is the next stream). Suite 355/355 across 84
+files on merged main (operator re-run), build clean.
 
 **Pipeline verification (live, 2026-08-18):** a real task was driven end-to-end
 against the dept machinery on the sandbox repo, in an isolated temp DB —
