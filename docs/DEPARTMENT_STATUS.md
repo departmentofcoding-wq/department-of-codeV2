@@ -16,6 +16,34 @@ phase plan, then git. Nothing important lives only in a chat window.
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
 
+**Console Projects tab + mobile-responsive UI + ntfy expansion (2026-08-25, merged
+`e9a1b7f`):** two operator-requested console features shipped through the review
+loop. (1) **Projects tab** — the multi-repo engine (`bureau_projects`,
+`registerProject`/`listProjects`) was CLI-only; now `GET`/`POST /api/projects`
+(reusing the engine helper unchanged, so the on-disk git-repo gate + `.bureau-
+worktrees/` gitignore + `project-registered` span stay intact) back a Projects nav
+tab (view) + Add-Project modal (name, folder path, description). `ENDPOINTS` 27→29.
+(2) **Mobile-responsive** — `styles.css` had a viewport tag but ZERO `@media`
+queries; added 768/480px breakpoints (header stacks, nav scrolls, tables scroll in
+their card, modals full-width), verified live at 375px with zero horizontal
+overflow. (3) **ntfy expansion** — the notify trigger moved from hardcoded
+`blocked||done` to `NOTIFYING_TASK_STATES.has(toState)` from a new
+`engine/notifications/events.ts` catalog, so **needs-review** (the phone-approval
+gate), **claimed** (task started), and **failed** now push too; added
+`notifyDepartmentOnline` (console startup), a generic `NtfyClient.sendMessage`, a
+`POST /api/settings/ntfy/test` endpoint + Settings "Send test" button, and a
+Settings list of what sends notifications (from the catalog). `ENDPOINTS` 29→30.
+Journal hygiene unchanged (spans record success + `topicConfigured`, never the
+topic). **Review path:** zai (ZCode GLM) senior attempted FIRST but failed loudly
+on a Send-selector mismatch (ZCode 3.8.1 > 9335 calibration) — phantom-verdict
+guard refused to fabricate; the **claude CLI senior then reviewed the diff directly
+and returned APPROVE** (no discrepancies; verdict
+`docs/reviews/verdict-console-projects-mobile-ntfy.md`, walkthrough alongside).
+Operator re-verified the two claims the senior's sandbox couldn't run. Suite
+**435/435 across 94 files**, build clean on merged `main` (`--no-ff` merge commit).
+**Follow-up:** recalibrate the ZCode Send selector in `engine/harness/senior.ts`
+for the 3.8.x GUI so the GLM senior drives again.
+
 **Completed/Done tag + out-of-band-merge rule now LAW (2026-08-25, merged
 `5724772`):** shipped-out-of-band work can be TAGGED completed (green ✓ Completed,
 records the shipping commit) via a marker orthogonal to `state` — `completed_at/
