@@ -139,6 +139,7 @@ export function renderTaskTable(tasks) {
       ? `<button class="btn btn-primary btn-sm btn-approve" data-task-id="${escapeHtml(t.id)}">Approve</button>`
       : (t.approved_at ? `<span class="text-muted">Approved by ${escapeHtml(t.approved_by || 'human')}</span>` : '');
 
+    const completeBtn = `<button class="btn btn-secondary btn-sm btn-complete" data-task-id="${escapeHtml(t.id)}" title="Tag as completed / shipped">Complete</button>`;
     const archiveBtn = `<button class="btn btn-secondary btn-sm btn-archive" data-task-id="${escapeHtml(t.id)}" title="Set this task aside">Archive</button>`;
 
     const prLink = t.pull_request_url
@@ -154,7 +155,7 @@ export function renderTaskTable(tasks) {
         <td>${escapeHtml(t.plan_rounds)} / ${escapeHtml(t.verify_fixes)}</td>
         <td>${escapeHtml(t.cycles)} / ${escapeHtml(t.attempts)}</td>
         <td>${prLink}</td>
-        <td class="task-actions">${approveBtn}${archiveBtn}</td>
+        <td class="task-actions">${approveBtn}${completeBtn}${archiveBtn}</td>
       </tr>
     `;
   }).join('');
@@ -216,6 +217,60 @@ export function renderArchivedTaskTable(tasks) {
             <th>Reason</th>
             <th>Archived By</th>
             <th>Archived At</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
+ * Renders the completed/shipped tasks table: what was delivered, the shipping
+ * commit + note, and a Reopen action. These are tagged done WITHOUT a
+ * state-machine `done` (the done-gate stays absolute), so each row shows a
+ * green "Completed" badge rather than the raw state.
+ * @param {import('../contract.ts').TaskSummaryDTO[]} tasks
+ * @returns {string}
+ */
+export function renderCompletedTaskTable(tasks) {
+  if (!tasks || tasks.length === 0) {
+    return '<div class="card empty-state">No completed tasks yet.</div>';
+  }
+
+  const rows = tasks.map(t => {
+    const commit = t.completion_commit
+      ? `<code>${escapeHtml(t.completion_commit)}</code>`
+      : '—';
+    return `
+      <tr data-task-id="${escapeHtml(t.id)}">
+        <td><code>${escapeHtml(t.id)}</code></td>
+        <td class="task-title-cell">${escapeHtml(t.title)}</td>
+        <td><span class="badge state-completed">✓ Completed</span></td>
+        <td>${commit}</td>
+        <td>${escapeHtml(t.completion_note || '—')}</td>
+        <td>${escapeHtml(t.completed_by || 'operator')}</td>
+        <td class="metric-sub">${escapeHtml(t.completed_at || '')}</td>
+        <td class="task-actions"><button class="btn btn-secondary btn-sm btn-reopen" data-task-id="${escapeHtml(t.id)}">Reopen</button></td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="card table-card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Shipped In</th>
+            <th>Note</th>
+            <th>Completed By</th>
+            <th>Completed At</th>
             <th>Actions</th>
           </tr>
         </thead>

@@ -34,6 +34,10 @@ export interface BureauTaskRow {
   archived_at: string | null;
   archived_by: string | null;
   archive_reason: string | null;
+  completed_at: string | null;
+  completed_by: string | null;
+  completion_commit: string | null;
+  completion_note: string | null;
   created_at: string;
   updated_at: string;
 }

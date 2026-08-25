@@ -8,6 +8,7 @@ import {
   type TaskSummaryDTO,
   type FlowSnapshotDTO,
   type ArchiveTaskResult,
+  type CompleteTaskResult,
   type ApiErrorResponse
 } from '../../console/contract.ts';
 import type { DbConnection } from '../../engine/contract/types.ts';
@@ -148,8 +149,59 @@ describe('T-C7: Archive / Unarchive / Flow console endpoints', () => {
   it('6. Endpoint manifest registers the new routes', () => {
     const paths = ENDPOINTS.map(e => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/tasks/archived');
+    expect(paths).toContain('GET /api/tasks/completed');
     expect(paths).toContain('GET /api/flow');
     expect(paths).toContain('POST /api/tasks/:id/archive');
     expect(paths).toContain('POST /api/tasks/:id/unarchive');
+    expect(paths).toContain('POST /api/tasks/:id/complete');
+    expect(paths).toContain('POST /api/tasks/:id/reopen');
+  });
+
+  it('7. complete tags a task (with commit) and moves it from live to the completed list', async () => {
+    const port = await server();
+    insertTask(db, 'ship-1', 'claimed');
+    insertTask(db, 'active-1', 'queued');
+
+    const done = await api<CompleteTaskResult>(port, TOKEN, 'POST', '/api/tasks/ship-1/complete', { commit: '1c14534', note: 'shipped out-of-band' });
+    expect(done.statusCode).toBe(200);
+    expect(done.body.completed).toBe(true);
+    expect(done.body.completion_commit).toBe('1c14534');
+
+    const live = await api<TaskSummaryDTO[]>(port, TOKEN, 'GET', '/api/tasks');
+    expect(live.body.map(t => t.id)).toEqual(['active-1']);
+
+    const completed = await api<TaskSummaryDTO[]>(port, TOKEN, 'GET', '/api/tasks/completed');
+    expect(completed.body.map(t => t.id)).toEqual(['ship-1']);
+    expect(completed.body[0].completion_commit).toBe('1c14534');
+    // State is untouched — no forged done.
+    expect(completed.body[0].state).toBe('claimed');
+  });
+
+  it('8. reopen clears the completed tag and returns the task to the live list', async () => {
+    const port = await server();
+    insertTask(db, 'rc-1', 'claimed');
+    await api(port, TOKEN, 'POST', '/api/tasks/rc-1/complete', { commit: 'abc' });
+
+    const reopened = await api<CompleteTaskResult>(port, TOKEN, 'POST', '/api/tasks/rc-1/reopen');
+    expect(reopened.statusCode).toBe(200);
+    expect(reopened.body.completed).toBe(false);
+
+    const live = await api<TaskSummaryDTO[]>(port, TOKEN, 'GET', '/api/tasks');
+    expect(live.body.map(t => t.id)).toEqual(['rc-1']);
+    const completed = await api<TaskSummaryDTO[]>(port, TOKEN, 'GET', '/api/tasks/completed');
+    expect(completed.body).toEqual([]);
+  });
+
+  it('9. complete of an unknown task is refused with a guardrail span; endpoints fail-closed without a token', async () => {
+    const port = await server();
+    const res = await api<ApiErrorResponse>(port, TOKEN, 'POST', '/api/tasks/nope/complete', {});
+    expect(res.statusCode).toBe(400);
+    expect(res.body.code).toBe('COMPLETE_REFUSED');
+    const span = db.get<{ kind: string }>(`SELECT kind FROM bureau_journal WHERE detail LIKE '%complete_refused%'`);
+    expect(span?.kind).toBe('guardrail');
+
+    insertTask(db, 'guard2', 'claimed');
+    expect((await api<ApiErrorResponse>(port, null, 'POST', '/api/tasks/guard2/complete', {})).statusCode).toBe(401);
+    expect((await api<ApiErrorResponse>(port, null, 'GET', '/api/tasks/completed')).statusCode).toBe(401);
   });
 });

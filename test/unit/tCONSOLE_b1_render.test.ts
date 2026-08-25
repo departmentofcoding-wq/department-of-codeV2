@@ -7,6 +7,7 @@ import {
   renderDashboardTileGrid,
   renderTaskTable,
   renderArchivedTaskTable,
+  renderCompletedTaskTable,
   renderFlowPipeline,
   renderFindingsList,
   renderJournalTimeline,
@@ -48,8 +49,9 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('task-101');
     expect(html).toContain('Fix memory leak in CDP client');
     expect(html).toContain('btn-approve'); // Approve button for task-101 (needs-review & code 0)
-    // Every live row offers an Archive action.
+    // Every live row offers Archive + Complete actions.
     expect(html).toContain('btn-archive');
+    expect(html).toContain('btn-complete');
     // Cycles / Attempts column is surfaced (task-101: cycles 3, attempts 4).
     expect(html).toContain('Cycles / Attempts');
     // Assert XSS string in task title is HTML escaped
@@ -75,6 +77,20 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('test artifact');
     expect(html).toContain('btn-unarchive');
     // Archived rows never offer approve.
+    expect(html).not.toContain('btn-approve');
+  });
+
+  it('3c2. renderCompletedTaskTable: shows commit + note + Completed badge + Reopen, empty state when none', () => {
+    expect(renderCompletedTaskTable([])).toContain('No completed tasks');
+    const html = renderCompletedTaskTable([
+      { id: 'ship-1', title: 'Ship the ntfy stack', state: 'claimed', completion_commit: '1c14534', completion_note: 'shipped out-of-band', completed_by: 'operator', completed_at: '2026-08-25T00:00:00.000Z' } as any
+    ]);
+    expect(html).toContain('ship-1');
+    expect(html).toContain('1c14534');
+    expect(html).toContain('shipped out-of-band');
+    expect(html).toContain('Completed');
+    expect(html).toContain('btn-reopen');
+    // Completed rows never offer approve/archive.
     expect(html).not.toContain('btn-approve');
   });
 

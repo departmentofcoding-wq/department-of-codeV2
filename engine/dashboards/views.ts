@@ -50,7 +50,7 @@ export interface DashboardSnapshot {
 export function statePopulations(db: DbConnection): StatePopulation[] {
   return db.all<StatePopulation>(
     `SELECT state, COUNT(*) AS count FROM bureau_tasks
-     WHERE archived_at IS NULL
+     WHERE archived_at IS NULL AND completed_at IS NULL
      GROUP BY state ORDER BY count DESC, state ASC`
   );
 }
@@ -62,7 +62,7 @@ export function budgetSpend(db: DbConnection): TaskBudgetSpend[] {
     `SELECT id AS task_id, title, state,
             plan_rounds, verify_fixes, cycles, attempts, recover_attempts
      FROM bureau_tasks
-     WHERE archived_at IS NULL
+     WHERE archived_at IS NULL AND completed_at IS NULL
      ORDER BY (plan_rounds + verify_fixes + cycles + attempts + recover_attempts) DESC, id ASC`
   );
 }
@@ -239,7 +239,7 @@ export function taskFlow(db: DbConnection, nowMs: number = Date.now()): FlowTask
   }>(
     `SELECT id, title, state, plan_rounds, verify_fixes, cycles, attempts
      FROM bureau_tasks
-     WHERE archived_at IS NULL AND state <> 'done'
+     WHERE archived_at IS NULL AND completed_at IS NULL AND state <> 'done'
      ORDER BY updated_at DESC, id ASC`
   );
 

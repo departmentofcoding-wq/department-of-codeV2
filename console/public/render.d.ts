@@ -15,6 +15,7 @@ export function safeHref(url: unknown): string;
 export function renderDashboardTileGrid(dto: DashboardDTO): string;
 export function renderTaskTable(tasks: TaskSummaryDTO[]): string;
 export function renderArchivedTaskTable(tasks: TaskSummaryDTO[]): string;
+export function renderCompletedTaskTable(tasks: TaskSummaryDTO[]): string;
 export function renderFlowPipeline(snapshot: FlowSnapshotDTO | null): string;
 export function renderFindingsList(findings: FindingDTO[]): string;
 export function renderWorkers(workers: WorkerDTO[]): string;

@@ -2,6 +2,7 @@ import {
   renderDashboardTileGrid,
   renderTaskTable,
   renderArchivedTaskTable,
+  renderCompletedTaskTable,
   renderFlowPipeline,
   renderFindingsList,
   renderWorkers,
@@ -23,7 +24,9 @@ let pendingConfirmAction = null;
 let currentIntakeSessionId = null;
 let intakeBusy = false;
 let currentAssets = [];
-let showArchived = false;
+// Which Tasks bucket is shown: 'live' (active work), 'completed' (shipped/done),
+// or 'archived' (set aside).
+let tasksView = 'live';
 
 // --- Token Initialization ---
 function initAuthToken() {
@@ -99,19 +102,29 @@ async function loadDashboardView() {
   }
 }
 
+function syncTasksViewButtons() {
+  const map = { live: 'tab-tasks-live', completed: 'tab-tasks-completed', archived: 'tab-tasks-archived' };
+  for (const [view, id] of Object.entries(map)) {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('active', tasksView === view);
+  }
+}
+
 async function loadTasksView() {
   const container = document.getElementById('tasks-container');
-  const toggleBtn = document.getElementById('toggle-archived-btn');
+  syncTasksViewButtons();
   try {
-    if (showArchived) {
+    if (tasksView === 'archived') {
       const tasks = await apiFetch('/api/tasks/archived');
       container.innerHTML = renderArchivedTaskTable(tasks);
-      if (toggleBtn) toggleBtn.textContent = `← Live Tasks`;
       attachArchivedActionListeners();
+    } else if (tasksView === 'completed') {
+      const tasks = await apiFetch('/api/tasks/completed');
+      container.innerHTML = renderCompletedTaskTable(tasks);
+      attachCompletedActionListeners();
     } else {
       const tasks = await apiFetch('/api/tasks');
       container.innerHTML = renderTaskTable(tasks);
-      if (toggleBtn) toggleBtn.textContent = `View Archived`;
       attachTaskActionListeners();
     }
   } catch (e) {
@@ -296,6 +309,28 @@ function attachTaskActionListeners() {
     });
   });
 
+  document.querySelectorAll('.btn-complete').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const taskId = e.currentTarget.getAttribute('data-task-id');
+      promptConfirm(
+        'Mark Task Completed',
+        `Tag task ${taskId} as completed / shipped? It moves to the Completed list (state unchanged) and can be reopened anytime.`,
+        async () => {
+          try {
+            await apiFetch(`/api/tasks/${taskId}/complete`, {
+              method: 'POST',
+              body: JSON.stringify({ note: 'Marked complete from console' })
+            });
+            showToast(`<div class="toast"><span class="toast-icon">✅</span> Task ${taskId} marked completed</div>`);
+            await refreshActiveView();
+          } catch (err) {
+            // Error toast handled by apiFetch
+          }
+        }
+      );
+    });
+  });
+
   document.querySelectorAll('.btn-archive').forEach(btn => {
     btn.addEventListener('click', e => {
       const taskId = e.currentTarget.getAttribute('data-task-id');
@@ -309,6 +344,27 @@ function attachTaskActionListeners() {
               body: JSON.stringify({ reason: 'Archived from console' })
             });
             showToast(`<div class="toast"><span class="toast-icon">🗄️</span> Task ${taskId} archived</div>`);
+            await refreshActiveView();
+          } catch (err) {
+            // Error toast handled by apiFetch
+          }
+        }
+      );
+    });
+  });
+}
+
+function attachCompletedActionListeners() {
+  document.querySelectorAll('.btn-reopen').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const taskId = e.currentTarget.getAttribute('data-task-id');
+      promptConfirm(
+        'Reopen Task',
+        `Clear the completed tag on task ${taskId} and return it to the live task list?`,
+        async () => {
+          try {
+            await apiFetch(`/api/tasks/${taskId}/reopen`, { method: 'POST' });
+            showToast(`<div class="toast"><span class="toast-icon">♻️</span> Task ${taskId} reopened</div>`);
             await refreshActiveView();
           } catch (err) {
             // Error toast handled by apiFetch
@@ -617,9 +673,17 @@ function setupEventListeners() {
     }
   });
 
-  // Tasks: toggle between the live list and the archived list.
-  document.getElementById('toggle-archived-btn')?.addEventListener('click', () => {
-    showArchived = !showArchived;
+  // Tasks: switch between the live / completed / archived buckets.
+  document.getElementById('tab-tasks-live')?.addEventListener('click', () => {
+    tasksView = 'live';
+    loadTasksView();
+  });
+  document.getElementById('tab-tasks-completed')?.addEventListener('click', () => {
+    tasksView = 'completed';
+    loadTasksView();
+  });
+  document.getElementById('tab-tasks-archived')?.addEventListener('click', () => {
+    tasksView = 'archived';
     loadTasksView();
   });
 

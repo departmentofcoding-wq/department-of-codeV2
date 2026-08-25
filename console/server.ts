@@ -10,6 +10,7 @@ import { dashboardSnapshot, workerRoster, taskFlow, FLOW_STAGES } from '../engin
 import { timeline } from '../engine/journal/queries.ts';
 import { approveTask } from '../engine/state/machine.ts';
 import { archiveTask, unarchiveTask } from '../engine/state/archive.ts';
+import { markTaskCompleted, reopenTask } from '../engine/state/completion.ts';
 import { enqueueJobIfAbsent, enqueueJob } from '../engine/jobs/jobs.ts';
 import { taskGaps, isVacuousVerify } from '../engine/contract/validation.ts';
 import { createSession, appendIntakeMessage, getSession, getSessionWithMessages } from '../engine/intake/index.ts';
@@ -34,6 +35,8 @@ import {
   type FlowSnapshotDTO,
   type ArchiveTaskRequest,
   type ArchiveTaskResult,
+  type CompleteTaskRequest,
+  type CompleteTaskResult,
   type AssetDTO,
   type CreateAssetRequest,
   type UpdateAssetRequest,
@@ -188,6 +191,10 @@ function toTaskSummaryDTO(t: BureauTaskRow): TaskSummaryDTO {
     archived_at: t.archived_at,
     archived_by: t.archived_by ? redactOutput(t.archived_by) : null,
     archive_reason: t.archive_reason ? redactOutput(t.archive_reason) : null,
+    completed_at: t.completed_at,
+    completed_by: t.completed_by ? redactOutput(t.completed_by) : null,
+    completion_commit: t.completion_commit ? redactOutput(t.completion_commit) : null,
+    completion_note: t.completion_note ? redactOutput(t.completion_note) : null,
     created_at: t.created_at,
     updated_at: t.updated_at
   };
@@ -390,9 +397,19 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         return;
       }
 
-      if (req.method === 'GET' && pathname === '/api/tasks') {
+      // Completed / shipped tasks list.
+      if (req.method === 'GET' && pathname === '/api/tasks/completed') {
         const tasks = db.all<BureauTaskRow>(
-          'SELECT * FROM bureau_tasks WHERE archived_at IS NULL ORDER BY created_at DESC'
+          'SELECT * FROM bureau_tasks WHERE completed_at IS NOT NULL ORDER BY completed_at DESC'
+        );
+        sendJson(res, 200, tasks.map(toTaskSummaryDTO));
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/tasks') {
+        // Live list = active work: neither archived nor completed.
+        const tasks = db.all<BureauTaskRow>(
+          'SELECT * FROM bureau_tasks WHERE archived_at IS NULL AND completed_at IS NULL ORDER BY created_at DESC'
         );
         sendJson(res, 200, tasks.map(toTaskSummaryDTO));
         return;
@@ -816,6 +833,88 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             detail: { action: 'unarchive_refused', taskId, reason: err.message }
           });
           sendError(res, 400, 'UNARCHIVE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/complete')) {
+        const taskId = pathname.split('/')[3];
+        if (!taskId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
+          return;
+        }
+
+        let body: CompleteTaskRequest = {};
+        try {
+          body = (await parseJsonBody(req)) as CompleteTaskRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const attribution: AttributionTuple = { ...CONSOLE_HUMAN_ATTR, account: body.completedBy || 'operator' };
+        try {
+          const row = markTaskCompleted(db, taskId, attribution, { commit: body.commit, note: body.note });
+          const result: CompleteTaskResult = {
+            ok: true,
+            task_id: row.id,
+            completed: row.completed_at !== null,
+            completed_at: row.completed_at,
+            completed_by: row.completed_by ? redactOutput(row.completed_by) : null,
+            completion_commit: row.completion_commit ? redactOutput(row.completion_commit) : null,
+            completion_note: row.completion_note ? redactOutput(row.completion_note) : null
+          };
+          sendJson(res, 200, result);
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            detail: { action: 'complete_refused', taskId, reason: err.message }
+          });
+          sendError(res, 400, 'COMPLETE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/reopen')) {
+        const taskId = pathname.split('/')[3];
+        if (!taskId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
+          return;
+        }
+
+        try {
+          await parseJsonBody(req);
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+        }
+
+        try {
+          const row = reopenTask(db, taskId, CONSOLE_HUMAN_ATTR);
+          const result: CompleteTaskResult = {
+            ok: true,
+            task_id: row.id,
+            completed: row.completed_at !== null,
+            completed_at: row.completed_at,
+            completed_by: row.completed_by ? redactOutput(row.completed_by) : null,
+            completion_commit: row.completion_commit ? redactOutput(row.completion_commit) : null,
+            completion_note: row.completion_note ? redactOutput(row.completion_note) : null
+          };
+          sendJson(res, 200, result);
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'reopen_refused', taskId, reason: err.message }
+          });
+          sendError(res, 400, 'REOPEN_REFUSED', err.message);
         }
         return;
       }

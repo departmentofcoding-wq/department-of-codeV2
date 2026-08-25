@@ -45,7 +45,11 @@
       <div class="section-header">
         <h2 class="section-title">Bureau Tasks</h2>
         <div class="section-actions">
-          <button id="toggle-archived-btn" class="btn btn-secondary btn-sm">View Archived</button>
+          <div class="task-view-toggle" role="group" aria-label="Task view">
+            <button id="tab-tasks-live" class="btn btn-secondary btn-sm active">Live</button>
+            <button id="tab-tasks-completed" class="btn btn-secondary btn-sm">Completed</button>
+            <button id="tab-tasks-archived" class="btn btn-secondary btn-sm">Archived</button>
+          </div>
           <button id="new-task-btn" class="btn btn-primary btn-sm">+ New Task</button>
         </div>
       </div>

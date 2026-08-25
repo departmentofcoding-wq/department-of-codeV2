@@ -22,6 +22,7 @@ export function applySchema(db: DatabaseSync): void {
       pull_request_url TEXT,
       intake_session_id TEXT,
       archived_at TEXT, archived_by TEXT, archive_reason TEXT,
+      completed_at TEXT, completed_by TEXT, completion_commit TEXT, completion_note TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       CHECK (state <> 'done'
              OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
@@ -317,6 +318,15 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_tasks', name: 'archived_at', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'archived_by', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'archive_reason', definition: 'TEXT' },
+  // Completion is also orthogonal to the state machine: it TAGS a task the
+  // operator considers finished/shipped (e.g. delivered out-of-band via the
+  // Senior review+merge path, recording the shipping commit) without forging a
+  // state-machine `done` — the done-gate CHECK (verifier 0 + human approval)
+  // stays absolute. completed_at IS NULL == not marked complete.
+  { table: 'bureau_tasks', name: 'completed_at', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'completed_by', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'completion_commit', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'completion_note', definition: 'TEXT' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
@@ -364,6 +374,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           pull_request_url TEXT,
           intake_session_id TEXT,
           archived_at TEXT, archived_by TEXT, archive_reason TEXT,
+          completed_at TEXT, completed_by TEXT, completion_commit TEXT, completion_note TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           CHECK (state <> 'done'
                  OR (verifier_exit_code IS NOT NULL AND verifier_exit_code = 0 AND approved_at IS NOT NULL AND approved_by IS NOT NULL)),
@@ -375,14 +386,18 @@ export function applyBootMigrations(db: DatabaseSync): void {
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,
-          archived_at, archived_by, archive_reason, created_at, updated_at
+          archived_at, archived_by, archive_reason,
+          completed_at, completed_by, completion_commit, completion_note,
+          created_at, updated_at
         )
         SELECT
           id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,
-          archived_at, archived_by, archive_reason, created_at, updated_at
+          archived_at, archived_by, archive_reason,
+          completed_at, completed_by, completion_commit, completion_note,
+          created_at, updated_at
         FROM bureau_tasks;
 
         DROP TABLE bureau_tasks;

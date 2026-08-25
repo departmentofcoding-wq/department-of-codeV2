@@ -643,3 +643,12 @@ body {
   color: var(--text-muted);
 }
 .flow-last-activity { font-style: italic; }
+
+/* --- Completed tasks + task-view segmented toggle --- */
+.state-completed { background-color: rgba(74, 222, 128, 0.15); color: var(--accent-green); }
+.task-view-toggle { display: inline-flex; gap: 0.25rem; }
+.task-view-toggle .btn.active {
+  background-color: var(--accent-blue);
+  color: #000;
+  border-color: var(--accent-blue);
+}

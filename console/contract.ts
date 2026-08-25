@@ -92,6 +92,10 @@ export interface TaskSummaryDTO {
   archived_at: string | null;
   archived_by: string | null;
   archive_reason: string | null;
+  completed_at: string | null;
+  completed_by: string | null;
+  completion_commit: string | null;
+  completion_note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -203,6 +207,24 @@ export interface ArchiveTaskResult {
   archived_at: string | null;
   archived_by: string | null;
   archive_reason: string | null;
+}
+
+export interface CompleteTaskRequest {
+  /** The commit/hash the work shipped in (e.g. a merge commit), when known. */
+  commit?: string;
+  /** Free-text note about the completion. */
+  note?: string;
+  completedBy?: string;
+}
+
+export interface CompleteTaskResult {
+  ok: boolean;
+  task_id: string;
+  completed: boolean;
+  completed_at: string | null;
+  completed_by: string | null;
+  completion_commit: string | null;
+  completion_note: string | null;
 }
 
 // --- Conversational Intake DTOs (task creation front door) ---
@@ -383,7 +405,13 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     method: 'GET',
     path: '/api/tasks/archived',
     auth: 'token',
-    description: 'List archived task summaries (test artifacts, out-of-band shipments)'
+    description: 'List archived task summaries (test artifacts, set-aside work)'
+  },
+  {
+    method: 'GET',
+    path: '/api/tasks/completed',
+    auth: 'token',
+    description: 'List completed/shipped task summaries (tagged done, done-gate untouched)'
   },
   {
     method: 'GET',
@@ -450,6 +478,18 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/tasks/:id/unarchive',
     auth: 'token',
     description: 'Restore an archived task to the live list (human-operator door)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/complete',
+    auth: 'token',
+    description: 'Tag a task completed/shipped without touching its state (human-operator door)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/reopen',
+    auth: 'token',
+    description: 'Clear a task\'s completed tag and return it to the live list (human-operator door)'
   },
   {
     method: 'POST',
