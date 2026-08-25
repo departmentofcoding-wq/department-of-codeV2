@@ -724,11 +724,26 @@ export function renderNtfySettingsCard(status) {
     ? `<div class="metric-sub">Active Topic: <code>${escapeHtml(topic)}</code> &bull; Server: <code>${escapeHtml(serverUrl)}</code></div>`
     : `<div class="metric-sub text-muted">No topic configured &mdash; push notifications are disabled.</div>`;
 
+  // The catalog of events that send a push, straight from the engine (never
+  // hardcoded here, so the list can't drift from what actually fires).
+  const events = (status && status.events) || [];
+  const eventItems = events.map(e => `
+    <li class="ntfy-event">
+      <span class="ntfy-event-label">${escapeHtml(e.label)}</span>
+      <span class="ntfy-event-desc">${escapeHtml(e.description)}</span>
+    </li>`).join('');
+  const eventList = eventItems
+    ? `<div class="ntfy-events">
+         <div class="metric-sub" style="margin-bottom:0.4rem;">Sends a notification for:</div>
+         <ul class="ntfy-event-list">${eventItems}</ul>
+       </div>`
+    : '';
+
   return `
     <div class="card table-card full-width" id="ntfy-settings-card">
       <h3>Ntfy Push Notifications</h3>
       <p class="metric-sub" style="margin-bottom:0.75rem;">
-        Sends instant mobile &amp; desktop alerts via <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" style="color:var(--accent-color);">ntfy.sh</a> when tasks transition to <code>blocked</code> or <code>done</code>.
+        Sends instant mobile &amp; desktop alerts via <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" style="color:var(--accent-color);">ntfy.sh</a>. Set a topic below, subscribe to it in the ntfy app, then send a test.
       </p>
       ${statusLine}
       <div class="settings-key-form" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
@@ -737,7 +752,9 @@ export function renderNtfySettingsCard(status) {
         <input type="text" id="ntfy-topic" class="intake-input" style="flex:1; min-width:200px;"
           placeholder="Topic (e.g. bureau-tasks-alerts)" value="${escapeHtml(topic)}" />
         <button id="save-ntfy-settings-btn" class="btn btn-primary">Save Ntfy settings</button>
+        <button id="test-ntfy-btn" class="btn btn-secondary"${isEnabled ? '' : ' disabled title="Configure a topic first"'}>Send test</button>
       </div>
+      ${eventList}
     </div>`;
 }
 

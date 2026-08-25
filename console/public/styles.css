@@ -653,6 +653,21 @@ body {
   border-color: var(--accent-blue);
 }
 
+/* --- Ntfy settings: what-sends-notifications list --- */
+.ntfy-events { margin-top: 1rem; }
+.ntfy-event-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.ntfy-event {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+}
+.ntfy-event-label { font-weight: 600; font-size: 0.9rem; }
+.ntfy-event-desc { font-size: 0.8rem; color: var(--text-muted); }
+
 /* --- Projects tab --- */
 .project-path {
   word-break: break-all;

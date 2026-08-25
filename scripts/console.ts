@@ -104,6 +104,10 @@ export async function main(
     runner.start();
     console.log('[CONSOLE] Background runner started — filed tasks auto-kick the flow.');
 
+    // Push a "department online" notification (best-effort; no-op if ntfy unset).
+    const { notifyDepartmentOnline } = await import('../engine/state/notifications.ts');
+    notifyDepartmentOnline(db).catch(() => {});
+
     let shuttingDown = false;
     const shutdown = async () => {
       if (shuttingDown) return;

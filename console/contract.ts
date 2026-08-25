@@ -304,15 +304,37 @@ export interface SaveGoogleKeysRequest {
 
 // --- Settings: Ntfy notifications ---
 
+/** One event that sends a push — shown in the Settings "what sends
+ * notifications" list. Mirrors engine NotificationEvent. */
+export interface NotificationEventDTO {
+  key: string;
+  label: string;
+  description: string;
+  /** The task state that fires it, if task-driven. */
+  taskState?: string;
+}
+
 export interface NtfySettingsDTO {
   ntfy_server_url: string;
   ntfy_topic: string;
   enabled: boolean;
+  /** Every event that sends a notification (drives the Settings list). The
+   * server always populates this; optional so partial fixtures still type. */
+  events?: NotificationEventDTO[];
 }
 
 export interface SaveNtfySettingsRequest {
   ntfy_server_url?: string;
   ntfy_topic?: string;
+}
+
+/** Result of a manual test-notification send from Settings. */
+export interface TestNtfyResult {
+  ok: boolean;
+  /** Whether an ntfy topic is configured at all. */
+  configured: boolean;
+  /** Whether the test push was accepted by the ntfy server. */
+  sent: boolean;
 }
 
 // --- Department Assets DTOs ---
@@ -565,6 +587,12 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/settings/ntfy',
     auth: 'token',
     description: 'Save ntfy server URL and topic'
+  },
+  {
+    method: 'POST',
+    path: '/api/settings/ntfy/test',
+    auth: 'token',
+    description: 'Send a test push to the configured ntfy topic'
   },
   {
     method: 'GET',

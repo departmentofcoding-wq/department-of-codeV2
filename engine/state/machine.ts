@@ -4,6 +4,7 @@ import { formatActor } from '../contract/validation.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { notifyTaskStateChange } from './notifications.ts';
+import { NOTIFYING_TASK_STATES } from '../notifications/events.ts';
 
 const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
   'claimed->blocked': ['senior-engineer'],
@@ -70,7 +71,7 @@ export function transition(
     return updated;
   });
 
-  if (toState === 'blocked' || toState === 'done') {
+  if (NOTIFYING_TASK_STATES.has(toState)) {
     const reason = (detail?.reason as string) || (detail?.action as string) || undefined;
     notifyTaskStateChange(db, {
       taskId: updatedTask.id,

@@ -202,7 +202,7 @@ async function loadSettingsView() {
   const tokenPreview = consoleToken ? `${consoleToken.slice(0, 8)}...` : undefined;
 
   let googleKeys = { count: 0, masked: [] };
-  let ntfySettings = { ntfy_server_url: 'https://ntfy.sh', ntfy_topic: '', enabled: false };
+  let ntfySettings = { ntfy_server_url: 'https://ntfy.sh', ntfy_topic: '', enabled: false, events: [] };
   try {
     const [keysRes, ntfyRes] = await Promise.allSettled([
       apiFetch('/api/settings/google-keys'),
@@ -225,6 +225,26 @@ async function loadSettingsView() {
 
   document.getElementById('save-google-keys-btn')?.addEventListener('click', saveGoogleKeys);
   document.getElementById('save-ntfy-settings-btn')?.addEventListener('click', saveNtfySettings);
+  document.getElementById('test-ntfy-btn')?.addEventListener('click', sendTestNtfy);
+}
+
+async function sendTestNtfy() {
+  const btn = document.getElementById('test-ntfy-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const res = await apiFetch('/api/settings/ntfy/test', { method: 'POST', body: JSON.stringify({}) });
+    if (res.ok) {
+      showToast(`<div class="toast"><span class="toast-icon">🔔</span> Test notification sent — check your device</div>`);
+    } else if (!res.configured) {
+      showToast(renderErrorToast('No ntfy topic configured. Save a topic first, then send a test.'));
+    } else {
+      showToast(renderErrorToast('ntfy did not accept the test push. Check the server URL and topic.'));
+    }
+  } catch (err) {
+    // Error toast handled by apiFetch.
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send test'; }
+  }
 }
 
 async function saveGoogleKeys() {

@@ -18,6 +18,8 @@ import { confirmVerify } from '../engine/intake/confirm.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
 import { listProjects, registerProject } from '../engine/projects/index.ts';
+import { sendTestNotification } from '../engine/state/notifications.ts';
+import { NOTIFICATION_EVENTS } from '../engine/notifications/events.ts';
 import { applyGoogleRoster } from '../engine/models/seed.ts';
 import { drainSingleJob } from '../runner/main.ts';
 import type { AttributionTuple, BureauJobRow, BureauIntakeMessageRow } from '../engine/contract/types.ts';
@@ -56,6 +58,7 @@ import {
   type SaveGoogleKeysRequest,
   type NtfySettingsDTO,
   type SaveNtfySettingsRequest,
+  type TestNtfyResult,
   type ProjectDTO,
   type CreateProjectRequest
 } from './contract.ts';
@@ -1207,9 +1210,27 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         const dto: NtfySettingsDTO = {
           ntfy_server_url,
           ntfy_topic,
-          enabled: Boolean(ntfy_topic.trim())
+          enabled: Boolean(ntfy_topic.trim()),
+          events: [...NOTIFICATION_EVENTS]
         };
         sendJson(res, 200, dto);
+        return;
+      }
+
+      // --- Settings: send a test ntfy push to confirm delivery ---
+      if (req.method === 'POST' && pathname === '/api/settings/ntfy/test') {
+        // Drain any body; the test send takes no fields.
+        try {
+          await parseJsonBody(req);
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+        }
+        const { configured, sent } = await sendTestNotification(db);
+        const result: TestNtfyResult = { ok: configured && sent, configured, sent };
+        sendJson(res, 200, result);
         return;
       }
 
@@ -1262,7 +1283,8 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         const dto: NtfySettingsDTO = {
           ntfy_server_url: serverUrl || 'https://ntfy.sh',
           ntfy_topic: topic,
-          enabled: Boolean(topic)
+          enabled: Boolean(topic),
+          events: [...NOTIFICATION_EVENTS]
         };
         sendJson(res, 200, dto);
         return;
