@@ -16,6 +16,24 @@ phase plan, then git. Nothing important lives only in a chat window.
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
 
+**Completed/Done tag + out-of-band-merge rule now LAW (2026-08-25, merged
+`5724772`):** shipped-out-of-band work can be TAGGED completed (green ✓ Completed,
+records the shipping commit) via a marker orthogonal to `state` — `completed_at/
+completed_by/completion_commit/completion_note`, `markTaskCompleted`/`reopenTask`,
+console Live/Completed/Archived views (`GET /api/tasks/completed`,
+`POST /api/tasks/:id/{complete,reopen}`; ENDPOINTS 24→27) — never a forged `done`
+(done-gate absolute). Live DB reconciled: the two shipped tasks are now completed
+(`82b97764`→`c7f9b37`, `e489b734`→`1c14534`), the two test artifacts archived,
+zero `done` rows. **New non-negotiable rule enacted (this merge is the sanctioned
+final hand-merge that makes it law): no out-of-band merges/commits to `main`** —
+every merge is a tracked act (bureau_jobs row + journal span + task state);
+hand-merges PAUSED until workspace/worktree reconciliation lands. Root cause on
+the record (0 worktrees/verify.run/pr.* jobs, 0 merge spans for the shipped
+tasks): the harness junior works in its own IDE workspace, not a bureau worktree.
+ZAI verdict `docs/reviews/verdict-task-completion-tag.md` (APPROVE, M-COMP-1/2).
+Suite 384/384, build clean. Plan for single-senior-per-task efficiency filed:
+`docs/plan-single-senior-per-task.md`.
+
 **Console task archive + Workers flow view + senior conversation reuse
 (2026-08-24, merged `1710098`):** the Tasks view carried test artifacts and
 out-of-band shipments with no way to clear them, the Approve button could never
