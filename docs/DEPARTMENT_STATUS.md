@@ -457,6 +457,21 @@ This is the loop every stream follows. It was proven across Phase 1.
 
 ## Scars — rules written from real incidents
 
+- **The out-of-band-merge incident (2026-08-24/25):** the two real shipped tasks
+  (`82b97764`→`c7f9b37`, `e489b734`→`1c14534`) reached `main` by a **hand
+  `git merge`**, and their `docs/junior-artifacts/` transcripts by a hand
+  `git commit`, done by a peer session outside the department's machinery. The
+  live DB proved it: **zero** `verify.run`/`pr.create`/`pr.merge` jobs for either
+  task, zero merge journal spans, and the task rows stranded at `queued`/
+  `claimed`. Root cause: the harness junior works in its own IDE workspace, not a
+  bureau worktree, so `verify.run` never runs against its branch and the tracked
+  delivery path (`verify.run → needs-review → approve → pr.create → pr.merge →
+  done`) is never reached — the flow dies at `work.cycle`. Rule: **every merge to
+  `main` is a tracked act** (a `bureau_jobs` row + `journal()` span + task state
+  transition); no hand-merges/commits to `main` outside the flow. Hand-merges are
+  **paused** until the workspace/worktree reconciliation stream wires `verify.run`
+  against the junior's real branch. Closing out shipped work uses the Completed
+  tag / Archive (orthogonal to `state`), never a forged `done`.
 - **The gitignore incident:** an unanchored `db/` pattern silently kept
   `engine/db/` out of Phase 0's commits; main could not build. Anchor ignore
   patterns (`/db/`, `/.bureau-worktrees/`), and after any oddity run

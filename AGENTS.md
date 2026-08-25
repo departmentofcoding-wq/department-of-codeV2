@@ -24,6 +24,23 @@ Core rules, non-negotiable:
   match reality — the Senior re-runs them. Phase 2 recorded five violations
   of this rule; every one was caught and repaired, and the rule is absolute
   from Phase 3 on.
+- **No out-of-band delivery — every merge to `main` is a tracked department
+  act.** A merge (or any commit to `main`, artifacts included) must leave a
+  record in the department's own machinery: a `bureau_jobs` row, a `journal()`
+  span, and the task's state transition — i.e. it travels the delivery path
+  (`verify.run → needs-review → operator approve → pr.create → pr.merge → done`,
+  with `merged_at`/`merged_by` set). A human or a peer session **must not**
+  `git merge`/`git commit` to `main` by hand outside that flow. Real incident
+  (2026-08-24): the two shipped tasks (`82b97764`→`c7f9b37`, `e489b734`→
+  `1c14534`) and their `docs/junior-artifacts/` transcripts were merged/committed
+  to `main` by hand — leaving the DB with **zero** `verify.run`/`pr.create`/
+  `pr.merge` jobs, zero merge journal spans, and the task rows stranded at
+  `queued`/`claimed`. Root cause: the harness junior works in its own IDE
+  workspace, not a bureau worktree, so `verify.run` can't run against its branch
+  and the tracked path is never reached (the "workspace/worktree reconciliation"
+  stream in `docs/DEPARTMENT_STATUS.md`). **Until that stream lands, hand-merges
+  are paused:** finish work on its `wt/...` branch and leave it for the operator;
+  do not merge to `main` outside the tracked flow.
 - The invariant lives in the database: done requires verifier exit 0 AND human
   approval. No code path bypasses what the DB refuses.
 - Every asynchronous step is a row in `bureau_jobs`. Nothing fire-and-forget.
