@@ -133,3 +133,22 @@ continue), unarchive idempotence + unknown-task refusal by `tc_task_archive`,
 and the fail-closed (no-token) behavior for all four new endpoints by
 `tc7_archive_flow_api.test.ts` #5. Restoration verified after each mutation;
 full suite 375/375 across 87 files, `npm run build` clean, twice.
+
+## Stream addendum — Completed/Done tag for shipped tasks (`wt/task-completion-tag`, Senior-executed)
+
+The junior flagged honestly that it shipped no mutation evidence for this
+stream; the Senior executed these live (mutate → watch the real test fail →
+restore → re-run green), per the M-ARCH/M-SENR precedent.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-COMP-1 | Completion is human-operator-gated (`engine/state/completion.ts`) | deleted the `actor_role !== 'human-operator'` refusal from `markTaskCompleted` | `tc_task_completion.test.ts` "refuses a non-operator actor (fail-closed)" | 1 failed / 4 passed (a junior role completed a task); restored → 5/5 pass |
+| M-COMP-2 | Live task list excludes completed rows (`console/server.ts` `GET /api/tasks`) | dropped `AND completed_at IS NULL` from the live-list query | `tc7_archive_flow_api.test.ts` "7. complete tags a task (with commit) and moves it from live to the completed list" | 1 failed / 8 passed (completed task still listed live); restored → 9/9 pass |
+
+Remaining guards covered by direct tests (verified by inspection): the
+done-gate CHECK is asserted un-bypassable by `tc_task_completion.test.ts`
+("does NOT let completion forge a done"), idempotence + reopen by the same
+file, unknown-task refusal + no-token fail-closed by
+`tc7_archive_flow_api.test.ts` #9, and the render escaping (XSS) by
+`tCONSOLE_b1_render.test.ts` #3c2/#9/#10. Restoration verified after each
+mutation; full suite 384/384 across 88 files, `npm run build` clean, twice.
