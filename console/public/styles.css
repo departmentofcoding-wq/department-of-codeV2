@@ -652,3 +652,97 @@ body {
   color: #000;
   border-color: var(--accent-blue);
 }
+
+/* --- Projects tab --- */
+.project-path {
+  word-break: break-all;
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+}
+
+/* ===========================================================================
+   Responsive / mobile — the console is reached from a phone as well as the
+   desktop. Below 768px the single-row header stacks, the nav scrolls
+   horizontally instead of overflowing, wide tables scroll inside their card,
+   and modals go full-width. No layout depends on hover.
+   =========================================================================== */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    position: static; /* free the vertical space a sticky stacked header would eat */
+  }
+
+  .nav {
+    /* Scroll the tab strip sideways rather than wrapping it into a tall block. */
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0.15rem;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav-tab { flex: 0 0 auto; padding: 0.5rem 0.75rem; }
+
+  .controls {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: space-between;
+  }
+  #last-updated { width: 100%; }
+
+  .main-content { padding: 1rem; }
+
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .section-actions { flex-wrap: wrap; }
+  .section-title { font-size: 1.25rem; }
+
+  .card { padding: 1rem; }
+
+  /* Wide data tables scroll within their card (body is overflow-x:hidden). */
+  .card,
+  #workers-container,
+  #flow-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table,
+  .worker-table { min-width: 560px; }
+  .data-table th,
+  .data-table td { padding: 0.6rem 0.65rem; }
+
+  /* Dashboard tiles go single-column so nothing is crushed. */
+  .dashboard-grid { grid-template-columns: 1fr; }
+
+  /* Modals take the full width and can scroll if taller than the viewport. */
+  .modal {
+    width: 94%;
+    max-width: none;
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 1.25rem;
+  }
+  .intake-modal,
+  .modal.asset-modal { max-width: none; }
+
+  /* Toasts span the bottom of the screen instead of a fixed right corner. */
+  .toast-container {
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+  }
+  .toast { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .brand-title { font-size: 1.05rem; }
+  .metric-val { font-size: 2rem; }
+  .btn-sm { padding: 0.3rem 0.6rem; }
+  .task-actions .btn { flex: 1 1 auto; }
+}

@@ -6,6 +6,7 @@ import type {
   JournalEntryDTO,
   WorkerDTO,
   AssetDTO,
+  ProjectDTO,
   ApiErrorResponse,
   NtfySettingsDTO
 } from '../contract.ts';
@@ -20,6 +21,7 @@ export function renderFlowPipeline(snapshot: FlowSnapshotDTO | null): string;
 export function renderFindingsList(findings: FindingDTO[]): string;
 export function renderWorkers(workers: WorkerDTO[]): string;
 export function renderAssetsTable(assets: AssetDTO[]): string;
+export function renderProjectsTable(projects: ProjectDTO[]): string;
 export function renderJournalTimeline(journal: JournalEntryDTO[]): string;
 export function renderNtfySettingsCard(status?: NtfySettingsDTO): string;
 export function renderSettings(settings?: { theme?: string; isPaused?: boolean; hasToken?: boolean; tokenPreview?: string; googleKeys?: any; ntfySettings?: NtfySettingsDTO }): string;

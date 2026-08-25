@@ -7,6 +7,7 @@ import {
   renderFindingsList,
   renderWorkers,
   renderAssetsTable,
+  renderProjectsTable,
   renderJournalTimeline,
   renderSettings,
   renderRelaunchState,
@@ -173,6 +174,17 @@ async function loadAssetsView() {
   }
 }
 
+async function loadProjectsView() {
+  const container = document.getElementById('projects-container');
+  if (!container) return;
+  try {
+    const projects = await apiFetch('/api/projects');
+    container.innerHTML = renderProjectsTable(projects);
+  } catch (e) {
+    // Error handled in apiFetch
+  }
+}
+
 async function loadJournalView() {
   const container = document.getElementById('journal-container');
   try {
@@ -275,6 +287,9 @@ async function refreshActiveView() {
       break;
     case 'assets':
       await loadAssetsView();
+      break;
+    case 'projects':
+      await loadProjectsView();
       break;
     case 'journal':
       await loadJournalView();
@@ -504,6 +519,46 @@ async function saveAssetForm(e) {
   }
 }
 
+// --- Projects ---
+function openProjectModal() {
+  const modal = document.getElementById('project-modal');
+  const nameInput = document.getElementById('project-form-name');
+  const pathInput = document.getElementById('project-form-path');
+  const descInput = document.getElementById('project-form-description');
+  if (nameInput) nameInput.value = '';
+  if (pathInput) pathInput.value = '';
+  if (descInput) descInput.value = '';
+  if (modal) modal.classList.remove('hidden');
+  if (nameInput) nameInput.focus();
+}
+
+function closeProjectModal() {
+  document.getElementById('project-modal')?.classList.add('hidden');
+}
+
+async function saveProjectForm(e) {
+  e.preventDefault();
+  const name = document.getElementById('project-form-name')?.value.trim();
+  const pathToRepo = document.getElementById('project-form-path')?.value.trim();
+  const description = document.getElementById('project-form-description')?.value.trim() || undefined;
+
+  if (!name || !pathToRepo) {
+    showToast(renderErrorToast('Project Name and Folder Location are required.'));
+    return;
+  }
+
+  try {
+    await apiFetch('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({ name, pathToRepo, description })
+    });
+    showToast(`<div class="toast"><span class="toast-icon">📁</span> Project "${name}" registered</div>`);
+    closeProjectModal();
+    await loadProjectsView();
+  } catch (err) {
+    // Error toast handled by apiFetch (e.g. path not found / not a git repo)
+  }
+}
 
 // --- Conversational Intake ---
 function openIntake() {
@@ -704,6 +759,12 @@ function setupEventListeners() {
   document.getElementById('asset-modal-close-btn')?.addEventListener('click', closeAssetModal);
   document.getElementById('asset-modal-cancel-btn')?.addEventListener('click', closeAssetModal);
   document.getElementById('asset-form')?.addEventListener('submit', saveAssetForm);
+
+  // Projects modal & form
+  document.getElementById('new-project-btn')?.addEventListener('click', openProjectModal);
+  document.getElementById('project-modal-close-btn')?.addEventListener('click', closeProjectModal);
+  document.getElementById('project-modal-cancel-btn')?.addEventListener('click', closeProjectModal);
+  document.getElementById('project-form')?.addEventListener('submit', saveProjectForm);
 
   // Action buttons
   document.getElementById('trigger-sweep-btn')?.addEventListener('click', () => {

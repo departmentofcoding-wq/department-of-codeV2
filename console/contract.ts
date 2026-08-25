@@ -352,6 +352,26 @@ export interface DeleteAssetResult {
   id: string;
 }
 
+// --- Projects DTOs (multi-repo: where the department's juniors do their work) ---
+
+/** A registered project = one git repository the bureau can run tasks against. */
+export interface ProjectDTO {
+  id: string;
+  name: string;
+  /** Absolute path on disk to the project's git repository (the "folder"). */
+  path_to_repo: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  /** Folder location on disk — must exist and be a git repository. */
+  pathToRepo: string;
+  description?: string;
+}
+
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
 
 export interface TriggerActionRequest {
@@ -545,6 +565,18 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/settings/ntfy',
     auth: 'token',
     description: 'Save ntfy server URL and topic'
+  },
+  {
+    method: 'GET',
+    path: '/api/projects',
+    auth: 'token',
+    description: 'List registered projects (git repositories the bureau can work in)'
+  },
+  {
+    method: 'POST',
+    path: '/api/projects',
+    auth: 'token',
+    description: 'Register a project by name + folder path (validated on disk as a git repo)'
   }
 ] as const;
 

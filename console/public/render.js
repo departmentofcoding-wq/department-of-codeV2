@@ -540,6 +540,53 @@ export function renderAssetsTable(assets) {
 }
 
 /**
+ * Renders the registered-projects table (multi-repo). Each project is one git
+ * repository the bureau can run tasks against; the folder path is the location
+ * on disk. Read-only content — safe-escaped like every other view.
+ * @param {import('../contract.ts').ProjectDTO[]} projects
+ * @returns {string}
+ */
+export function renderProjectsTable(projects) {
+  if (!projects || projects.length === 0) {
+    return '<div class="card empty-state">No projects registered yet. Add one with a name and a folder path to a git repository.</div>';
+  }
+
+  const rows = projects.map(p => {
+    const safeId = escapeHtml(p.id);
+    const safeName = escapeHtml(p.name);
+    const safePath = escapeHtml(p.path_to_repo);
+    const safeDescription = escapeHtml(p.description || '—');
+    const safeCreated = escapeHtml(p.created_at);
+    return `
+      <tr class="project-row" data-project-id="${safeId}">
+        <td><strong>${safeName}</strong></td>
+        <td><code class="project-path">${safePath}</code></td>
+        <td>${safeDescription}</td>
+        <td class="metric-sub">${safeCreated}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="card table-card full-width">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Folder Location</th>
+            <th>Description</th>
+            <th>Registered</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
  * Renders the journal timeline entries.
  * @param {import('../contract.ts').JournalEntryDTO[]} journal
  * @returns {string}

@@ -17,6 +17,7 @@ import { createSession, appendIntakeMessage, getSession, getSessionWithMessages 
 import { confirmVerify } from '../engine/intake/confirm.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
+import { listProjects, registerProject } from '../engine/projects/index.ts';
 import { applyGoogleRoster } from '../engine/models/seed.ts';
 import { drainSingleJob } from '../runner/main.ts';
 import type { AttributionTuple, BureauJobRow, BureauIntakeMessageRow } from '../engine/contract/types.ts';
@@ -54,8 +55,11 @@ import {
   type GoogleKeyStatusDTO,
   type SaveGoogleKeysRequest,
   type NtfySettingsDTO,
-  type SaveNtfySettingsRequest
+  type SaveNtfySettingsRequest,
+  type ProjectDTO,
+  type CreateProjectRequest
 } from './contract.ts';
+import type { BureauProjectRow } from '../engine/contract/types.ts';
 
 export interface ConsoleServerOptions {
   port?: number;
@@ -197,6 +201,18 @@ function toTaskSummaryDTO(t: BureauTaskRow): TaskSummaryDTO {
     completion_note: t.completion_note ? redactOutput(t.completion_note) : null,
     created_at: t.created_at,
     updated_at: t.updated_at
+  };
+}
+
+/** Map a project row to its redacted DTO. */
+function toProjectDTO(p: BureauProjectRow): ProjectDTO {
+  return {
+    id: p.id,
+    name: redactOutput(p.name),
+    path_to_repo: redactOutput(p.path_to_repo),
+    description: p.description ? redactOutput(p.description) : null,
+    created_at: p.created_at,
+    updated_at: p.updated_at
   };
 }
 
@@ -1249,6 +1265,53 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           enabled: Boolean(topic)
         };
         sendJson(res, 200, dto);
+        return;
+      }
+
+      // --- Projects: list registered projects (git repos the bureau works in) ---
+      if (req.method === 'GET' && pathname === '/api/projects') {
+        const projects = listProjects(db);
+        sendJson(res, 200, projects.map(toProjectDTO));
+        return;
+      }
+
+      // --- Projects: register a project by name + folder path ---
+      if (req.method === 'POST' && pathname === '/api/projects') {
+        let body: CreateProjectRequest;
+        try {
+          body = (await parseJsonBody(req)) as CreateProjectRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const name = body.name?.trim();
+        const pathToRepo = body.pathToRepo?.trim();
+        if (!name || !pathToRepo) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'name' and 'pathToRepo' are required and cannot be blank");
+          return;
+        }
+
+        try {
+          const row = registerProject(db, {
+            name,
+            pathToRepo,
+            description: body.description?.trim() || null,
+            attribution: CONSOLE_HUMAN_ATTR
+          });
+          sendJson(res, 201, toProjectDTO(row));
+        } catch (err: any) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: CONSOLE_HUMAN_ATTR,
+            detail: { action: 'project_register_refused', name, reason: err.message }
+          });
+          sendError(res, 400, 'PROJECT_REFUSED', err.message);
+        }
         return;
       }
 
