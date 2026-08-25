@@ -6,6 +6,8 @@ import { openDbConnection } from '../../engine/db/index.ts';
 import type { BureauDispatchRow, BureauJournalRow, DbConnection } from '../../engine/contract/index.ts';
 import { handleJuniorDispatch } from '../../engine/harness/dispatch-job.ts';
 import { setAntigravityDriverOverride, type AntigravityDriver } from '../../engine/harness/antigravity-seam.ts';
+import { setWorkspaceProvider } from '../../engine/contract/workspace-seam.ts';
+import { FakeWorkspaceProvider } from '../helpers/fake_workspace_provider.ts';
 
 describe('junior.dispatch → Antigravity prompt path', () => {
   let tmpDir: string;
@@ -27,6 +29,7 @@ describe('junior.dispatch → Antigravity prompt path', () => {
 
   afterEach(() => {
     setAntigravityDriverOverride(null);
+    setWorkspaceProvider(null);
     try { db.close(); } catch { /* ignore */ }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -87,6 +90,55 @@ describe('junior.dispatch → Antigravity prompt path', () => {
     expect(work).toBeTruthy();
     expect(work.state).toBe('pending');
     expect(JSON.parse(work.payload).taskId).toBe('task-ag');
+  });
+
+  it('points the junior at the task worktree for a delivery dispatch (chainWorkReview) when a provider is registered', async () => {
+    const provider = new FakeWorkspaceProvider();
+    setWorkspaceProvider(provider);
+    const handle = await provider.prepare(db, 'task-ag'); // the path the junior must be pointed at
+
+    let sawFolder: string | undefined = 'UNSET';
+    setAntigravityDriverOverride({
+      async runCommand(_prompt, opts) {
+        sawFolder = opts?.folder;
+        return { transcript: 'agent: implemented in worktree', launched: false };
+      }
+    });
+
+    const ctx: any = {
+      db,
+      job: { id: 'job-ag', task_id: 'task-ag' },
+      payload: { dispatchId: 'disp-ag', prompt: 'implement the approved plan', chainWorkReview: true, folder: 'C:/some/other/place' },
+      signal: new AbortController().signal
+    };
+    await handleJuniorDispatch(ctx);
+
+    // The junior was pointed at the bureau worktree, NOT the caller's folder.
+    expect(sawFolder).toBe(handle.path);
+    const span = db.get<any>(
+      `SELECT * FROM bureau_journal WHERE kind = 'system' AND detail LIKE '%junior_pointed_at_worktree%'`
+    );
+    expect(span).toBeTruthy();
+    expect(JSON.parse(span.detail).path).toBe(handle.path);
+  });
+
+  it('does NOT redirect a non-delivery dispatch (no chainWorkReview): keeps the caller folder even with a provider', async () => {
+    setWorkspaceProvider(new FakeWorkspaceProvider());
+    let sawFolder: string | undefined = 'UNSET';
+    setAntigravityDriverOverride({
+      async runCommand(_prompt, opts) {
+        sawFolder = opts?.folder;
+        return { transcript: 'agent: did a thing', launched: false };
+      }
+    });
+    const ctx: any = {
+      db,
+      job: { id: 'job-ag', task_id: 'task-ag' },
+      payload: { dispatchId: 'disp-ag', prompt: 'do a thing', folder: 'C:/caller/folder' },
+      signal: new AbortController().signal
+    };
+    await handleJuniorDispatch(ctx);
+    expect(sawFolder).toBe('C:/caller/folder');
   });
 
   it('NO chaining by default: an ordinary dispatch (no chainWorkReview) enqueues no work.cycle', async () => {

@@ -8,6 +8,8 @@ import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
+import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
+import { getBranchTipCommit } from '../worktrees/commit.ts';
 
 /**
  * Work-review cycle — the department flow for the stage AFTER implementation,
@@ -56,7 +58,18 @@ export interface WorkReviewCycleOptions {
 }
 
 export type WorkReviewResult =
-  | { outcome: 'approved'; senior: string; feedback: string; reviewId: string; roundsUsed: number; ceiling: number }
+  | {
+      outcome: 'approved';
+      senior: string;
+      feedback: string;
+      reviewId: string;
+      roundsUsed: number;
+      ceiling: number;
+      /** The `worktree.prepare` job enqueued to carry the task into the done-gate
+       *  (verify → needs-review → operator approval → PR). Undefined only when a
+       *  prepare/verify job for this task was already in flight. */
+      deliveryJobId?: string;
+    }
   | {
       outcome: 'revise';
       senior: string;
@@ -90,7 +103,8 @@ export function buildFixPrompt(
   task: BureauTaskRow,
   feedback: string,
   round: number,
-  ceiling: number
+  ceiling: number,
+  projectInfo?: { name: string; path: string }
 ): string {
   return (
     `A senior reviewed your walkthrough and is requesting changes (revision round ` +
@@ -99,6 +113,7 @@ export function buildFixPrompt(
     'results, and the verification you ran — the senior will re-review it.\n\n' +
     '===== TASK =====\n' +
     `TITLE: ${task.title}\n` +
+    (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
@@ -160,6 +175,18 @@ export async function runWorkReviewCycle(
 
   const ceiling = readWorkCeiling(db);
 
+  let folder = opts.folder;
+  let projectInfo: { name: string; path: string } | undefined;
+  if (task.project_id) {
+    const proj = db.get<{ name: string; path_to_repo: string }>('SELECT name, path_to_repo FROM bureau_projects WHERE id = ?', task.project_id);
+    if (proj) {
+      projectInfo = { name: proj.name, path: proj.path_to_repo };
+      if (!folder) {
+        folder = proj.path_to_repo;
+      }
+    }
+  }
+
   // Resolve the walkthrough the senior will read — caller override first, else
   // the newest captured artifact (walkthrough > reply > transcript).
   let walkthrough = (opts.walkthrough ?? '').trim();
@@ -201,6 +228,8 @@ export async function runWorkReviewCycle(
     taskIntent: task.intent ?? undefined,
     taskSpec: task.spec ?? undefined,
     taskAcceptance: task.acceptance ?? undefined,
+    projectName: projectInfo?.name,
+    projectPath: projectInfo?.path,
     walkthrough,
     model: opts.seniorModel,
     // First work review starts fresh; later rounds reuse the same senior
@@ -249,12 +278,67 @@ export async function runWorkReviewCycle(
   });
 
   if (verdict === 'approved') {
+    // Capture the reviewed commit for delivery. The junior implemented IN the
+    // task's bureau worktree (see dispatch-job's "junior_pointed_at_worktree"), so
+    // commit any pending edits (checkpoint) and record the worktree tip as this
+    // review's `reviewed_commit`. That satisfies pr.create's guard
+    // (`reviewed_commit === branch tip`) so the junior's ACTUAL work is what gets
+    // pushed and merged — not an empty diff. Guarded on a registered provider +
+    // an existing worktree: provider-less unit tests (and any task whose junior
+    // never reached a worktree) simply leave `reviewed_commit` null, and pr.create
+    // safely REFUSES rather than merging an unreviewed tree.
+    const wsProvider = getWorkspaceProviderOverride();
+    if (wsProvider) {
+      try {
+        await wsProvider.getWorkspaceHandle(db, task.id); // throws if no worktree
+        await wsProvider.checkpoint(db, task.id, attribution, 'walkthrough-approved');
+        const tip = await getBranchTipCommit(db, task.id);
+        db.run('UPDATE bureau_work_reviews SET reviewed_commit = ? WHERE id = ?', tip, reviewId);
+        journal(db, {
+          kind: 'system',
+          attribution,
+          taskId: task.id,
+          workUuid: task.work_uuid,
+          jobId: opts.jobId ?? null,
+          detail: { action: 'reviewed_commit_recorded', reviewed_commit: tip, reviewId }
+        });
+      } catch (err: any) {
+        journal(db, {
+          kind: 'system',
+          attribution,
+          taskId: task.id,
+          workUuid: task.work_uuid,
+          jobId: opts.jobId ?? null,
+          detail: { action: 'reviewed_commit_skipped', reason: err?.message ?? String(err), reviewId }
+        });
+      }
+    }
+    // Advance the task into the department done-gate instead of dead-ending in
+    // `claimed`. Enqueue `worktree.prepare`, which registers the bureau worktree
+    // and chains `verify.run` → (verifier exit 0) → `needs-review`, where the
+    // operator's Approve triggers `pr.create` → `pr.merge`. Reuses the existing,
+    // tested chain (the "register worktree, reuse chain" wiring); human approval
+    // stays the gate, so nothing merges to main without a person. Idempotent: skip
+    // if a prepare/verify job for this task is already in flight.
+    const inFlight = db.get<{ n: number }>(
+      `SELECT COUNT(*) n FROM bureau_jobs
+       WHERE task_id = ? AND kind IN ('worktree.prepare','verify.run') AND state IN ('pending','running')`,
+      task.id
+    );
+    let deliveryJobId: string | undefined;
+    if (!inFlight || inFlight.n === 0) {
+      deliveryJobId = enqueueJob(db, {
+        kind: 'worktree.prepare',
+        task_id: task.id,
+        payload: { taskId: task.id }
+      }).id;
+    }
     notifyOperator(
       opts.jobId ?? 'work.cycle',
-      `Task ${task.id} walkthrough APPROVED by ${seniorId} after ${roundsUsed} round(s) — ready for ` +
-        `verify + operator approval (the done-gate: verifier exit 0 + human approval)`
+      `Task ${task.id} walkthrough APPROVED by ${seniorId} after ${roundsUsed} round(s) — verifying now, ` +
+        `then it lands in needs-review for operator approval (the done-gate: verifier exit 0 + human approval)`
     );
-    return { outcome: 'approved', senior: seniorId, feedback: review.feedback, reviewId, roundsUsed, ceiling };
+    return { outcome: 'approved', senior: seniorId, feedback: review.feedback, reviewId, roundsUsed, ceiling, deliveryJobId };
   }
 
   // REVISE. Loop the fixes back to the junior, unless the ceiling is reached.
@@ -285,12 +369,12 @@ export async function runWorkReviewCycle(
     };
   }
 
-  const fixPrompt = buildFixPrompt(task, review.feedback, roundsUsed + 1, ceiling);
+  const fixPrompt = buildFixPrompt(task, review.feedback, roundsUsed + 1, ceiling, projectInfo);
   const fixJob = enqueueFixDispatch(db, task, {
     prompt: fixPrompt,
     junior: (opts.junior || 'A').toUpperCase(),
     juniorModel: opts.juniorModel ?? UNSPECIFIED_MODEL,
-    folder: opts.folder,
+    folder: folder,
     seniorId: opts.seniorId,
     seniorModel: opts.seniorModel
   });

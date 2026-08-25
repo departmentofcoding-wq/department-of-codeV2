@@ -35,6 +35,9 @@ export interface SeniorReviewInput {
   taskIntent?: string;
   /** The task's acceptance criteria, verbatim. */
   taskAcceptance?: string;
+  /** Optional project context. */
+  projectName?: string;
+  projectPath?: string;
   /** The junior's implementation plan text (required for kind='plan'). */
   plan?: string;
   /** The junior's walkthrough text (required for kind='walkthrough'). */
@@ -88,6 +91,7 @@ export function buildReviewPrompt(input: SeniorReviewInput): { system: string; u
   const user =
     `===== TASK (verbatim) =====\n` +
     `TITLE: ${input.taskTitle}\n` +
+    (input.projectName ? `PROJECT: ${input.projectName} (${input.projectPath ?? ''})\n` : '') +
     (input.taskIntent ? `INTENT: ${input.taskIntent}\n` : '') +
     (input.taskSpec ? `SPEC: ${input.taskSpec}\n` : '') +
     (input.taskAcceptance ? `ACCEPTANCE: ${input.taskAcceptance}\n` : '') +
@@ -112,6 +116,45 @@ export function parseVerdict(raw: string): { verdict: Verdict; feedback: string 
     return { verdict: /APPROVE/i.test(marker[1]) ? 'approve' : 'revise', feedback };
   }
   return { verdict: 'revise', feedback };
+}
+
+/**
+ * Distinctive visible chrome of the CDP senior's EMPTY home screen — the
+ * permission-mode controls that exist only before a conversation is started.
+ * A real review reply never contains these standalone labels. Used to tell a
+ * genuine (if verdict-less) review apart from a capture of the welcome screen.
+ */
+export const SENIOR_HOME_SCREEN_MARKERS: RegExp[] = [
+  /\bAsk before changes\b/i,
+  /\bEdit automatically\b/i,
+  /\bPlan mode\b/i,
+  /\bAdd context\b/i,
+  /\bFull access\b/i
+];
+
+/**
+ * Detect the failure mode that manufactured phantom REVISE loops: the harness
+ * "completed" a review but actually captured the senior app's empty home screen
+ * (permission toggles + template cards), never a review. `parseVerdict` then
+ * fail-closes to REVISE with that chrome as "feedback", which the plan cycle
+ * feeds back to the junior — re-dispatching the SAME task as if the senior had
+ * asked for changes. Rather than record that, the caller throws so the round
+ * FAILS loudly and surfaces to the operator.
+ *
+ * Conservative on purpose: only trips when MULTIPLE home-screen markers are
+ * present AND there is no explicit VERDICT line, so a genuine review that merely
+ * mentions "plan mode" once is never rejected. Returns a reason string when the
+ * capture is not a review, else null. Pure — unit-tested without a live senior.
+ */
+export function detectUncapturedReview(full: string): string | null {
+  const text = (full || '').trim();
+  if (!text) return 'empty transcript (no review text was captured)';
+  if (/VERDICT:/i.test(text)) return null; // a real verdict line — trust it
+  const hits = SENIOR_HOME_SCREEN_MARKERS.filter(re => re.test(text)).length;
+  if (hits >= 2) {
+    return `captured the senior app's empty home screen (${hits} chrome markers, no VERDICT line) — the review was never submitted or never generated`;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +463,19 @@ export class ZCodeSession {
     })()`));
   }
 
-  /** Type the review into ZCode's chat input and submit (Enter, then Send button fallback). */
+  /**
+   * Type the review into ZCode's chat input and submit — VERIFIED at both ends,
+   * because a silent no-op here was the root of the phantom-REVISE loop: if the
+   * prompt never landed in a real input, or was typed but never submitted, ZCode
+   * stayed on its home screen and the harness "completed" against the welcome
+   * chrome, which `parseVerdict` fail-closed into a spurious REVISE.
+   *
+   * We tag the exact element we focus (`data-bureau-input`) so the insertion and
+   * submission checks read back the SAME box — not some other editable on the
+   * page. Insertion that didn't land, or a prompt still sitting unsent after the
+   * Enter + Send-button fallback, is a HARD failure (recalibrate), never a
+   * best-effort "probably fine".
+   */
   async sendPrompt(prompt: string): Promise<void> {
     await this.pressKey('Escape', 'Escape', 27);
     const matchers = JSON.stringify(ZCODE_INPUT_MATCHERS);
@@ -431,24 +486,61 @@ export class ZCodeSession {
         const a = ((e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('placeholder')||'')).toLowerCase();
         return want.some(w => a.includes(w)) ? 1 : 0;
       };
+      // Prefer a scored input; fall back to the last editable only if nothing
+      // scores. Tag it so the insert/submit checks below re-find THIS element.
       const el = cands.find(score) || cands[cands.length - 1];
-      if (!el) return false; el.focus(); return true;
+      if (!el) return false;
+      el.focus();
+      el.setAttribute('data-bureau-input', '1');
+      return true;
     })()`);
     if (!focused) throw new HarnessError('ZCode chat input not found (needs selector calibration)');
     await this.pressKey('a', 'KeyA', 65, true);
     await this.pressKey('Delete', 'Delete', 46);
     await this.send('Input.insertText', { text: prompt });
     await new Promise(r => setTimeout(r, 300));
+    // Verify the text actually landed in the box we focused. If it didn't, we
+    // targeted the wrong element (or focus was stolen) — fail loudly rather than
+    // press Enter on an empty home-screen box.
+    const inserted = await this.evaluate(`(() => {
+      const el = document.querySelector('[data-bureau-input="1"]');
+      return !!el && (el.innerText || el.value || '').trim().length > 0;
+    })()`);
+    if (!inserted) {
+      await this.evaluate(`(() => { const el = document.querySelector('[data-bureau-input="1"]'); if (el) el.removeAttribute('data-bureau-input'); })()`);
+      throw new HarnessError(
+        'ZCode: the review prompt did not land in the chat input (wrong selector or focus lost). ' +
+          'Recalibrate ZCODE_INPUT_MATCHERS in engine/harness/senior.ts.'
+      );
+    }
     await this.pressKey('Enter', 'Enter', 13);
     await new Promise(r => setTimeout(r, 400));
+    // Submit: ZCode may not submit on Enter — if our text is still in the box,
+    // click the Send/Submit control.
     await this.evaluate(`(() => {
+      const el = document.querySelector('[data-bureau-input="1"]');
+      const still = el && (el.innerText || el.value || '').trim().length > 0;
+      if (!still) return 'sent-enter';
       const send = [...document.querySelectorAll('button,[role=button]')]
         .find(b => /send|submit/i.test((b.getAttribute('aria-label')||b.innerText||'')));
-      const inputs = [...document.querySelectorAll('[contenteditable="true"],textarea')];
-      const still = inputs.some(e => (e.innerText||e.value||'').trim().length > 0);
-      if (still && send) { send.click(); return 'sent-button'; }
-      return 'sent-enter';
+      if (send) { send.click(); return 'sent-button'; }
+      return 'unsent';
     })()`);
+    await new Promise(r => setTimeout(r, 300));
+    // Confirm the box actually cleared (submitted). An unsent prompt must fail —
+    // it must never masquerade as a completed review against the home screen.
+    const submitted = await this.evaluate(`(() => {
+      const el = document.querySelector('[data-bureau-input="1"]');
+      const cleared = !el || (el.innerText || el.value || '').trim().length === 0;
+      if (el) el.removeAttribute('data-bureau-input');
+      return cleared;
+    })()`);
+    if (!submitted) {
+      throw new HarnessError(
+        'ZCode: the review prompt was typed but never submitted (no working Send/Submit control). ' +
+          'Recalibrate the Send selector in engine/harness/senior.ts.'
+      );
+    }
   }
 
   /**
@@ -522,7 +614,16 @@ export class ZCodeSession {
       const statusWorking = [...document.querySelectorAll('span,div,p,button,[role=status],[aria-live]')]
         .some(e => e.children.length === 0 && progressRe.test((e.innerText||'').trim()));
       const working = has(/^(stop|cancel)$/i) || statusWorking;
-      const canSend = has(/^send$/i);
+      // The empty home screen ALSO has a "Send" button, so "Send is present" alone
+      // used to read as idle-complete — the harness then "finished" against the
+      // welcome chrome and produced a phantom REVISE. Suppress canSend while the
+      // distinctive home-screen chrome (permission-mode controls, present only
+      // before a conversation exists) is on screen, so the waiter never calls the
+      // home screen "done": it stays inactive → stalls → fails loudly instead.
+      const homeMarkers = [${SENIOR_HOME_SCREEN_MARKERS.map(re => JSON.stringify(re.source)).join(', ')}];
+      const bodyText = document.body.innerText || '';
+      const onHomeScreen = homeMarkers.filter(s => new RegExp(s, 'i').test(bodyText)).length >= 2;
+      const canSend = has(/^send$/i) && !onHomeScreen;
       return { working, canSend, len: document.body.innerText.length };
     })()`)) as AgentActivity;
   }
@@ -601,8 +702,24 @@ export class ZCodeSenior implements SeniorDriver {
       // Wide window: the VERDICT line is the FIRST line of the reply, so a small
       // tail read would drop it on any review longer than the window.
       const full = await session.readTranscript(400);
-      // Isolate the verdict from THIS review, not stale conversation history.
+      // Isolate THIS round's reply FIRST, then guard/parse on it. Critical for
+      // continuation rounds (freshConversation:false, rounds 2+ — exactly where the
+      // phantom-REVISE incident happened): the 400-line tail can still contain an
+      // EARLIER round's genuine `VERDICT:` line, so guarding on the full transcript
+      // would see that stale marker, bypass the check, and let the CURRENT round's
+      // home-screen chrome fail-close to a spurious REVISE — the very bug this
+      // guards against. `raw` falls back to `full` when the prompt boundary isn't
+      // found, so the single-round case is unchanged.
       const raw = sliceAfterPrompt(full, prompt) || full;
+      // Guard against the phantom-REVISE loop: if we captured the app's empty
+      // home screen instead of a review, FAIL — never let `parseVerdict` turn that
+      // chrome into a spurious REVISE that re-dispatches the whole task.
+      const uncaptured = detectUncapturedReview(raw);
+      if (uncaptured) {
+        throw new HarnessError(
+          `ZCode (zai) senior review was not captured: ${uncaptured}. Refusing to record a phantom verdict.`
+        );
+      }
       const { verdict, feedback } = parseVerdict(raw);
       return { senior: this.cfg.id, verdict, feedback, raw, model };
     } finally {

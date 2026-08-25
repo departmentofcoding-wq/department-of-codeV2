@@ -2,6 +2,7 @@ import type { AttributionTuple, BureauIntakeMessageRow, BureauIntakeSessionRow, 
 
 export interface CreateSessionInput {
   id?: string;
+  projectId?: string | null;
   idempotencyKey?: string | null;
   title?: string | null;
   intent?: string | null;
@@ -15,21 +16,23 @@ export function createSession(db: DbConnection, input: CreateSessionInput): Bure
   const id = input.id ?? crypto.randomUUID();
   const now = new Date().toISOString();
   const idempotencyKey = input.idempotencyKey ?? null;
+  const projectId = input.projectId ?? null;
 
   try {
     const row = db.get<BureauIntakeSessionRow>(`
       INSERT INTO bureau_intake_sessions (
-        id, state, title, intent, spec, acceptance, verify_cmd,
+        id, project_id, state, title, intent, spec, acceptance, verify_cmd,
         verify_confirmed_at, verify_confirmed_by, idempotency_key, model_calls,
         created_at, updated_at, actor_role, provider, model, account
       ) VALUES (
-        ?, 'open', ?, ?, ?, ?, ?,
+        ?, ?, 'open', ?, ?, ?, ?, ?,
         NULL, NULL, ?, 0,
         ?, ?, ?, ?, ?, ?
       )
       RETURNING *
     `,
       id,
+      projectId,
       input.title ?? null,
       input.intent ?? null,
       input.spec ?? null,
@@ -135,6 +138,8 @@ export function appendIntakeMessage(db: DbConnection, sessionId: string, input: 
 }
 
 export interface UpdateDraftInput {
+  projectId?: string | null;
+  project_id?: string | null;
   title?: string | null;
   intent?: string | null;
   spec?: string | null;
@@ -157,6 +162,8 @@ export function updateSessionDraft(
     }
 
     const now = new Date().toISOString();
+    const explicitProjectId = draft.projectId !== undefined ? draft.projectId : draft.project_id;
+    const newProjectId = explicitProjectId !== undefined ? explicitProjectId : session.project_id;
     const newTitle = draft.title !== undefined ? draft.title : session.title;
     const newIntent = draft.intent !== undefined ? draft.intent : session.intent;
     const newSpec = draft.spec !== undefined ? draft.spec : session.spec;
@@ -169,11 +176,12 @@ export function updateSessionDraft(
 
     const row = db.get<BureauIntakeSessionRow>(`
       UPDATE bureau_intake_sessions
-      SET title = ?, intent = ?, spec = ?, acceptance = ?, verify_cmd = ?,
+      SET project_id = ?, title = ?, intent = ?, spec = ?, acceptance = ?, verify_cmd = ?,
           verify_confirmed_at = ?, verify_confirmed_by = ?, updated_at = ?
       WHERE id = ? AND state = 'open'
       RETURNING *
     `,
+      newProjectId,
       newTitle,
       newIntent,
       newSpec,

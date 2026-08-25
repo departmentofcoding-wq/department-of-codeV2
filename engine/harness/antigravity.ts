@@ -572,7 +572,12 @@ export class AntigravitySession {
     })()`));
   }
 
-  /** Focus the agent chat input, type the command, and submit it. */
+  /** Focus the agent chat input, type the command, and submit it — VERIFIED at
+   *  both ends. A prompt that never lands in a real input, or is typed but never
+   *  submitted, must fail loudly here: proceeding would wait against an unchanged
+   *  screen and capture stale/empty content as if it were the agent's reply. We
+   *  tag the focused element (`data-bureau-input`) so the insert/submit checks
+   *  read back the SAME box, not some other editable on the page. */
   async sendPrompt(prompt: string): Promise<void> {
     // Dismiss any stray open menu (e.g. the model picker) so it can't swallow
     // focus or keystrokes, then land focus on the chat input.
@@ -580,7 +585,7 @@ export class AntigravitySession {
     const focused = await this.evaluate(`(() => {
       const el = [...document.querySelectorAll('[contenteditable="true"],textarea')]
         .find(e => (e.getAttribute('aria-label')||e.getAttribute('placeholder')) === ${JSON.stringify(ANTIGRAVITY_INPUT_LABEL)});
-      if (!el) return false; el.focus(); return true;
+      if (!el) return false; el.focus(); el.setAttribute('data-bureau-input', '1'); return true;
     })()`);
     if (!focused) throw new HarnessError(`Chat input ('${ANTIGRAVITY_INPUT_LABEL}') not found`);
     // Clear any stale draft with real key events (raw innerText='' is ignored by
@@ -589,14 +594,24 @@ export class AntigravitySession {
     await this.pressKey('Delete', 'Delete', 46);
     await this.send('Input.insertText', { text: prompt });
     await new Promise(r => setTimeout(r, 300));
+    // Verify the text actually landed in the box we focused before pressing Enter.
+    const inserted = await this.evaluate(`(() => {
+      const el = document.querySelector('[data-bureau-input="1"]');
+      return !!el && (el.innerText||el.value||'').trim().length > 0;
+    })()`);
+    if (!inserted) {
+      await this.evaluate(`(() => { const el = document.querySelector('[data-bureau-input="1"]'); if (el) el.removeAttribute('data-bureau-input'); })()`);
+      throw new HarnessError(
+        `The prompt did not land in the chat input ('${ANTIGRAVITY_INPUT_LABEL}') — focus was lost or the selector is stale.`
+      );
+    }
     await this.pressKey('Enter', 'Enter', 13);
     await new Promise(r => setTimeout(r, 400));
     // Antigravity 2.0 does not submit on Enter — it has an explicit "Send
     // message" control. If the input still holds our text, click Send. (The IDE
     // submits on Enter, so this is a no-op there because the box is empty.)
     await this.evaluate(`(() => {
-      const input = [...document.querySelectorAll('[contenteditable="true"],textarea')]
-        .find(e => (e.getAttribute('aria-label')||e.getAttribute('placeholder')) === ${JSON.stringify(ANTIGRAVITY_INPUT_LABEL)});
+      const input = document.querySelector('[data-bureau-input="1"]');
       const still = input && (input.innerText||input.value||'').trim().length > 0;
       if (!still) return 'sent-by-enter';
       const send = [...document.querySelectorAll('button,[role=button]')]
@@ -604,6 +619,20 @@ export class AntigravitySession {
       if (send) { send.click(); return 'sent-by-button'; }
       return 'unsent';
     })()`);
+    await new Promise(r => setTimeout(r, 300));
+    // Confirm the box cleared (submitted). An unsent prompt is a hard failure —
+    // never wait against a still-full input as if the agent were replying.
+    const submitted = await this.evaluate(`(() => {
+      const el = document.querySelector('[data-bureau-input="1"]');
+      const cleared = !el || (el.innerText||el.value||'').trim().length === 0;
+      if (el) el.removeAttribute('data-bureau-input');
+      return cleared;
+    })()`);
+    if (!submitted) {
+      throw new HarnessError(
+        `The prompt was typed but never submitted (Enter did not send and no 'Send message' control was found).`
+      );
+    }
   }
 
   /**

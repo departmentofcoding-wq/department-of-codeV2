@@ -5,6 +5,8 @@ import path from 'node:path';
 import {
   buildReviewPrompt,
   parseVerdict,
+  detectUncapturedReview,
+  SENIOR_HOME_SCREEN_MARKERS,
   resolveSenior,
   findSeniorBinary,
   assignSenior,
@@ -14,6 +16,7 @@ import {
 } from '../../engine/harness/senior.ts';
 import { getSeniorDriver, setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
 import { writeJuniorArtifacts, readLatestArtifacts } from '../../engine/harness/junior-artifacts.ts';
+import { sliceAfterPrompt } from '../../engine/harness/antigravity.ts';
 
 describe('Senior harness — registry', () => {
   it('resolves both seniors; claude is a CLI, zai is a CDP GUI', () => {
@@ -140,6 +143,82 @@ describe('Senior harness — verdict parsing (genuinely fail-closed)', () => {
   it('defaults to revise when ambiguous or empty (never auto-approves garbage)', () => {
     expect(parseVerdict('').verdict).toBe('revise');
     expect(parseVerdict('hmm, I am not sure about this').verdict).toBe('revise');
+  });
+});
+
+describe('Senior harness — uncaptured-review detection (kills the phantom REVISE loop)', () => {
+  // The ZCode/GLM empty home screen, verbatim-ish from a live capture: permission
+  // toggles + model picker + template suggestion cards. This is exactly what the
+  // harness scraped and fail-closed into a spurious REVISE that re-dispatched the
+  // whole task to the junior AND the senior a second time.
+  const HOME_SCREEN = [
+    'Add context',
+    'Full access',
+    'Ask before changes Ask before file changes.',
+    'Edit automatically Edit files automatically.',
+    'Plan mode Plan before editing.',
+    'Full access Run with fewer confirmations.',
+    'GLM-5.3',
+    'High',
+    'Send',
+    'Summarize the events of the week every Friday.',
+    'CI Failures & Flaky Test Report'
+  ].join('\n');
+
+  it('flags a capture of the empty home screen (multiple chrome markers, no VERDICT)', () => {
+    const reason = detectUncapturedReview(HOME_SCREEN);
+    expect(reason).toBeTruthy();
+    expect(reason).toMatch(/home screen/i);
+  });
+
+  it('flags an empty transcript', () => {
+    expect(detectUncapturedReview('')).toBeTruthy();
+    expect(detectUncapturedReview('   \n  ')).toBeTruthy();
+  });
+
+  it('PASSES a genuine review (has a VERDICT line) even if it happens to mention "plan mode"', () => {
+    const review =
+      'VERDICT: REVISE\nThe plan is missing tests. Also consider whether plan mode is appropriate here.';
+    expect(detectUncapturedReview(review)).toBeNull();
+  });
+
+  it('PASSES a genuine APPROVE review', () => {
+    expect(detectUncapturedReview('VERDICT: APPROVE\nScope is correct; tests enumerated.')).toBeNull();
+  });
+
+  it('does NOT trip on a single incidental marker with no VERDICT (conservative)', () => {
+    // One marker alone (e.g. a review that says "add context to the error") must
+    // not be mistaken for the home screen — the guard requires 2+.
+    expect(detectUncapturedReview('The junior should add context to the log lines before merging.')).toBeNull();
+  });
+
+  it('the home-screen markers are a non-empty set of anchored word matchers', () => {
+    expect(SENIOR_HOME_SCREEN_MARKERS.length).toBeGreaterThanOrEqual(3);
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Edit automatically'))).toBe(true);
+  });
+
+  // Regression: a CONTINUATION round (rounds 2+) — where the phantom-REVISE incident
+  // actually happened — can have a prior round's real `VERDICT:` still in the tail
+  // window. The guard must judge the CURRENT round (sliced after the prompt), not the
+  // full transcript, or the stale marker bypasses it and the current round's home
+  // screen fail-closes to a spurious REVISE. Mirrors ZCodeSenior.review's ordering.
+  it('slice-then-guard catches current-round home screen despite a stale VERDICT above it', () => {
+    const prompt = 'Review the walkthrough against the task above. Start with the VERDICT line.';
+    const full = [
+      'VERDICT: APPROVE',                 // an EARLIER round still in the tail window
+      'The round-1 walkthrough looked fine.',
+      prompt,                             // the current round's prompt boundary
+      'Add context',                      // ...but the current round captured the
+      'Edit automatically',               // empty home screen, not a review
+      'Plan mode',
+      'GLM-5.3'
+    ].join('\n');
+
+    // The OLD ordering (guard on the full transcript) would be fooled by the stale marker:
+    expect(detectUncapturedReview(full)).toBeNull();
+    // The FIXED ordering (slice to this round first, then guard) catches it:
+    const raw = sliceAfterPrompt(full, prompt) || full;
+    expect(detectUncapturedReview(raw)).toBeTruthy();
   });
 });
 

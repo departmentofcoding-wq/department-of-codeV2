@@ -65,9 +65,24 @@ export function parseMessageContent(msg: BureauIntakeMessageRow): LlmMessage | n
   return null;
 }
 
-export function buildLlmHistory(messages: BureauIntakeMessageRow[]): LlmMessage[] {
+import { listProjects } from '../projects/index.ts';
+
+export function buildLlmHistory(messages: BureauIntakeMessageRow[], db?: DbConnection): LlmMessage[] {
+  let systemPrompt = TASK_INTAKE_OFFICER_SYSTEM_PROMPT;
+  if (db) {
+    try {
+      const projects = listProjects(db);
+      if (projects.length > 0) {
+        const projectSummary = projects.map(p => `- ${p.name} (ID: ${p.id}, path: ${p.path_to_repo}): ${p.description ?? 'No description'}`).join('\n');
+        systemPrompt += `\n\nRegistered Projects:\n${projectSummary}\n`;
+      }
+    } catch {
+      // Ignore if table not present in early test harness
+    }
+  }
+
   const history: LlmMessage[] = [
-    { role: 'system', content: TASK_INTAKE_OFFICER_SYSTEM_PROMPT }
+    { role: 'system', content: systemPrompt }
   ];
 
   for (const msg of messages) {
@@ -192,7 +207,7 @@ export async function runOfficerTurn(
       return { action: 'gap_reported', question: gapQuestion, gaps };
     }
 
-    const llmHistory = buildLlmHistory(messages);
+    const llmHistory = buildLlmHistory(messages, db);
 
     // Call LLM (strictly outside database transaction)
     const response = await callModel(

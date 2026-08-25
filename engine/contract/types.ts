@@ -7,9 +7,26 @@ export interface AttributionTuple {
   account: string | null;
 }
 
+export interface BureauProjectRow {
+  id: string;
+  name: string;
+  path_to_repo: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RegisterProjectInput {
+  name: string;
+  pathToRepo: string;
+  description?: string | null;
+  attribution: AttributionTuple;
+}
+
 export interface BureauTaskRow {
   id: string;
   title: string;
+  project_id: string | null;
   intent: string | null;
   spec: string | null;
   acceptance: string | null;
@@ -164,6 +181,7 @@ export interface BureauDispatchRow {
 
 export interface BureauIntakeSessionRow {
   id: string;
+  project_id: string | null;
   state: IntakeSessionState;
   title: string | null;
   intent: string | null;

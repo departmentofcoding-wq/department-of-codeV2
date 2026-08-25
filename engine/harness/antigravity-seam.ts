@@ -47,6 +47,13 @@ export interface AntigravityRunOptions {
   model?: string;
   /** Folder/project to select in the GUI before sending the prompt. */
   folder?: string;
+  /** Require that `folder` was actually selected. `selectFolder` only clicks an
+   *  ALREADY-OPEN project entry — it cannot OPEN a new path — so a fresh worktree
+   *  the IDE has never opened will NOT be selected (verified live: a brand-new
+   *  `.bureau-worktrees/<id>` matches no sidebar control). For delivery dispatches
+   *  the junior MUST land in the worktree, so pass this to make a miss a hard
+   *  failure instead of silently working in whatever folder is currently open. */
+  requireFolder?: boolean;
   /** Start a fresh conversation first so a prior task can't bleed in. Default
    *  true; enforced strictly — if the fresh-conversation control can't be found
    *  we fail rather than risk reviewing stale context. */
@@ -113,7 +120,21 @@ class RealAntigravityDriver implements AntigravityDriver {
         }
         await new Promise(r => setTimeout(r, 800));
       }
-      if (opts.folder) folderSelected = await session.selectFolder(opts.folder);
+      if (opts.folder) {
+        folderSelected = await session.selectFolder(opts.folder);
+        // `selectFolder` clicks an already-open project; it cannot OPEN a new path.
+        // When the caller REQUIRES the folder (a delivery dispatch that must commit
+        // in the task's worktree), a miss is a hard failure — never silently work
+        // in the wrong, currently-open workspace and let that masquerade as the
+        // task's output.
+        if (opts.requireFolder && !folderSelected) {
+          throw new HarnessError(
+            `${cfg.label}: required folder '${opts.folder}' is not an open project in the IDE, and ` +
+              `selectFolder cannot open a new path. Open that folder (the task's worktree) in the IDE ` +
+              `first, or launch the junior on it — refusing to run in the wrong workspace.`
+          );
+        }
+      }
       if (opts.model) model = await session.selectModel(opts.model);
 
       await session.sendPrompt(prompt);

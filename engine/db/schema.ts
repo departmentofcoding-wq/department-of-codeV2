@@ -2,9 +2,19 @@ import type { DatabaseSync } from 'node:sqlite';
 
 export function applySchema(db: DatabaseSync): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS bureau_projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      path_to_repo TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bureau_tasks (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
+      project_id TEXT REFERENCES bureau_projects(id),
       intent TEXT, spec TEXT, acceptance TEXT,
       verify_cmd TEXT, setup_cmd TEXT,
       state TEXT NOT NULL DEFAULT 'intake'
@@ -172,6 +182,7 @@ export function applySchema(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS bureau_intake_sessions (
       id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES bureau_projects(id),
       state TEXT NOT NULL DEFAULT 'open'
         CHECK (state IN ('open','filed','abandoned')),
       title TEXT, intent TEXT, spec TEXT, acceptance TEXT,
@@ -309,6 +320,7 @@ export function applyAddedColumns(
  * constant DEFAULT (SQLite refuses otherwise).
  */
 const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> = [
+  { table: 'bureau_tasks', name: 'project_id', definition: 'TEXT REFERENCES bureau_projects(id)' },
   { table: 'bureau_tasks', name: 'intake_session_id', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   // Archive is orthogonal to the state machine: archiving records that the
@@ -327,6 +339,7 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_tasks', name: 'completed_by', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'completion_commit', definition: 'TEXT' },
   { table: 'bureau_tasks', name: 'completion_note', definition: 'TEXT' },
+  { table: 'bureau_intake_sessions', name: 'project_id', definition: 'TEXT REFERENCES bureau_projects(id)' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
@@ -356,6 +369,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
         CREATE TABLE bureau_tasks_new (
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
+          project_id TEXT REFERENCES bureau_projects(id),
           intent TEXT, spec TEXT, acceptance TEXT,
           verify_cmd TEXT, setup_cmd TEXT,
           state TEXT NOT NULL DEFAULT 'intake'
@@ -382,7 +396,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
         );
 
         INSERT INTO bureau_tasks_new (
-          id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+          id, title, project_id, intent, spec, acceptance, verify_cmd, setup_cmd, state,
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,
@@ -391,7 +405,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           created_at, updated_at
         )
         SELECT
-          id, title, intent, spec, acceptance, verify_cmd, setup_cmd, state,
+          id, title, project_id, intent, spec, acceptance, verify_cmd, setup_cmd, state,
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,

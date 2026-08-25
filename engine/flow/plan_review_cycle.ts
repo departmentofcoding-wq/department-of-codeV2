@@ -118,7 +118,11 @@ interface CycleCarry {
  * deterministic rubric and the senior judge against a standard the junior was
  * actually told about. A prior round's senior feedback is included verbatim.
  */
-export function buildJuniorPlanPrompt(task: BureauTaskRow, priorFeedback?: string): string {
+export function buildJuniorPlanPrompt(
+  task: BureauTaskRow,
+  priorFeedback?: string,
+  projectInfo?: { name: string; path: string }
+): string {
   return (
     'Here is a task for you to plan. Do NOT write any code yet — a senior will ' +
     'review your implementation plan first.\n\n' +
@@ -132,6 +136,7 @@ export function buildJuniorPlanPrompt(task: BureauTaskRow, priorFeedback?: strin
       : '') +
     '===== TASK =====\n' +
     `TITLE: ${task.title}\n` +
+    (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '')
@@ -164,7 +169,8 @@ export interface ImplementationBasis {
 export function buildImplementationPrompt(
   task: BureauTaskRow,
   planText: string,
-  basis: ImplementationBasis = { approved: true }
+  basis: ImplementationBasis = { approved: true },
+  projectInfo?: { name: string; path: string }
 ): string {
   const header = basis.approved
     ? 'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
@@ -185,6 +191,7 @@ export function buildImplementationPrompt(
     'test results, and the verification you ran.\n\n' +
     '===== TASK =====\n' +
     `TITLE: ${task.title}\n` +
+    (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
@@ -251,6 +258,19 @@ export async function runPlanReviewCycle(
 
   const nowIso = new Date().toISOString();
 
+  let folder = opts.folder;
+  let projectInfo: { name: string; path: string } | undefined;
+  if (task.project_id) {
+    const proj = db.get<{ name: string; path_to_repo: string }>('SELECT name, path_to_repo FROM bureau_projects WHERE id = ?', task.project_id);
+    if (proj) {
+      projectInfo = { name: proj.name, path: proj.path_to_repo };
+      if (!folder) {
+        folder = proj.path_to_repo;
+      }
+    }
+  }
+  const effectiveOpts: PlanCycleOptions = { ...opts, folder };
+
   // ---- 1. Junior AUTHORS the plan -----------------------------------------
   const juniorId = (opts.junior || 'A').toUpperCase();
   const juniorAttribution: AttributionTuple = {
@@ -261,11 +281,11 @@ export async function runPlanReviewCycle(
   };
 
   const ag = getAntigravityDriver();
-  const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback);
+  const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback, projectInfo);
   const jr = await ag.runCommand(juniorPrompt, {
     junior: juniorId,
     model: opts.juniorModel,
-    folder: opts.folder,
+    folder: effectiveOpts.folder,
     stallMs: opts.juniorStallMs ?? 120000,
     // Round 1 must start fresh (no other task's context). A REVISE round
     // (priorFeedback present) is the SAME task continuing: stay in the junior's
@@ -331,7 +351,7 @@ export async function runPlanReviewCycle(
       juniorProvider: juniorAttribution.provider,
       juniorModel: juniorAttribution.model,
       ceiling,
-      carry: opts,
+      carry: effectiveOpts,
       jobId: opts.jobId
     });
   }
@@ -345,6 +365,8 @@ export async function runPlanReviewCycle(
     taskIntent: task.intent ?? undefined,
     taskSpec: task.spec ?? undefined,
     taskAcceptance: task.acceptance ?? undefined,
+    projectName: projectInfo?.name,
+    projectPath: projectInfo?.path,
     plan: planText,
     model: opts.seniorModel,
     // Round 1 (no prior feedback) starts a fresh senior conversation; a REVISE
@@ -365,7 +387,7 @@ export async function runPlanReviewCycle(
       juniorProvider: juniorAttribution.provider,
       juniorModel: juniorAttribution.model,
       ceiling,
-      carry: opts
+      carry: effectiveOpts
     });
   }
 
@@ -387,7 +409,7 @@ export async function runPlanReviewCycle(
     juniorProvider: juniorAttribution.provider,
     juniorModel: juniorAttribution.model,
     ceiling,
-    carry: opts,
+    carry: effectiveOpts,
     jobId: opts.jobId
   });
 }

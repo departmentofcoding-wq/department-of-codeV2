@@ -46,6 +46,7 @@ export const SPAN_KINDS = [
   'human',
   'system',
   'task-filed',
+  'project-registered',
   'dispatch',
   'observation',
   'review'

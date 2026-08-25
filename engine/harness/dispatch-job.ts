@@ -8,6 +8,7 @@ import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 import { getAntigravityDriver } from './antigravity-seam.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
+import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -95,11 +96,53 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       // Antigravity junior path: send a natural-language command to the live
       // agent via CDP and record its transcript as an attributed observation.
       const ag = getAntigravityDriver();
+
+      // Point the junior at the task's BUREAU WORKTREE so its edits/commits land
+      // on the delivery branch (`bureau-wt-<taskId>`) that pr.create pushes and
+      // pr.merge merges — instead of an unrelated workspace the department can't
+      // deliver from. Only for delivery-bound dispatches (implementation/fix runs
+      // chain a work review) and only when a workspace provider is registered (the
+      // live runner); plan-only work and provider-less tests keep the caller's
+      // folder. Idempotent with the approve-path worktree.prepare (prepare adopts
+      // an existing worktree). A prepare failure falls back to the caller's folder
+      // rather than failing the dispatch — surfaced in the journal.
+      let workFolder = payload.folder;
+      let requireFolder = false;
+      const wsProvider = getWorkspaceProviderOverride();
+      if (payload.chainWorkReview && dispatch.task_id && wsProvider) {
+        try {
+          const handle = await wsProvider.prepare(ctx.db, dispatch.task_id);
+          workFolder = handle.path;
+          // The junior MUST land in the worktree for its commits to be delivered;
+          // a silent miss (selectFolder can't open a fresh path) would place work
+          // in the wrong workspace. Make it a hard failure downstream.
+          requireFolder = true;
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: { action: 'junior_pointed_at_worktree', path: handle.path, dispatchId: dispatch.id }
+          });
+        } catch (err: any) {
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: { action: 'junior_worktree_prepare_failed', error: err?.message ?? String(err), dispatchId: dispatch.id }
+          });
+        }
+      }
+
       const result = await ag.runCommand(payload.prompt, {
         junior: payload.junior,
         port: payload.antigravityPort,
         model: payload.model,
-        folder: payload.folder,
+        folder: workFolder,
+        requireFolder,
         freshConversation: payload.freshConversation,
         signal: ctx.signal
       });

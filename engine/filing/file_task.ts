@@ -63,11 +63,11 @@ export function fileTask(
 
     const taskRow = db.get<BureauTaskRow>(`
       INSERT INTO bureau_tasks (
-        id, title, intent, spec, acceptance, verify_cmd, setup_cmd,
+        id, title, project_id, intent, spec, acceptance, verify_cmd, setup_cmd,
         state, priority, work_uuid, work_title, intake_session_id,
         plan_rounds, verify_fixes, cycles, attempts, created_at, updated_at
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, NULL,
+        ?, ?, ?, ?, ?, ?, ?, NULL,
         'queued', 1, ?, ?, ?,
         0, 0, 0, 0, ?, ?
       )
@@ -75,6 +75,7 @@ export function fileTask(
     `,
       taskId,
       session.title!,
+      session.project_id ?? null,
       session.intent ?? null,
       session.spec ?? null,
       session.acceptance ?? null,

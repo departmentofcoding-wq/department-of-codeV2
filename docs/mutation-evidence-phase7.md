@@ -152,3 +152,16 @@ file, unknown-task refusal + no-token fail-closed by
 `tc7_archive_flow_api.test.ts` #9, and the render escaping (XSS) by
 `tCONSOLE_b1_render.test.ts` #3c2/#9/#10. Restoration verified after each
 mutation; full suite 384/384 across 88 files, `npm run build` clean, twice.
+
+## Stream addendum — Multi-repository project support (`wt/junior-multi-repo-projects`)
+
+Introduces first-class `bureau_projects` table and maps tasks / intake sessions to specific repository directories, with base-branch normalization and dynamic per-task worktree / dispatch routing. Every mutation was really executed: mutated, the named test observed FAILING, restored, and re-run green.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-PROJ-1 | Project registration path existence gate (`engine/projects/manager.ts`) | Removed `fs.existsSync(resolvedPath)` check before directory stat | `tc_projects.test.ts` "refuses registration if target path does not exist on disk" | 1 failed / 7 passed (`AssertionError: expected [Function] to throw error matching /Target path does not exist on disk/`); restored → 8/8 pass |
+| M-PROJ-2 | Task filing project propagation (`engine/filing/file_task.ts`) | Hardcoded `null` for `project_id` in `bureau_tasks` INSERT statement | `tc_intake_project.test.ts` "fileTask propagates session.project_id to bureau_tasks.project_id" | 2 failed / 4 passed (`AssertionError: expected null to be '...'`); restored → 6/6 pass |
+| M-PROJ-3 | Multi-repo worktree root routing & base ref normalization (`engine/worktrees/manager.ts`) | Hardcoded `'main'` in `git worktree add` without calling `resolveBaseRef` | `tc_multi_repo_execution.test.ts` "prepares worktree in secondary master-defaulted project repository without failing on main branch check" | 1 failed / 2 passed (`fatal: invalid reference: main`); restored → 3/3 pass |
+
+Restoration verified after each mutation: all project test files re-ran green (17/17 tests across 3 files); full suite 401/401 across 91 files, `npm run build` clean twice.
+

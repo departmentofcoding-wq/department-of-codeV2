@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import type { DbConnection, WorkspaceHandle, WorkspaceProvider, AttributionTuple, BureauWorktreeRow } from '../contract/index.ts';
+import type { DbConnection, WorkspaceHandle, WorkspaceProvider, AttributionTuple, BureauWorktreeRow, BureauTaskRow } from '../contract/index.ts';
 
 const FOREMAN_ATTRIBUTION: AttributionTuple = {
   actor_role: 'foreman',
@@ -25,6 +25,34 @@ export function getRepoRoot(customPath?: string): string {
   } catch {
     return process.cwd();
   }
+}
+
+export function getTaskRepoRoot(db: DbConnection, taskId: string, fallbackRoot: string): string {
+  const task = db.get<BureauTaskRow>('SELECT project_id FROM bureau_tasks WHERE id = ?', taskId);
+  if (task?.project_id) {
+    const project = db.get<{ path_to_repo: string }>('SELECT path_to_repo FROM bureau_projects WHERE id = ?', task.project_id);
+    if (project?.path_to_repo) {
+      return project.path_to_repo;
+    }
+  }
+  return fallbackRoot;
+}
+
+export function resolveBaseRef(runGit: (args: string[], cwd?: string) => string, repoRoot: string): string {
+  try {
+    runGit(['rev-parse', '--verify', 'main'], repoRoot);
+    return 'main';
+  } catch {}
+  try {
+    runGit(['rev-parse', '--verify', 'master'], repoRoot);
+    return 'master';
+  } catch {}
+  try {
+    const sym = runGit(['symbolic-ref', 'refs/remotes/origin/HEAD'], repoRoot).trim();
+    const branch = sym.replace(/^refs\/remotes\/origin\//, '').trim();
+    if (branch) return branch;
+  } catch {}
+  return 'HEAD';
 }
 
 export class GitWorkspaceProvider implements WorkspaceProvider {
@@ -83,7 +111,8 @@ export class GitWorkspaceProvider implements WorkspaceProvider {
   }
 
   public async prepare(db: DbConnection, taskId: string): Promise<WorkspaceHandle> {
-    const targetPath = path.join(this.repoRoot, '.bureau-worktrees', taskId);
+    const repoRoot = getTaskRepoRoot(db, taskId, this.repoRoot);
+    const targetPath = path.join(repoRoot, '.bureau-worktrees', taskId);
     const now = new Date().toISOString();
 
     const existingRow = db.get<BureauWorktreeRow>(
@@ -99,16 +128,13 @@ export class GitWorkspaceProvider implements WorkspaceProvider {
           throw new Error(`Worktree for task ${taskId} is dirty at ${existingRow.path}; refusing to reuse or force-delete`);
         }
 
-
-
-        // Check if main branch has moved past base_commit
+        const baseRef = resolveBaseRef((args, cwd) => this.runGit(args, cwd), repoRoot);
         let currentMainTip = existingRow.base_commit;
         try {
-          currentMainTip = this.runGit(['rev-parse', 'main']);
+          currentMainTip = this.runGit(['rev-parse', baseRef], repoRoot);
         } catch {
-          // Main branch lookup fallback to HEAD if main branch name differs
           try {
-            currentMainTip = this.runGit(['rev-parse', 'HEAD']);
+            currentMainTip = this.runGit(['rev-parse', 'HEAD'], repoRoot);
           } catch {
             currentMainTip = existingRow.base_commit;
           }
@@ -179,25 +205,26 @@ export class GitWorkspaceProvider implements WorkspaceProvider {
       }
     }
 
-    // 3. Create fresh git worktree based on main
+    // 3. Create fresh git worktree based on baseRef
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
-    let baseCommit = 'main';
+    const baseRef = resolveBaseRef((args, cwd) => this.runGit(args, cwd), repoRoot);
+    let baseCommit = baseRef;
     try {
-      baseCommit = this.runGit(['rev-parse', 'main']);
+      baseCommit = this.runGit(['rev-parse', baseRef], repoRoot);
     } catch {
-      baseCommit = this.runGit(['rev-parse', 'HEAD']);
+      baseCommit = this.runGit(['rev-parse', 'HEAD'], repoRoot);
     }
 
     const branchName = `bureau-wt-${taskId}`;
     // Delete existing branch if it leftover from a failed run
     try {
-      this.runGit(['branch', '-D', branchName]);
+      this.runGit(['branch', '-D', branchName], repoRoot);
     } catch {
       // Ignore if branch doesn't exist
     }
 
-    this.runGit(['worktree', 'add', targetPath, '-b', branchName, 'main']);
+    this.runGit(['worktree', 'add', targetPath, '-b', branchName, baseRef], repoRoot);
 
     const id = existingRow ? existingRow.id : crypto.randomUUID();
     if (existingRow) {

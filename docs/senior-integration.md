@@ -75,6 +75,62 @@ is `aria-label="Send"`; model picker `aria-label="Choose model"`; quota
 Full access — a reviewer is safest in a non-editing mode). Enter alone may not submit,
 so `sendPrompt` clicks **Send** as a fallback (same scar as the juniors).
 
+## Calibration & the phantom-REVISE failure mode
+
+The ZCode chat input/Send controls are located heuristically (`ZCODE_INPUT_MATCHERS`
+= `['message','chat','ask','prompt','input']`, scored against each editable's
+`aria-label`/`placeholder`; Send is any button matching `/send|submit/i`). Until
+those are confirmed against the live GLM build they can miss — and a *silent* miss
+was the root of a real, costly bug.
+
+### What went wrong (observed live)
+
+On task `e489b734` the walkthrough review looped: rounds **2 and 3** recorded a
+`REVISE` ("amend") whose entire "feedback" was ZCode's **empty home screen** —
+the permission-mode controls (*Add context / Full access / Ask before changes /
+Edit automatically / Plan mode*) plus the model picker (*GLM-5.3*) and the
+template suggestion cards. The review was never actually submitted or generated;
+the harness captured the welcome screen instead. Because that text has no
+`VERDICT:` line, `parseVerdict` **fail-closed to REVISE**, and the plan/work
+cycle fed the chrome back to the junior as "required changes" — re-dispatching the
+SAME task to the junior *and* the senior. That is the "sends the same thing twice"
+duplication, and it repeats until the round ceiling.
+
+### The guards that stop it (must all stay)
+
+1. **Submission is verified, not assumed** — `sendPrompt` (both `ZCodeSession`
+   and `AntigravitySession`) tags the focused input (`data-bureau-input`), then
+   reads it back: if the prompt did not land in the box, or is still sitting there
+   unsent after Enter + the Send-button fallback, it throws (`HarnessError`)
+   instead of proceeding. A misconfigured selector now fails **loudly and fast**.
+2. **The idle probe ignores the home screen's Send button** — `ZCodeSession.probeActivity`
+   suppresses `canSend` while ≥2 `SENIOR_HOME_SCREEN_MARKERS` are on screen, so
+   `waitForAgentIdle` never calls the welcome screen "done".
+3. **Post-capture guard** — `ZCodeSenior.review` runs `detectUncapturedReview(full)`
+   before parsing; a capture dominated by home-screen chrome with no `VERDICT:`
+   line throws rather than becoming a phantom REVISE.
+
+Fail-closed-to-REVISE is still correct for a *genuine* verdict-less review; the
+guards only distinguish "captured no review at all" from "captured a real review."
+
+### Calibrating the selectors (first live attach)
+
+When wiring a new/updated ZCode build, do this once and update
+`engine/harness/senior.ts` if the reality differs from the values in *Calibrated
+ZCode selectors* above:
+
+1. Launch ZCode with `--remote-debugging-port=9335` (see Preconditions) and open a
+   fresh chat so the real input is mounted.
+2. Attach and inspect: confirm the chat input's `aria-label`/`placeholder` contains
+   one of `ZCODE_INPUT_MATCHERS` (the live placeholder is "Ask ZCode anything…", so
+   `ask` matches) and that the Send control's accessible name matches `/send|submit/i`.
+   If either is false, add the real token to `ZCODE_INPUT_MATCHERS` / tighten the
+   Send finder.
+3. Run one real review (`scripts/run_senior.ts --senior zai --kind plan --task <id>`).
+   A correct run submits the prompt (the input clears), the reply carries a
+   `VERDICT:` line, and `detectUncapturedReview` returns null. A selector miss now
+   throws with a "recalibrate" message pointing back here — not a phantom REVISE.
+
 ## The review contract
 
 `SeniorDriver.review(input)` takes `{ kind: 'plan'|'walkthrough', taskTitle,

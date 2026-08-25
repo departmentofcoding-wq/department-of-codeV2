@@ -69,6 +69,28 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
     expect(db.get<any>('SELECT cycles FROM bureau_tasks WHERE id = ?', 'task-wc').cycles).toBe(1);
     // No fix dispatch on approval.
     expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'junior.dispatch'`).n).toBe(0);
+    // The approve path no longer dead-ends: it hands the task to the done-gate by
+    // enqueuing worktree.prepare (which chains verify.run → needs-review).
+    expect((res as any).deliveryJobId).toBeTruthy();
+    const prep = db.get<any>(`SELECT * FROM bureau_jobs WHERE kind = 'worktree.prepare' AND task_id = 'task-wc'`);
+    expect(prep).toBeTruthy();
+    expect(JSON.parse(prep.payload).taskId).toBe('task-wc');
+  });
+
+  it('APPROVED is idempotent: a re-review does not enqueue a second worktree.prepare while one is in flight', async () => {
+    const db = createFakeDb();
+    setWorkCeiling(db, 5);
+    seedTask(db, { cycles: 1 });
+    setSeniorDriverOverride({
+      review: async () => ({ senior: 'zai', verdict: 'approve', feedback: 'ok', raw: 'VERDICT: APPROVE', model: 'glm-test' })
+    });
+    // First approval enqueues the prepare job (state 'pending').
+    const first = await runWorkReviewCycle(db, { taskId: 'task-wc', seniorId: 'zai', walkthrough: WALKTHROUGH });
+    expect((first as any).deliveryJobId).toBeTruthy();
+    // A second approval while it is still pending must NOT enqueue another.
+    const second = await runWorkReviewCycle(db, { taskId: 'task-wc', seniorId: 'zai', walkthrough: WALKTHROUGH });
+    expect((second as any).deliveryJobId).toBeUndefined();
+    expect(db.get<any>(`SELECT COUNT(*) n FROM bureau_jobs WHERE kind = 'worktree.prepare' AND task_id = 'task-wc'`).n).toBe(1);
   });
 
   it('continuation round reuses the senior conversation (freshConversation false when cycles > 0)', async () => {
