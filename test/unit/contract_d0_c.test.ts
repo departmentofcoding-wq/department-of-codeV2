@@ -20,7 +20,7 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
   });
 
   it('2. Endpoint Manifest: every endpoint declares method, path, description, and token auth', () => {
-    expect(ENDPOINTS.length).toBe(27);
+    expect(ENDPOINTS.length).toBe(30);
 
     const paths = ENDPOINTS.map(e => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/health');
@@ -50,6 +50,9 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
     expect(paths).toContain('POST /api/settings/google-keys');
     expect(paths).toContain('GET /api/settings/ntfy');
     expect(paths).toContain('POST /api/settings/ntfy');
+    expect(paths).toContain('POST /api/settings/ntfy/test');
+    expect(paths).toContain('GET /api/projects');
+    expect(paths).toContain('POST /api/projects');
 
     for (const ep of ENDPOINTS) {
       expect(ep.auth).toBe('token');

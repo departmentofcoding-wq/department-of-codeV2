@@ -64,30 +64,31 @@ describe('T-NTFY: Task status change notifications integration', () => {
     db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', 'https://ntfy.sh')");
     db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', 'bureau-alerts-topic')");
 
-    // Move task: intake -> queued -> claimed -> verifying -> blocked
+    // Move task: intake -> queued -> claimed -> verifying -> blocked. `claimed`
+    // now fires a "task started" push too, so isolate the blocked one by state.
     transition(db, 'task-ntfy-test', 'queued', SYSTEM_ATTR);
     transition(db, 'task-ntfy-test', 'claimed', SYSTEM_ATTR);
     transition(db, 'task-ntfy-test', 'verifying', SYSTEM_ATTR);
-
-    expect(capturedPosts.length).toBe(0);
-
     transition(db, 'task-ntfy-test', 'blocked', VERIFIER_ATTR, {
       reason: 'verify_fixes ceiling (2) reached'
     });
 
-    // Wait a tick for async notification dispatch
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait a tick for async notification dispatch.
+    await new Promise((r) => setTimeout(r, 20));
 
-    expect(capturedPosts.length).toBe(1);
-    const post = capturedPosts[0];
-    expect(post.url).toBe('https://ntfy.sh/bureau-alerts-topic');
-    expect(post.headers['Title']).toContain('Task task-ntfy-test -> BLOCKED');
-    expect(post.headers['Priority']).toBe('high');
-    expect(post.headers['Tags']).toBe('warning,rotating_light');
-    expect(post.body).toContain('Task ID: task-ntfy-test');
-    expect(post.body).toContain('Title: Integrate push notifications');
-    expect(post.body).toContain('Status: blocked');
-    expect(post.body).toContain('Reason: verify_fixes ceiling (2) reached');
+    // 'claimed' (started) and 'blocked' both notify; 'queued'/'verifying' do not.
+    const started = capturedPosts.find((p) => p.headers['Title'].includes('-> CLAIMED'));
+    const post = capturedPosts.find((p) => p.headers['Title'].includes('-> BLOCKED'));
+    expect(started).toBeDefined();
+    expect(post).toBeDefined();
+    expect(post!.url).toBe('https://ntfy.sh/bureau-alerts-topic');
+    expect(post!.headers['Title']).toContain('Task task-ntfy-test -> BLOCKED');
+    expect(post!.headers['Priority']).toBe('high');
+    expect(post!.headers['Tags']).toBe('warning,rotating_light');
+    expect(post!.body).toContain('Task ID: task-ntfy-test');
+    expect(post!.body).toContain('Title: Integrate push notifications');
+    expect(post!.body).toContain('Status: blocked');
+    expect(post!.body).toContain('Reason: verify_fixes ceiling (2) reached');
   });
 
   it('triggers formatted ntfy notification when task transitions to done', async () => {
@@ -103,23 +104,25 @@ describe('T-NTFY: Task status change notifications integration', () => {
     const now = new Date().toISOString();
     db.run("UPDATE bureau_tasks SET approved_at = ?, approved_by = ? WHERE id = 'task-ntfy-test'", now, 'operator');
 
-    expect(capturedPosts.length).toBe(0);
-
     // Transition needs-review -> done
     transition(db, 'task-ntfy-test', 'done', SYSTEM_ATTR, { action: 'merge', prNumber: 42 });
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 20));
 
-    expect(capturedPosts.length).toBe(1);
-    const post = capturedPosts[0];
-    expect(post.url).toBe('https://alerts.internal/deployments');
-    expect(post.headers['Title']).toContain('Task task-ntfy-test -> DONE');
-    expect(post.headers['Priority']).toBe('default');
-    expect(post.headers['Tags']).toBe('white_check_mark,tada');
-    expect(post.body).toContain('Task ID: task-ntfy-test');
-    expect(post.body).toContain('Title: Integrate push notifications');
-    expect(post.body).toContain('Status: done');
-    expect(post.body).toContain('Reason: merge');
+    // 'claimed', 'needs-review', and 'done' all notify. Isolate the done push.
+    const review = capturedPosts.find((p) => p.headers['Title'].includes('-> NEEDS-REVIEW'));
+    const post = capturedPosts.find((p) => p.headers['Title'].includes('-> DONE'));
+    expect(review).toBeDefined();
+    // needs-review is the phone-approval trigger: high priority, an "eyes" tag.
+    expect(review!.headers['Priority']).toBe('high');
+    expect(review!.headers['Tags']).toContain('eyes');
+    expect(post).toBeDefined();
+    expect(post!.url).toBe('https://alerts.internal/deployments');
+    expect(post!.headers['Title']).toContain('Task task-ntfy-test -> DONE');
+    expect(post!.headers['Priority']).toBe('default');
+    expect(post!.headers['Tags']).toBe('white_check_mark,tada');
+    expect(post!.body).toContain('Status: done');
+    expect(post!.body).toContain('Reason: merge');
   });
 
   it('safely skips ntfy post when no topic is configured in bureau_meta', async () => {
@@ -133,7 +136,7 @@ describe('T-NTFY: Task status change notifications integration', () => {
     expect(capturedPosts.length).toBe(0);
   });
 
-  it('notifies registered in-memory subscribers on blocked/done transitions', async () => {
+  it('notifies registered in-memory subscribers on notifying transitions (started + blocked)', async () => {
     const events: TaskStateChangeEvent[] = [];
     const unsubscribe = subscribeTaskStateChange((e) => {
       events.push(e);
@@ -144,10 +147,15 @@ describe('T-NTFY: Task status change notifications integration', () => {
     transition(db, 'task-ntfy-test', 'verifying', SYSTEM_ATTR);
     transition(db, 'task-ntfy-test', 'blocked', VERIFIER_ATTR, { reason: 'timeout' });
 
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 20));
 
-    expect(events.length).toBe(1);
-    expect(events[0]).toEqual({
+    // 'claimed' (started) and 'blocked' notify; 'queued'/'verifying' stay quiet.
+    const states = events.map((e) => e.state);
+    expect(states).toContain('claimed');
+    expect(states).toContain('blocked');
+    expect(states).not.toContain('queued');
+    expect(states).not.toContain('verifying');
+    expect(events.find((e) => e.state === 'blocked')).toEqual({
       taskId: 'task-ntfy-test',
       title: 'Integrate push notifications',
       state: 'blocked',

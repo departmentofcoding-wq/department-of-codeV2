@@ -304,15 +304,37 @@ export interface SaveGoogleKeysRequest {
 
 // --- Settings: Ntfy notifications ---
 
+/** One event that sends a push — shown in the Settings "what sends
+ * notifications" list. Mirrors engine NotificationEvent. */
+export interface NotificationEventDTO {
+  key: string;
+  label: string;
+  description: string;
+  /** The task state that fires it, if task-driven. */
+  taskState?: string;
+}
+
 export interface NtfySettingsDTO {
   ntfy_server_url: string;
   ntfy_topic: string;
   enabled: boolean;
+  /** Every event that sends a notification (drives the Settings list). The
+   * server always populates this; optional so partial fixtures still type. */
+  events?: NotificationEventDTO[];
 }
 
 export interface SaveNtfySettingsRequest {
   ntfy_server_url?: string;
   ntfy_topic?: string;
+}
+
+/** Result of a manual test-notification send from Settings. */
+export interface TestNtfyResult {
+  ok: boolean;
+  /** Whether an ntfy topic is configured at all. */
+  configured: boolean;
+  /** Whether the test push was accepted by the ntfy server. */
+  sent: boolean;
 }
 
 // --- Department Assets DTOs ---
@@ -350,6 +372,26 @@ export interface UpdateAssetRequest {
 export interface DeleteAssetResult {
   ok: boolean;
   id: string;
+}
+
+// --- Projects DTOs (multi-repo: where the department's juniors do their work) ---
+
+/** A registered project = one git repository the bureau can run tasks against. */
+export interface ProjectDTO {
+  id: string;
+  name: string;
+  /** Absolute path on disk to the project's git repository (the "folder"). */
+  path_to_repo: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  /** Folder location on disk — must exist and be a git repository. */
+  pathToRepo: string;
+  description?: string;
 }
 
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
@@ -545,6 +587,24 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/settings/ntfy',
     auth: 'token',
     description: 'Save ntfy server URL and topic'
+  },
+  {
+    method: 'POST',
+    path: '/api/settings/ntfy/test',
+    auth: 'token',
+    description: 'Send a test push to the configured ntfy topic'
+  },
+  {
+    method: 'GET',
+    path: '/api/projects',
+    auth: 'token',
+    description: 'List registered projects (git repositories the bureau can work in)'
+  },
+  {
+    method: 'POST',
+    path: '/api/projects',
+    auth: 'token',
+    description: 'Register a project by name + folder path (validated on disk as a git repo)'
   }
 ] as const;
 
