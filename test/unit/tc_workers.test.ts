@@ -48,9 +48,27 @@ describe('workerRoster + renderWorkers', () => {
     expect(jr.active).toBe(false);
   });
 
+  it('shows a worker active while its job is RUNNING, even with no recent span', () => {
+    const now = new Date().toISOString();
+    // A running work.cycle engages the senior (and junior) for the WHOLE duration,
+    // even a long review that only journals when it finishes.
+    db.run(
+      `INSERT INTO bureau_jobs (id, kind, task_id, payload, state, attempts, max_attempts, created_at, started_at)
+       VALUES ('job-wc', 'work.cycle', 't1', '{}', 'running', 1, 1, ?, ?)`,
+      now, now
+    );
+    // Evaluate far in the future so no journal span is "recent" — only the
+    // running job can keep a worker active.
+    const future = Date.now() + WORKER_ACTIVE_WINDOW_MS + 60_000;
+    const roster = workerRoster(db, future);
+    const senior = roster.find(w => w.role === 'senior-engineer');
+    expect(senior?.active).toBe(true);
+    expect(senior?.running_jobs).toBe(1);
+  });
+
   it('renderWorkers escapes and shows an active indicator', () => {
     const html = renderWorkers([
-      { role: 'junior-engineer', backend: 'antigravity-cdp', model_id: 'gemini-3.7-flash', provider: 'antigravity', display: 'Gemini 3.7 Flash', active: true, active_leases: 0, running_dispatches: 1, last_activity_ts: '2026-08-20T00:00:00Z', last_activity_kind: 'dispatch' }
+      { role: 'junior-engineer', backend: 'antigravity-cdp', model_id: 'gemini-3.7-flash', provider: 'antigravity', display: 'Gemini 3.7 Flash', active: true, active_leases: 0, running_dispatches: 1, running_jobs: 0, last_activity_ts: '2026-08-20T00:00:00Z', last_activity_kind: 'dispatch' }
     ]);
     expect(html).toContain('worker-dot active');
     expect(html).toContain('junior-engineer');

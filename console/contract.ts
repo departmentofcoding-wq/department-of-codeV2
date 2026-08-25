@@ -174,6 +174,7 @@ export interface WorkerDTO {
   active: boolean;
   active_leases: number;
   running_dispatches: number;
+  running_jobs: number;
   last_activity_ts: string | null;
   last_activity_kind: string | null;
 }

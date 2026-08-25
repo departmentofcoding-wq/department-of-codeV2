@@ -8,7 +8,7 @@ import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
 import { sliceAfterPrompt } from '../harness/antigravity.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import { assignSenior } from '../harness/senior.ts';
+import { assignSeniorForTask } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 
 /**
@@ -337,7 +337,7 @@ export async function runPlanReviewCycle(
   }
 
   // ---- 3. Senior REVIEWS the plan (with the task verbatim) -----------------
-  const seniorId = opts.seniorId ?? assignSenior({ kind: 'plan' });
+  const seniorId = opts.seniorId ?? assignSeniorForTask(task.id);
   const senior = getSeniorDriver(seniorId);
   const review = await senior.review({
     kind: 'plan',

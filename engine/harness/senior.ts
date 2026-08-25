@@ -180,6 +180,28 @@ export function assignSenior(opts: { kind: 'plan' | 'walkthrough' }): string {
 }
 
 /**
+ * Assign exactly ONE senior to a whole TASK — its plan review AND its walkthrough
+ * review — so the same reviewer holds the task's context end-to-end and no second
+ * senior ever reads the same code (the per-kind split sent plan→claude and
+ * walkthrough→zai, pulling BOTH seniors onto one task and wasting context/quota).
+ * Deterministic by task id, so load still spreads ACROSS tasks (parallelism kept)
+ * while each task has a single owner. `SENIOR_DEFAULT` pins all tasks to one
+ * senior when set; otherwise a stable hash of the task id picks among the
+ * registered seniors. Pairs with the per-round conversation reuse
+ * (`freshConversation`): same senior + same conversation across a task's rounds.
+ */
+export function assignSeniorForTask(taskId: string): string {
+  const override = process.env['SENIOR_DEFAULT'];
+  if (override) return resolveSenior(override.toLowerCase()).id;
+  const ids = Object.keys(SENIORS).sort();
+  let h = 0;
+  for (let i = 0; i < taskId.length; i++) {
+    h = (h * 31 + taskId.charCodeAt(i)) >>> 0;
+  }
+  return ids[h % ids.length];
+}
+
+/**
  * Where to see remaining quota for a senior. ZCode exposes it in-GUI
  * (`ZCodeSession.readUsage`, the "Usage remaining" control). The Claude CLI has
  * no headless quota readout — check it with the `/usage` command inside the

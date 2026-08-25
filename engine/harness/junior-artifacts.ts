@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { redactOutput } from '../contract/tools.ts';
 
 /**
  * Persist a junior's captured artifacts as department data the Senior can open
@@ -9,6 +10,11 @@ import path from 'node:path';
  *
  * The journal records that these exist (attributed spans); the files hold the
  * full text so a review isn't limited to a transcript tail.
+ *
+ * SECURITY: these files are kept and committed for history, so every artifact is
+ * scrubbed through `redactOutput` before it touches disk — a junior transcript
+ * can echo an API key or a `KEY=value` line, and once committed that would live
+ * in git history forever. Redaction is the same door the console read APIs use.
  */
 export interface CapturedArtifacts {
   junior?: string;
@@ -98,7 +104,8 @@ export function writeJuniorArtifacts(
   fs.mkdirSync(dir, { recursive: true });
   for (const [name, value] of present) {
     const p = path.join(dir, name);
-    fs.writeFileSync(p, `${value!.trim()}\n`, 'utf8');
+    // Scrub secrets before persisting — these files are committed for history.
+    fs.writeFileSync(p, `${redactOutput(value!.trim())}\n`, 'utf8');
     files[name] = p;
   }
   return { dir, files };

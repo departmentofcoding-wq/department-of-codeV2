@@ -451,7 +451,11 @@ export function renderWorkers(workers) {
   const rows = workers.map(w => {
     const dot = w.active ? '<span class="worker-dot active" title="Active"></span>' : '<span class="worker-dot idle" title="Idle"></span>';
     const status = w.active ? 'Working' : 'Idle';
-    const doing = w.running_dispatches > 0 ? `${w.running_dispatches} dispatch(es)` : (w.active_leases > 0 ? `${w.active_leases} lease(s)` : '—');
+    const doing = w.running_dispatches > 0
+      ? `${w.running_dispatches} dispatch(es)`
+      : (w.running_jobs > 0
+          ? `${w.running_jobs} running job(s)`
+          : (w.active_leases > 0 ? `${w.active_leases} lease(s)` : '—'));
     const model = w.display || w.model_id || (w.backend ? escapeHtml(w.backend) : 'deterministic / core');
     const last = w.last_activity_ts ? `${escapeHtml(w.last_activity_kind || '')} @ ${escapeHtml(w.last_activity_ts)}` : 'never';
     return `

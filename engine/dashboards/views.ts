@@ -107,12 +107,48 @@ export interface WorkerRosterEntry {
   active: boolean;
   active_leases: number;
   running_dispatches: number;
+  /** Running bureau_jobs whose kind engages this role (see JOB_KIND_ROLES) — the
+   *  live signal that keeps a worker shown active for the WHOLE duration of its
+   *  work, even a long senior review that journals only when it finishes. */
+  running_jobs: number;
   last_activity_ts: string | null;
   last_activity_kind: string | null;
 }
 
 /** How recent a journal span counts as "currently working" (ms). */
 export const WORKER_ACTIVE_WINDOW_MS = 120_000;
+
+/**
+ * Which department roles a running job of each kind engages. A running
+ * `plan.cycle` has the junior authoring then the senior reviewing; `work.cycle`
+ * and `senior.review-*` are the senior; `junior.dispatch` the junior;
+ * `intake.turn` the officer; `verify.run` the verifier. Used so the Workers tab
+ * shows an employee active while its job is actually running — not only in the
+ * ~2 min after it happens to journal a span.
+ */
+export const JOB_KIND_ROLES: Record<string, readonly string[]> = {
+  'junior.dispatch': ['junior-engineer'],
+  'plan.cycle': ['junior-engineer', 'senior-engineer'],
+  'work.cycle': ['senior-engineer', 'junior-engineer'],
+  'senior.review-plan': ['senior-engineer'],
+  'senior.review-work': ['senior-engineer'],
+  'intake.turn': ['task-intake-officer'],
+  'verify.run': ['verifier']
+};
+
+/** Count currently-running jobs per role from bureau_jobs (state = 'running'). */
+function runningJobsByRole(db: DbConnection): Map<string, number> {
+  const counts = new Map<string, number>();
+  const rows = db.all<{ kind: string; c: number }>(
+    `SELECT kind, COUNT(*) AS c FROM bureau_jobs WHERE state = 'running' GROUP BY kind`
+  );
+  for (const { kind, c } of rows) {
+    for (const role of JOB_KIND_ROLES[kind] ?? []) {
+      counts.set(role, (counts.get(role) ?? 0) + c);
+    }
+  }
+  return counts;
+}
 
 /**
  * The department roster — every worker (role), the model/provider backing it,
@@ -128,6 +164,11 @@ export function workerRoster(db: DbConnection, nowMs: number = Date.now()): Work
   for (const r of db.all<{ actor_role: string }>(`SELECT DISTINCT actor_role FROM bureau_journal`)) {
     if (r.actor_role) roles.add(r.actor_role);
   }
+
+  const runningByRole = runningJobsByRole(db);
+  // A role with a running job is on the roster even if it has never journaled or
+  // been assigned yet — otherwise a senior mid-review wouldn't appear at all.
+  for (const role of runningByRole.keys()) roles.add(role);
 
   const roster: WorkerRosterEntry[] = [];
   for (const role of [...roles].sort()) {
@@ -151,6 +192,7 @@ export function workerRoster(db: DbConnection, nowMs: number = Date.now()): Work
       role
     );
     const recentlyActive = last?.ts ? nowMs - Date.parse(last.ts) <= WORKER_ACTIVE_WINDOW_MS : false;
+    const runningJobs = runningByRole.get(role) ?? 0;
 
     roster.push({
       role,
@@ -158,9 +200,10 @@ export function workerRoster(db: DbConnection, nowMs: number = Date.now()): Work
       model_id: assign?.model_id ?? null,
       provider: model?.provider ?? null,
       display: model?.display ?? null,
-      active: activeLeases > 0 || runningDispatches > 0 || recentlyActive,
+      active: activeLeases > 0 || runningDispatches > 0 || runningJobs > 0 || recentlyActive,
       active_leases: activeLeases,
       running_dispatches: runningDispatches,
+      running_jobs: runningJobs,
       last_activity_ts: last?.ts ?? null,
       last_activity_kind: last?.kind ?? null
     });

@@ -503,6 +503,7 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           active: w.active,
           active_leases: w.active_leases,
           running_dispatches: w.running_dispatches,
+          running_jobs: w.running_jobs,
           last_activity_ts: w.last_activity_ts,
           last_activity_kind: w.last_activity_kind
         }));

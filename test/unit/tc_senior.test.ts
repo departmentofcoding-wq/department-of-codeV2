@@ -8,6 +8,7 @@ import {
   resolveSenior,
   findSeniorBinary,
   assignSenior,
+  assignSeniorForTask,
   usageHint,
   SENIORS
 } from '../../engine/harness/senior.ts';
@@ -67,6 +68,29 @@ describe('Senior harness — single-reviewer assignment (one senior per review)'
   it('usageHint distinguishes GUI quota (zai) from CLI (claude)', () => {
     expect(usageHint('zai')).toMatch(/Usage remaining|GUI/i);
     expect(usageHint('claude')).toMatch(/\/usage|console\.anthropic/i);
+  });
+
+  it('assignSeniorForTask: ONE senior per task — same for plan+walkthrough, deterministic', () => {
+    delete process.env.SENIOR_DEFAULT; delete process.env.SENIOR_PLAN; delete process.env.SENIOR_WALKTHROUGH;
+    const a = assignSeniorForTask('task-abc-123');
+    // Stable across calls (the plan review and the walkthrough review of the same
+    // task therefore get the SAME senior — never two seniors on one task's code).
+    expect(assignSeniorForTask('task-abc-123')).toBe(a);
+    expect(['claude', 'zai']).toContain(a);
+  });
+
+  it('assignSeniorForTask: load spreads ACROSS tasks (not all one senior)', () => {
+    delete process.env.SENIOR_DEFAULT;
+    const picks = new Set(
+      Array.from({ length: 24 }, (_, i) => assignSeniorForTask(`task-${i}-xyz`))
+    );
+    expect(picks.size).toBe(2); // both seniors get used across many tasks
+  });
+
+  it('assignSeniorForTask: SENIOR_DEFAULT pins every task to one senior', () => {
+    process.env.SENIOR_DEFAULT = 'zai';
+    expect(assignSeniorForTask('task-a')).toBe('zai');
+    expect(assignSeniorForTask('task-b')).toBe('zai');
   });
 });
 
@@ -160,6 +184,27 @@ describe('Senior harness — seam + artifact reading', () => {
     try {
       const art = readLatestArtifacts('nope', base);
       expect(art).toEqual({ dir: '', plan: '', walkthrough: '', transcript: '', reply: '' });
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('writeJuniorArtifacts SCRUBS secrets before persisting (kept + committed for history)', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sen-art-sec-'));
+    try {
+      // A junior transcript that echoed an API key and a KEY=value line.
+      writeJuniorArtifacts('task-sec', 'disp-x', {
+        junior: 'A',
+        plan: 'use key AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456 in the client',
+        walkthrough: 'ran with GOOGLE_API_KEY=supersecretvalue123 and it worked',
+        fullOutput: 'sk-ant-0123456789abcdef0123456789abcdef in the logs'
+      }, base);
+      const art = readLatestArtifacts('task-sec', base);
+      const all = art.plan + art.walkthrough + art.transcript;
+      expect(all).not.toContain('AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456');
+      expect(all).not.toContain('supersecretvalue123');
+      expect(all).not.toContain('sk-ant-0123456789abcdef0123456789abcdef');
+      expect(all).toContain('[REDACTED]');
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

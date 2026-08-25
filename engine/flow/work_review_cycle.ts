@@ -6,7 +6,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import { assignSenior } from '../harness/senior.ts';
+import { assignSeniorForTask } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
 
 /**
@@ -193,7 +193,7 @@ export async function runWorkReviewCycle(
     return { outcome: 'skipped', reason: 'no_walkthrough' };
   }
 
-  const seniorId = opts.seniorId ?? assignSenior({ kind: 'walkthrough' });
+  const seniorId = opts.seniorId ?? assignSeniorForTask(task.id);
   const senior = getSeniorDriver(seniorId);
   const review = await senior.review({
     kind: 'walkthrough',
