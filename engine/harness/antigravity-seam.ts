@@ -5,6 +5,8 @@ import {
   AntigravitySession,
   ensureAntigravityRunning,
   ensureJuniorRunning,
+  ensureFolderWindowWs,
+  closeFolderWindow,
   findMainWindowWs,
   resolveJunior
 } from './antigravity.ts';
@@ -47,12 +49,13 @@ export interface AntigravityRunOptions {
   model?: string;
   /** Folder/project to select in the GUI before sending the prompt. */
   folder?: string;
-  /** Require that `folder` was actually selected. `selectFolder` only clicks an
-   *  ALREADY-OPEN project entry — it cannot OPEN a new path — so a fresh worktree
-   *  the IDE has never opened will NOT be selected (verified live: a brand-new
-   *  `.bureau-worktrees/<id>` matches no sidebar control). For delivery dispatches
-   *  the junior MUST land in the worktree, so pass this to make a miss a hard
-   *  failure instead of silently working in whatever folder is currently open. */
+  /** The junior MUST run in `folder` (a delivery dispatch that has to commit in
+   *  the task's worktree). Because `selectFolder` only clicks an ALREADY-OPEN
+   *  project and cannot open a fresh path (verified live: a brand-new
+   *  `.bureau-worktrees/<id>` matches no sidebar control), setting this makes
+   *  `runCommand` OPEN — or reuse — a dedicated IDE window ON that folder and drive
+   *  the junior there. If the window can't be opened it fails hard, never falling
+   *  back to the wrong workspace. */
   requireFolder?: boolean;
   /** Start a fresh conversation first so a prior task can't bleed in. Default
    *  true; enforced strictly — if the fresh-conversation control can't be found
@@ -77,15 +80,27 @@ class RealAntigravityDriver implements AntigravityDriver {
         : await ensureJuniorRunning(cfg);
     const port = opts.port ?? cfg.cdpPort;
 
-    // The workbench window can lag the CDP endpoint by a few seconds.
+    // Choose which IDE WINDOW to drive. For a REQUIRED folder (a delivery dispatch
+    // that must land in the task's worktree), open — or reuse — a dedicated window
+    // ON that folder and drive the junior THERE. `selectFolder` alone cannot open a
+    // fresh worktree (verified live), so this is what actually points the junior at
+    // the worktree; a failure to open it is a hard failure (never run in the wrong
+    // workspace). Otherwise drive the main workbench window as before.
     let wsUrl = '';
-    for (let i = 0; i < 20; i++) {
-      if (opts.signal?.aborted) throw new HarnessError(`${cfg.label} dispatch aborted before attach`);
-      try {
-        wsUrl = await findMainWindowWs(port);
-        break;
-      } catch {
-        await new Promise(r => setTimeout(r, 1000));
+    let openedFolderWindow = false;
+    if (opts.folder && opts.requireFolder) {
+      wsUrl = await ensureFolderWindowWs(cfg, opts.folder, port, { signal: opts.signal });
+      openedFolderWindow = true;
+    } else {
+      // The workbench window can lag the CDP endpoint by a few seconds.
+      for (let i = 0; i < 20; i++) {
+        if (opts.signal?.aborted) throw new HarnessError(`${cfg.label} dispatch aborted before attach`);
+        try {
+          wsUrl = await findMainWindowWs(port);
+          break;
+        } catch {
+          await new Promise(r => setTimeout(r, 1000));
+        }
       }
     }
     if (!wsUrl) throw new Error(`${cfg.label} workbench window did not become available in time.`);
@@ -120,20 +135,13 @@ class RealAntigravityDriver implements AntigravityDriver {
         }
         await new Promise(r => setTimeout(r, 800));
       }
-      if (opts.folder) {
+      if (openedFolderWindow) {
+        // We are already attached to a window opened ON the required folder — the
+        // window IS the workspace, so there is nothing to select.
+        folderSelected = true;
+      } else if (opts.folder) {
+        // Best-effort switch among already-open projects (no worktree involved).
         folderSelected = await session.selectFolder(opts.folder);
-        // `selectFolder` clicks an already-open project; it cannot OPEN a new path.
-        // When the caller REQUIRES the folder (a delivery dispatch that must commit
-        // in the task's worktree), a miss is a hard failure — never silently work
-        // in the wrong, currently-open workspace and let that masquerade as the
-        // task's output.
-        if (opts.requireFolder && !folderSelected) {
-          throw new HarnessError(
-            `${cfg.label}: required folder '${opts.folder}' is not an open project in the IDE, and ` +
-              `selectFolder cannot open a new path. Open that folder (the task's worktree) in the IDE ` +
-              `first, or launch the junior on it — refusing to run in the wrong workspace.`
-          );
-        }
       }
       if (opts.model) model = await session.selectModel(opts.model);
 
@@ -160,6 +168,12 @@ class RealAntigravityDriver implements AntigravityDriver {
       };
     } finally {
       session.close();
+      // Close a per-task worktree window we opened so windows don't accumulate as
+      // tasks complete (and worktrees get pruned post-merge). Best-effort; never
+      // masks the primary outcome.
+      if (openedFolderWindow && opts.folder) {
+        await closeFolderWindow(opts.folder, port).catch(() => {});
+      }
     }
   }
 }

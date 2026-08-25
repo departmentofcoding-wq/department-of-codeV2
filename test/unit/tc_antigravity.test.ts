@@ -12,6 +12,8 @@ import {
   extractPlan,
   extractWalkthrough,
   resolveJunior,
+  pickFolderWindow,
+  pickMainWindow,
   JUNIORS,
   ANTIGRAVITY_DEFAULT_PORT
 } from '../../engine/harness/antigravity.ts';
@@ -27,6 +29,50 @@ describe('Antigravity integration — deterministic surface', () => {
   it('buildAntigravityArgs exposes the debug port', () => {
     expect(buildAntigravityArgs(9333)).toEqual(['--remote-debugging-port=9333']);
     expect(ANTIGRAVITY_DEFAULT_PORT).toBe(9333);
+  });
+
+  it('pickFolderWindow matches the window opened ON a worktree by its title', () => {
+    // Antigravity titles each window "<folder-basename> - Antigravity IDE" (live).
+    const taskId = 'abc123-def';
+    const targets = [
+      { type: 'page', title: 'Dept of code v2 - Antigravity IDE', webSocketDebuggerUrl: 'ws://main' },
+      { type: 'worker', title: '', webSocketDebuggerUrl: 'ws://worker' },
+      { type: 'page', title: `${taskId} - Antigravity IDE`, webSocketDebuggerUrl: 'ws://wt' }
+    ];
+    // A worktree path like <repo>/.bureau-worktrees/<taskId> → basename is the taskId.
+    expect(pickFolderWindow(targets, `D:/repo/.bureau-worktrees/${taskId}`)).toBe('ws://wt');
+    // Trailing slash is tolerated.
+    expect(pickFolderWindow(targets, `D:/repo/.bureau-worktrees/${taskId}/`)).toBe('ws://wt');
+  });
+
+  it('pickFolderWindow returns empty when the folder window is not (yet) present', () => {
+    const targets = [
+      { type: 'page', title: 'Dept of code v2 - Antigravity IDE', webSocketDebuggerUrl: 'ws://main' },
+      // A loading window whose title has not populated must NOT be mistaken for ours.
+      { type: 'page', title: '', webSocketDebuggerUrl: 'ws://loading' }
+    ];
+    expect(pickFolderWindow(targets, 'D:/repo/.bureau-worktrees/zzz')).toBe('');
+    // Never picks the main window for a different folder.
+    expect(pickFolderWindow(targets, 'D:/repo/.bureau-worktrees/zzz')).not.toBe('ws://main');
+  });
+
+  it('pickMainWindow excludes worktree windows so plan dispatches never attach to one', () => {
+    const taskId = 'task-777';
+    const targets = [
+      // A per-task worktree window is open (opened by a delivery dispatch)...
+      { type: 'page', title: `${taskId} - Antigravity IDE`, url: 'vscode-file://vscode-app/x', webSocketDebuggerUrl: 'ws://wt' },
+      // ...and the main repo workbench window.
+      { type: 'page', title: 'Dept of code v2 - Antigravity IDE', url: 'vscode-file://vscode-app/y', webSocketDebuggerUrl: 'ws://main' }
+    ];
+    // With the worktree basename excluded, the MAIN window is chosen even though the
+    // worktree window appears first in the list (URL prefixes are identical).
+    expect(pickMainWindow(targets, [taskId])).toBe('ws://main');
+    // With no exclusions it would wrongly take the first vscode-file:// window.
+    expect(pickMainWindow(targets, [])).toBe('ws://wt');
+  });
+
+  it('pickMainWindow returns empty when only the loading splash is present', () => {
+    expect(pickMainWindow([{ type: 'page', title: '', url: 'data:text/html,splash', webSocketDebuggerUrl: 'ws://splash' }], [])).toBe('');
   });
 
   it('findAntigravityBinary honors ANTIGRAVITY_PATH when it exists', () => {

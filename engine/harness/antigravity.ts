@@ -242,24 +242,165 @@ export async function ensureAntigravityRunning(
   throw new HarnessError(`Antigravity launched but no CDP endpoint on port ${port} within timeout`);
 }
 
-/** Find the main IDE window's WebSocket debugger URL (not the loading splash). */
-export async function findMainWindowWs(port: number = ANTIGRAVITY_DEFAULT_PORT): Promise<string> {
-  const targets = await cdpGet(port, '/json/list');
-  const pages = (targets as any[]).filter(t => t.type === 'page' && t.webSocketDebuggerUrl);
-  // Prefer the https workbench window; never the data: splash.
-  // Junior B (2.0) serves the workbench from https loopback; Junior A (the IDE,
-  // a VS Code fork) serves it from vscode-file://vscode-app. Prefer either, and
-  // never the data: loading splash.
+/** The window basename normalizer + title matcher used by both the folder-window
+ *  finder and the main-window exclusion, so they agree on identity. Antigravity
+ *  (a VS Code fork) titles each window `"<folder-basename> - Antigravity IDE"`
+ *  (verified live). */
+function folderWindowBase(folderPath: string): string {
+  return path.basename(folderPath.replace(/[/\\]+$/, ''));
+}
+function titleMatchesBase(title: string, base: string): boolean {
+  if (!base) return false;
+  return title === `${base} - Antigravity IDE` || title.startsWith(`${base} - `) || title === base;
+}
+
+/**
+ * Basenames of worktree windows THIS process has opened via `ensureFolderWindowWs`
+ * and not yet closed. `findMainWindowWs` excludes them so, once one or more
+ * per-task worktree windows are open, a plan-authoring dispatch (which drives the
+ * MAIN workbench, not a worktree) can never be attached to a worktree window by
+ * the URL-prefix heuristic — the two are otherwise indistinguishable by URL.
+ */
+const OPEN_WORKTREE_WINDOWS = new Set<string>();
+
+/** Pick the MAIN workbench window from a CDP target array, EXCLUDING any worktree
+ *  windows we opened (`excludeBases`). Pure/deterministic for unit tests. */
+export function pickMainWindow(targets: any[], excludeBases: Iterable<string> = []): string {
+  const bases = [...excludeBases];
+  const isWorktreeWin = (t: any) =>
+    typeof t.title === 'string' && bases.some(b => titleMatchesBase(t.title, b));
+  const pages = (targets as any[]).filter(
+    t => t && t.type === 'page' && t.webSocketDebuggerUrl && !isWorktreeWin(t)
+  );
   const page =
     pages.find(t => typeof t.url === 'string' && t.url.startsWith(ANTIGRAVITY_WORKBENCH_URL_PREFIX)) ??
     pages.find(t => typeof t.url === 'string' && t.url.startsWith('vscode-file://')) ??
     pages.find(t => typeof t.url === 'string' && !t.url.startsWith('data:'));
-  if (!page) {
+  return page ? page.webSocketDebuggerUrl : '';
+}
+
+/** Find the main IDE window's WebSocket debugger URL (not the loading splash, and
+ *  never a per-task worktree window this process opened). */
+export async function findMainWindowWs(port: number = ANTIGRAVITY_DEFAULT_PORT): Promise<string> {
+  const targets = await cdpGet(port, '/json/list');
+  const ws = pickMainWindow(targets as any[], OPEN_WORKTREE_WINDOWS);
+  if (!ws) {
     throw new HarnessError(
       `Main Antigravity window not found on port ${port} (still loading?). Retry shortly.`
     );
   }
-  return page.webSocketDebuggerUrl;
+  return ws;
+}
+
+/**
+ * Pick, from a CDP `/json/list` target array, the workbench window opened ON a
+ * given folder — matched by the `"<folder-basename> - Antigravity IDE"` title
+ * (verified live), unique per task. Pure/deterministic (unit-tested). Returns the
+ * window's `webSocketDebuggerUrl`, or '' if none matches (e.g. still loading, its
+ * title not populated yet).
+ */
+export function pickFolderWindow(targets: any[], folderPath: string): string {
+  const base = folderWindowBase(folderPath);
+  if (!base) return '';
+  const pages = (targets as any[]).filter(
+    t => t && t.type === 'page' && t.webSocketDebuggerUrl && typeof t.title === 'string'
+  );
+  const hit =
+    pages.find(t => t.title === `${base} - Antigravity IDE`) ??
+    pages.find(t => t.title.startsWith(`${base} - `)) ??
+    pages.find(t => t.title === base);
+  return hit ? hit.webSocketDebuggerUrl : '';
+}
+
+/** Find the WebSocket URL of an already-open window on `folderPath`, or '' if
+ *  none is open yet (see `pickFolderWindow`). */
+export async function findFolderWindowWs(
+  folderPath: string,
+  port: number = ANTIGRAVITY_DEFAULT_PORT
+): Promise<string> {
+  const targets = await cdpGet(port, '/json/list');
+  return pickFolderWindow(targets as any[], folderPath);
+}
+
+/** Best-effort: close the IDE window opened on `folderPath` (frees the per-task
+ *  worktree window so windows don't accumulate as tasks complete / worktrees are
+ *  pruned) and stop excluding it in `findMainWindowWs`. Never throws. */
+export async function closeFolderWindow(
+  folderPath: string,
+  port: number = ANTIGRAVITY_DEFAULT_PORT
+): Promise<void> {
+  const base = folderWindowBase(folderPath);
+  try {
+    const targets = await cdpGet(port, '/json/list');
+    const win = (targets as any[]).find(
+      t => t && t.type === 'page' && t.id && typeof t.title === 'string' && titleMatchesBase(t.title, base)
+    );
+    if (win) {
+      // /json/close returns plain text ("Target is closing"), not JSON — fire and
+      // forget with a raw GET so cdpGet's JSON.parse can't reject.
+      await new Promise<void>(resolve => {
+        const req = http.get(`http://127.0.0.1:${port}/json/close/${win.id}`, res => {
+          res.on('data', () => {});
+          res.on('end', () => resolve());
+        });
+        req.on('error', () => resolve());
+        req.setTimeout(2000, () => req.destroy());
+      });
+    }
+  } catch {
+    /* best-effort */
+  } finally {
+    OPEN_WORKTREE_WINDOWS.delete(base);
+  }
+}
+
+/**
+ * Ensure a dedicated Antigravity window is open ON `folderPath` and return its
+ * CDP WebSocket URL — the mechanism that actually lets the department point a
+ * junior at a fresh bureau worktree. `selectFolder` only clicks an ALREADY-open
+ * project and cannot open a new path (verified live), so for delivery we OPEN the
+ * worktree in its own window: `Antigravity IDE.exe --new-window <folder>` reuses
+ * the running instance (single-instance) and adds a window on that folder, which
+ * surfaces on the same CDP debug port with title `"<basename> - Antigravity IDE"`
+ * (verified live). Reuses a window already open on the folder; otherwise launches
+ * one and polls until its titled target appears. Honors `opts.signal` every poll
+ * (job timeout / shutdown), matching the main-window attach path. The caller must
+ * have ensured the instance is running with the debug port first.
+ */
+export async function ensureFolderWindowWs(
+  cfg: JuniorConfig,
+  folderPath: string,
+  port: number = ANTIGRAVITY_DEFAULT_PORT,
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+): Promise<string> {
+  const base = folderWindowBase(folderPath);
+  const existing = await findFolderWindowWs(folderPath, port);
+  if (existing) {
+    OPEN_WORKTREE_WINDOWS.add(base);
+    return existing;
+  }
+  const binary = findJuniorBinary(cfg);
+  const child = child_process.spawn(binary, ['--new-window', folderPath], {
+    detached: true,
+    stdio: 'ignore'
+  });
+  child.unref();
+  const deadline = Date.now() + (opts.timeoutMs ?? 30000);
+  while (Date.now() < deadline) {
+    if (opts.signal?.aborted) {
+      throw new HarnessError(`${cfg.label}: aborted while opening a window on '${folderPath}'.`);
+    }
+    const ws = await findFolderWindowWs(folderPath, port);
+    if (ws) {
+      OPEN_WORKTREE_WINDOWS.add(base);
+      return ws;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new HarnessError(
+    `${cfg.label}: opened a window on '${folderPath}' but no CDP window titled ` +
+      `'${base} - Antigravity IDE' appeared within timeout.`
+  );
 }
 
 /** Lines that are IDE chrome, not conversation content. */
