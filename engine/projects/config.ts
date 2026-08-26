@@ -1,7 +1,6 @@
 import path from 'node:path';
 import type { DbConnection } from '../contract/types.ts';
 import { PROJECT_META_KEYS } from '../contract/constants.ts';
-import { getRepoRoot } from '../worktrees/manager.ts';
 
 export interface ProjectConfig {
   projectsRoot: string;
@@ -11,6 +10,10 @@ export interface ProjectConfig {
 
 export const DEFAULT_REPO_PREFIX = 'dept-';
 export const DEFAULT_GITHUB_OWNER = 'departmentofcoding-wq';
+/** Operator-confirmed bureau default (2026-08-26): all provisioned projects
+ * live under D:\projects. Overridable via the projects_root meta key or
+ * BUREAU_PROJECTS_ROOT env; tests always set the meta to a temp dir. */
+export const DEFAULT_PROJECTS_ROOT = 'D:\\projects';
 
 function getMetaValue(db: DbConnection, key: string, fallbackKey?: string): string | null {
   const row = db.get<{ value: string }>(
@@ -37,7 +40,7 @@ export function getProjectsRoot(db: DbConnection): string {
   if (meta) return path.resolve(meta);
   return process.env.BUREAU_PROJECTS_ROOT
     ? path.resolve(process.env.BUREAU_PROJECTS_ROOT)
-    : path.join(getRepoRoot(), 'projects');
+    : DEFAULT_PROJECTS_ROOT;
 }
 
 export function setProjectsRoot(db: DbConnection, rootDir: string): void {

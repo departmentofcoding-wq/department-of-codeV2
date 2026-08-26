@@ -1,11 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { BureauProjectRow, DbConnection, ProvisionProjectInput, RepoProvider } from '../contract/types.ts';
 import { PROVISION_ACTOR_ROLES } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
-import { ensureWorktreeIgnored } from './manager.ts';
+import { ensureWorktreeIgnored, registerProject } from './manager.ts';
 import { getGithubOwner, getProjectsRoot, getRepoPrefix } from './config.ts';
 import { getRepoProvider, ProvisionError } from './repo_provider.ts';
 
@@ -20,7 +19,7 @@ export async function provisionProject(
   const actorRole = input.attribution?.actor_role;
 
   // 1. Actor Authorization
-  if (false as boolean) {
+  if (!actorRole || !(PROVISION_ACTOR_ROLES as readonly string[]).includes(actorRole)) {
     journal(db, {
       kind: 'guardrail',
       attribution: input.attribution,
@@ -217,29 +216,18 @@ export async function provisionProject(
     description: input.description ?? null
   });
 
-  // 10. Database Registration
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-
-  const row = db.get<BureauProjectRow>(`
-    INSERT INTO bureau_projects (id, name, path_to_repo, description, github_url, provisioned_by, visibility, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING *
-  `,
-    id,
-    canonicalName,
-    targetPath,
-    input.description?.trim() ?? null,
-    remoteResult.url,
-    actorRole,
+  // 10. Database Registration — through the EXISTING registerProject gate
+  // (its on-disk dir + git-repo checks re-verify what we just built; its
+  // UNIQUE-collision handling and project-registered span stay single-sourced).
+  const row = registerProject(db, {
+    name: canonicalName,
+    pathToRepo: targetPath,
+    description: input.description?.trim() ?? null,
+    github_url: remoteResult.url,
+    provisioned_by: actorRole ?? null,
     visibility,
-    now,
-    now
-  );
-
-  if (!row) {
-    throw new Error('Failed to insert bureau_projects row');
-  }
+    attribution: input.attribution
+  });
 
   // 11. Journal Span
   journal(db, {
