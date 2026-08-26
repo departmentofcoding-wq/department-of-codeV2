@@ -10,11 +10,46 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 | | |
 |---|---|
-| **Phase** | **Phase 7 — Live operation: IN PROGRESS. The department has now shipped TWO real tasks end-to-end. Task `82b97764` (assets tab, `c7f9b37`). Task `e489b734` (ntfy notifications, `1c14534`) went filed → auto-kickoff → plan review → ZAI approve → junior IMPLEMENTED + COMMITTED (`1bbee8d`) → ZAI walkthrough review → merge — and en route surfaced + fixed two live-harness bugs that had blocked completion (junior new-conversation readiness; senior completion-detection false-positive). The plan→work flow loop is CLOSED and now runs without hanging. (Phase 6 Operator Console: complete.)** |
+| **Phase** | **Phase 7 close-out DONE + Part-A improvements A1–A5 all merged (2026-08-26). Roadmap `docs/plan-bureau-kernel-roadmap.md` Part A executed: A1 merge-law git hook + delivery-tail lock, A2 attribution/budget/sandbox-remote, A3 staged verification (D0 + impl), A4 test determinism (retired `fileParallelism:false`), A5 real cost accounting. Each senior-reviewed (Claude CLI headless) and merged `--no-ff` to local main. Plans for the next phases now recorded: `docs/phase-8-plan.md` (concurrency), `docs/phase-9-plan.md` (Bureau Kernel extraction + Department Kit), `docs/phase-10-plan.md` (first real new department).** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`); **ntfy flow `1c14534`** (feature tip `f349a13`, Senior verdict `d398b53`); **console task archive + Workers flow view + senior conversation reuse `1710098`** (features `27b85e5` + `60be286`, Senior verdict `docs/reviews/verdict-console-archive-flow.md`). |
-| Suite | 375/375 tests, 87 files, `npm run build` clean (on merged main, Senior re-run twice). **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers` + `GET /api/flow` pipeline stepper, `workerRoster`/`taskFlow`) — department roster with live active/idle status plus per-task stage + stuck flag, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| Suite | **479/479 tests, 101 files, under full file parallelism (A4), `npm run build` clean on merged main.** (was 375/87) **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers` + `GET /api/flow` pipeline stepper, `workerRoster`/`taskFlow`) — department roster with live active/idle status plus per-task stage + stuck flag, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
 | In flight | Nothing. Clean handoff point. |
-| Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
+| Next action | **Part A (A1–A5) complete and merged.** Next: **Phase 8 — concurrency at scale** (`docs/phase-8-plan.md`; A4 was its precondition). Then Phase 9 (kernel extraction) and Phase 10 (first new department). Loose ends carried forward: the A1 merge-law hooks are **NOT installed in-repo** (`npm run hooks:install` would block the department's own engine-development merges — resolve that policy tension first); the intake `acceptance_tests` drafting needs a `bureau_intake_sessions.acceptance_tests` D0 addendum (the A3 staged verifier already consumes `task.acceptance_tests`); A5 prices are operator-set via `setModelPrice`/meta (unset ⇒ honest "unpriced floor", see `npm run cost:report`). Gemini keys live; ceilings in `bureau_meta`. |
+
+**Part-A improvements sprint — A1–A5 all merged to local main (2026-08-26):**
+Executed Part A of `docs/plan-bureau-kernel-roadmap.md` end-to-end. Each stream
+was built on its own `wt/*` branch (green suite + `tsc --noEmit`, mutation-proven
+where it had a code guard), **senior-reviewed by the Claude CLI senior** (driven
+headless via `claude -p`; ZCode/zai was offline this session), REVISE rounds
+fixed live, and merged `--no-ff`.
+
+- **A1 — merge-law enforcement + delivery-tail lock** (`c92e2ed`, verdict
+  `docs/reviews/verdict-a1.md`): `engine/delivery/merge_guard.ts` predicate +
+  git hooks (`scripts/merge_guard_hook.ts`, `scripts/install_git_hooks.ts`,
+  `npm run hooks:install`) — pre-merge-commit/pre-commit **and** a
+  `reference-transaction` hook that closes the fast-forward bypass the senior
+  caught; `t45` locks the seam-joined tail (walkthrough APPROVE → drain → done).
+  Live-proven refusal + operator override. **Hooks intentionally NOT installed
+  in-repo** (would block engine-development merges).
+- **A2 — Phase-7 leftovers** (`9c35957`, `verdict-a2.md`): model-id attribution
+  fix (`ollama/qwen2.5-coder`→`qwen2.5-coder` + boot-door `normalizeModelIds`
+  heal), mutation-proven budget refusal (token + request), `t46` backup vs a
+  real bare remote.
+- **A3 — multi-tier verification**: D0 freeze (`a467485`, `verdict-a3-d0.md`) —
+  `VERIFY_STAGES` + nullable columns; impl (`ea6ef10`, `verdict-a3-impl.md`) —
+  staged `verify.run` (structural → fail-to-pass → pass-to-pass), aggregate exit
+  0 iff every non-skipped stage passes; back-compat with the single `verify_cmd`.
+- **A4 — test determinism** (`dc23acc`, `verdict-a4.md`): retired
+  `fileParallelism:false`; wall-clock condition loops in t4/t6/t14/t28 → `pollUntil`;
+  t36 explicit timeout. Suite green under full parallelism, ~2.4× faster.
+- **A5 — cost accounting** (this stream): per-model pricing (meta-updatable),
+  rollup computes dollars from tokens × price, honesty preserved (unpriced spend
+  is a FLOOR, never $0), `getPeriodCostRollup` + `npm run cost:report`.
+
+Method note: the senior was driven with a "headless — review statically" note
+(the `claude -p` sandbox can't run the suite); it verified by close code reading.
+Merges are on **local main only (not pushed)** except where a session pushes.
+Next phases planned in `docs/phase-8-plan.md` / `-9-` / `-10-`.
 
 **ZCode 3.8.1 senior harness recalibrated — GLM senior drives again (2026-08-26,
 merged `e8f8097`):** the zai/GLM senior broke when ZCode upgraded to 3.8.1
