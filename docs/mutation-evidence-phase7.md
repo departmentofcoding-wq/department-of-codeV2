@@ -228,3 +228,21 @@ Back-compat: the 8 existing verify test files (t9/t22/t23/t24/t27/t28/t29/t50)
 stay green — the staged runner degrades to the single verify_cmd. Restoration
 verified; suite **473/100** on the rebased tip (was 449/96 pre-rebase onto
 A1+A2+D0), `npm run build` clean.
+
+## Stream addendum — A5 cost accounting meets reality (`wt/a5-cost-accounting`)
+
+Per-model pricing (updatable via meta), a rollup that computes dollars from
+tokens × price where spans carried none, and a monthly-style period rollup —
+keeping the honesty rule that unpriced spend is a FLOOR, never $0.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-COST-1 | An unpriced model's real token spend is declared UNKNOWN (basis 'unpriced', unpriced_acts>0), never folded in as $0 (`engine/ledger/rollups.ts`) | Defaulted an unpriced model to a $0 price: `getModelPrice(...) ?? { inPerMtok: 0, outPerMtok: 0 }` | `cost.test.ts` "NEVER treats an unpriced model's real token spend as $0" + "period rollup … flags unpriced spend as a floor" | 2 failed / 4 passed (unpriced spend read as priced-at-zero, basis no longer 'unpriced'); restored → 6/6 pass |
+
+Other behavior covered by direct tests (verified by inspection): pricing
+resolution order (meta → model column → null) and updatability; recorded cost
+used as-is (back-compat — `ledger.test.ts` unchanged and green); computed cost =
+tokens × price; period rollup recorded+computed totals and time-window scoping —
+all in `cost.test.ts`. Real rollup demonstrated on the live `db/bureau.db` via
+`npm run cost:report` (Google officer model: 23445/3517 tokens, basis=unpriced,
+flagged floor). Restoration verified; suite 479/101, `npm run build` clean.
