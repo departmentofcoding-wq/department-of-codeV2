@@ -46,3 +46,16 @@ Proven live: `git merge --ff-only` of an unblessed branch is refused (main
 unchanged); `BUREAU_ALLOW_MERGE=1` allows + journals an override. Unit tests:
 6 `decideRefUpdate` cases in `tc_merge_guard.test.ts`. Walkthrough claim 4 and
 the limitations note updated.
+
+---
+
+## Round 2 verdict: APPROVE
+
+Senior (Claude CLI) re-reviewed after the fast-forward fix and returned
+**VERDICT: APPROVE**. Verified by close static reading (the senior's sandbox
+blocked running the suite, disclosed honestly): the ff-bypass is genuinely
+closed (`decideRefUpdate` allows create/delete/no-op/override, else requires the
+tip be on `origin/main` or pass `mergeAllowed`); `--no-verify` does not reopen it
+(reference-transaction still fires); T45 assertions match real `pr_merge.ts`;
+done-gate untouched. Non-blocking note (addressed): the guard is local-clone
+scoped, now stated in the walkthrough's limitations.

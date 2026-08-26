@@ -75,6 +75,12 @@ out-of-band-merge scar. This stream adds the tooling and the regression lock.
   The reference-transaction hook was added to catch fast-forward/reset advances
   of `main`; proven live (ff refused, override allowed). See
   `docs/reviews/verdict-a1.md`.
+- **Scope (senior round 2, non-blocking):** the guard is **local-clone-scoped** —
+  it only fires in a repo where `npm run hooks:install` has run. A merge via the
+  GitHub UI, or from a fresh clone that never installed the hooks, produces no
+  refusal. This matches the task (a git hook) and the actual 2026-08-24 scar (a
+  local hand-merge in this repo); server-side branch protection is a separate,
+  future control.
 - **Not yet done (operator/live steps of A1, intentionally out of this stream):**
   installing the hooks in *this* repo (`npm run hooks:install`), the live
   intake→`done` run capture, and lifting the hand-merge pause in
