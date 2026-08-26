@@ -185,6 +185,15 @@ describe('Self-Serve Project Provisioning (Job-Driven Workflow)', () => {
       name: '..',
       attribution: juniorAttr
     })).rejects.toThrow();
+
+    // Traversal via a hostile repoPrefix: the slug check validates only the
+    // requested name, so a prefix carrying '../' is the vector ONLY the
+    // path-containment guard catches.
+    await expect(provisionProject(db, {
+      name: 'innocent',
+      repoPrefix: '../evil/',
+      attribution: juniorAttr
+    })).rejects.toThrow(/escapes projects root/i);
   });
 
   it('T-PROV-5: Actor permissions and visibility gate enforce role boundaries', async () => {
