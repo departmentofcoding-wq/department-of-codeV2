@@ -225,7 +225,10 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       // processes can cost several seconds — the deterministic wait returns the
       // instant the whole chain is done and only fails after a generous deadline.
       await pollUntil(() => allDone() || undefined, {
-        timeoutMs: 25000,
+        // ≥ the old 3000×10ms budget; this is the heaviest, most contention-prone
+        // test (two real subprocesses under full parallelism). The it() timeout
+        // is 60s, so keep the deadline generous rather than shrinking it.
+        timeoutMs: 30000,
         intervalMs: 10,
         label: 't4 kill-chain fully resumed (parent + 3 children done)'
       });
