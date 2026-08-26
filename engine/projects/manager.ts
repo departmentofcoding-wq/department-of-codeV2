@@ -77,14 +77,17 @@ export function registerProject(
 
   try {
     const row = db.get<BureauProjectRow>(`
-      INSERT INTO bureau_projects (id, name, path_to_repo, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO bureau_projects (id, name, path_to_repo, description, github_url, provisioned_by, visibility, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `,
       id,
       name,
       resolvedPath,
       input.description?.trim() ?? null,
+      input.github_url ?? null,
+      input.provisioned_by ?? null,
+      input.visibility ?? null,
       now,
       now
     );
@@ -100,7 +103,10 @@ export function registerProject(
         projectId: row.id,
         name: row.name,
         pathToRepo: row.path_to_repo,
-        description: row.description
+        description: row.description,
+        githubUrl: row.github_url,
+        provisionedBy: row.provisioned_by,
+        visibility: row.visibility
       }
     });
 

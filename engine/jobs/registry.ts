@@ -407,3 +407,32 @@ defineJob(
   },
   { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
 );
+
+// 21. project.provision — job-driven project provisioning: directory creation,
+// git init, remote repo creation via RepoProvider, and DB registration.
+const projectProvisionSchema = z.object({
+  name: z.string(),
+  description: z.string().optional().nullable(),
+  visibility: z.enum(['public', 'private', 'internal']).optional(),
+  projectsRoot: z.string().optional(),
+  repoPrefix: z.string().optional(),
+  githubOwner: z.string().optional(),
+  attribution: z.object({
+    actor_role: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    account: z.string().nullable().optional()
+  })
+});
+
+defineJob(
+  'project.provision',
+  projectProvisionSchema,
+  async (ctx) => {
+    const payload = projectProvisionSchema.parse(ctx.payload ?? {});
+    const { provisionProject } = await import('../projects/provision.ts');
+    await provisionProject(ctx.db, payload as any);
+  },
+  { maxAttempts: 3, timeoutMs: 60000 }
+);
+

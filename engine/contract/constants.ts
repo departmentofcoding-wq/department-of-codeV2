@@ -47,6 +47,7 @@ export const SPAN_KINDS = [
   'system',
   'task-filed',
   'project-registered',
+  'project-provisioned',
   'dispatch',
   'observation',
   'review'
@@ -72,7 +73,8 @@ export const JOB_KINDS = [
   'watchdog.recover',
   'backup.push',
   'secretary.claim',
-  'secretary.release'
+  'secretary.release',
+  'project.provision'
 ] as const;
 
 export type JobKind = typeof JOB_KINDS[number] | (string & {});
@@ -124,6 +126,20 @@ export const REVIEW_PR_META_KEYS = {
   REVIEW_WORK_ROUNDS_CEILING: 'review:work_rounds_ceiling',
   PR_BASE_BRANCH: 'pr:base_branch'
 } as const;
+
+export const PROJECT_META_KEYS = {
+  PROJECTS_ROOT: 'projects_root',
+  REPO_PREFIX: 'repo_prefix',
+  GITHUB_OWNER: 'github_owner'
+} as const;
+
+export const PROVISION_ACTOR_ROLES = [
+  'junior-engineer',
+  'senior-engineer',
+  'human-operator'
+] as const;
+
+export type ProvisionActorRole = typeof PROVISION_ACTOR_ROLES[number];
 
 // Raised 3 → 7: real plans often need several revise rounds to converge, and the
 // department would rather keep iterating than stall. At the ceiling the flow no

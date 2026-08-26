@@ -12,6 +12,9 @@ export interface BureauProjectRow {
   name: string;
   path_to_repo: string;
   description: string | null;
+  github_url: string | null;
+  provisioned_by: string | null;
+  visibility: 'public' | 'private' | 'internal' | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -20,6 +23,19 @@ export interface RegisterProjectInput {
   name: string;
   pathToRepo: string;
   description?: string | null;
+  github_url?: string | null;
+  provisioned_by?: string | null;
+  visibility?: 'public' | 'private' | 'internal' | string | null;
+  attribution: AttributionTuple;
+}
+
+export interface ProvisionProjectInput {
+  name: string;
+  description?: string | null;
+  visibility?: 'public' | 'private' | 'internal';
+  projectsRoot?: string;
+  repoPrefix?: string;
+  githubOwner?: string;
   attribution: AttributionTuple;
 }
 
@@ -525,5 +541,18 @@ export interface BureauAssetRow {
   updated_at: string;
 }
 
+export interface CreateRemoteOptions {
+  name: string;
+  owner: string;
+  visibility: 'private' | 'public' | 'internal' | string;
+  sourcePath: string;
+  description?: string | null;
+}
 
+export interface CreateRemoteResult {
+  url: string;
+}
 
+export interface RepoProvider {
+  createRemote(opts: CreateRemoteOptions): Promise<CreateRemoteResult>;
+}

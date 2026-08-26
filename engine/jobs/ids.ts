@@ -13,3 +13,9 @@
 export function planCycleJobId(taskId: string): string {
   return `plan.cycle:${taskId}`;
 }
+
+/** The deterministic project.provision job id for a canonical project name. */
+export function projectProvisionJobId(canonicalName: string): string {
+  return `project.provision:${canonicalName.toLowerCase().trim()}`;
+}
+
