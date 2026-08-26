@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { openDbConnection, closeDatabase } from '../../engine/db/index.ts';
 import { mergeAllowed } from '../../engine/delivery/merge_guard.ts';
-import { decideHookOutcome, type HookInputs } from '../../scripts/merge_guard_hook.ts';
+import { decideHookOutcome, decideRefUpdate, type HookInputs, type RefUpdateInput } from '../../scripts/merge_guard_hook.ts';
 import type { DbConnection } from '../../engine/contract/types.ts';
 
 /**
@@ -147,6 +147,56 @@ describe('decideHookOutcome: git-hook enforcement of the merge law', () => {
 
   it('honors the operator override, recording it as an override (not a silent allow)', () => {
     const d = decideHookOutcome({ ...base, allowOverride: true }, bless(false));
+    expect(d.exitCode).toBe(0);
+    expect(d.outcome).toBe('override');
+  });
+});
+
+/**
+ * The reference-transaction layer — the backstop that catches FAST-FORWARD
+ * advances of the protected branch (which create no commit, so pre-*-commit
+ * never fire). Must refuse an unblessed ff/reset while still allowing a
+ * `git pull` of already-delivered remote history.
+ */
+describe('decideRefUpdate: fast-forward / ref-update enforcement', () => {
+  const bless = (allowed: boolean) => () => ({ allowed, reason: allowed ? 'blessed' : 'not blessed' });
+  const ZERO = '0'.repeat(40);
+  const OLD = 'a'.repeat(40);
+  const NEW = 'b'.repeat(40);
+  const base: RefUpdateInput = { ref: 'refs/heads/main', oldValue: OLD, newValue: NEW, protectedRef: 'refs/heads/main', allowOverride: false };
+
+  it('ignores updates to non-protected refs (stream branches, remote-tracking)', () => {
+    const d = decideRefUpdate({ ...base, ref: 'refs/heads/wt/x' }, bless(false), () => false);
+    expect(d.exitCode).toBe(0);
+    expect(d.outcome).toBe('allow');
+  });
+
+  it('allows branch creation (old = zero) and deletion (new = zero)', () => {
+    expect(decideRefUpdate({ ...base, oldValue: ZERO }, bless(false), () => false).exitCode).toBe(0);
+    expect(decideRefUpdate({ ...base, newValue: ZERO }, bless(false), () => false).exitCode).toBe(0);
+  });
+
+  it('REFUSES a fast-forward of main to an unblessed tip not on the remote (the ff bypass)', () => {
+    const d = decideRefUpdate(base, bless(false), () => false);
+    expect(d.exitCode).toBe(1);
+    expect(d.outcome).toBe('refuse');
+  });
+
+  it('allows a pull: the new tip is already on origin/main (delivered history)', () => {
+    const d = decideRefUpdate(base, bless(false), () => true);
+    expect(d.exitCode).toBe(0);
+    expect(d.outcome).toBe('allow');
+    expect(d.reason).toContain('already on the remote');
+  });
+
+  it('allows a blessed tip even if not yet on the remote', () => {
+    const d = decideRefUpdate(base, bless(true), () => false);
+    expect(d.exitCode).toBe(0);
+    expect(d.outcome).toBe('allow');
+  });
+
+  it('honors the operator override on a ref update', () => {
+    const d = decideRefUpdate({ ...base, allowOverride: true }, bless(false), () => false);
     expect(d.exitCode).toBe(0);
     expect(d.outcome).toBe('override');
   });

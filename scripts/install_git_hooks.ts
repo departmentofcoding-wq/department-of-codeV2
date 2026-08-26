@@ -20,7 +20,9 @@ const MANAGED_MARKER = 'bureau-merge-law-hook';
 
 function wrapperFor(hookName: string): string {
   // LF-only. `git rev-parse --show-toplevel` keeps the path correct regardless
-  // of where git invokes the hook from.
+  // of where git invokes the hook from. The reference-transaction hook is passed
+  // its state arg ($@) and reads the ref lines from the stdin exec inherits.
+  const passArgs = hookName === 'reference-transaction' ? ' "$@"' : '';
   return [
     '#!/bin/sh',
     `# ${MANAGED_MARKER} — installed by scripts/install_git_hooks.ts. Do not edit.`,
@@ -28,7 +30,7 @@ function wrapperFor(hookName: string): string {
     '# travel the tracked delivery path (Senior APPROVE + done-gate). See',
     '# engine/delivery/merge_guard.ts.',
     'ROOT="$(git rev-parse --show-toplevel)"',
-    `exec node --experimental-strip-types "$ROOT/scripts/merge_guard_hook.ts" ${hookName}`,
+    `exec node --experimental-strip-types "$ROOT/scripts/merge_guard_hook.ts" ${hookName}${passArgs}`,
     ''
   ].join('\n');
 }
@@ -43,7 +45,10 @@ export function installGitHooks(opts?: { repoDir?: string; journalInstall?: bool
   fs.mkdirSync(absHooksDir, { recursive: true });
 
   const installed: string[] = [];
-  for (const hookName of ['pre-merge-commit', 'pre-commit']) {
+  // reference-transaction is the backstop that also catches fast-forward
+  // advances of the protected branch (which create no commit, so the
+  // pre-*-commit hooks never fire).
+  for (const hookName of ['pre-merge-commit', 'pre-commit', 'reference-transaction']) {
     const hookPath = path.join(absHooksDir, hookName);
     // Refuse to clobber a NON-bureau hook the user may already rely on.
     if (fs.existsSync(hookPath)) {

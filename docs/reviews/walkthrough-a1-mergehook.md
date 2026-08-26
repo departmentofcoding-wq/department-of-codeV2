@@ -17,10 +17,15 @@ out-of-band-merge scar. This stream adds the tooling and the regression lock.
   `mergeAllowed(db, tip)`: a commit is blessed iff a Senior-approved
   `bureau_work_reviews` row names exactly that `reviewed_commit` AND the owning
   task reached the done-gate (`state='done'`, `merged_at` set). No git, no I/O.
-- `scripts/merge_guard_hook.ts` — the git-hook layer. `decideHookOutcome` is
-  factored pure (branch check → override → plain-commit refusal → merge
-  blessing) and unit-tested; `runMergeGuardHook` wires git inputs + journals the
-  outcome. Fail-closed on the protected branch if the DB can't be consulted.
+- `scripts/merge_guard_hook.ts` — the git-hook layer. `decideHookOutcome` and
+  `decideRefUpdate` are factored pure and unit-tested; `runMergeGuardHook`
+  (pre-merge-commit/pre-commit) and `runReferenceTransactionGuard`
+  (reference-transaction) wire git inputs + journal the outcome. Fail-closed on
+  the protected branch if the DB can't be consulted. The **reference-transaction**
+  hook closes the fast-forward bypass — it fires on ANY update to `refs/heads/main`
+  (fast-forwards and resets included, which create no commit and so never trigger
+  the pre-*-commit hooks), while still allowing a `git pull` of history already
+  delivered on the remote (a new tip contained in `origin/main`).
 - `scripts/install_git_hooks.ts` — idempotent installer (`npm run hooks:install`)
   that writes LF-only `pre-merge-commit`/`pre-commit` wrappers, refuses to
   clobber a non-bureau hook, sets `merge.ff=false`, and journals the install.
@@ -46,22 +51,30 @@ out-of-band-merge scar. This stream adds the tooling and the regression lock.
    the guard's approved-review lookup made a forged commit blessed, and
    `tc_merge_guard` "refuses a forged commit…" failed (`expected true to be
    false`); restored → 5/5. (Recorded in the mutation-evidence file.)
-4. **The hook refuses out-of-band merges — proven live** (throwaway repo, hook
-   pointed at this script, temp DB): `git merge --no-ff feature` into `main` was
-   **refused, exit 1, main unchanged**, and journaled as a `guardrail` span.
-   `BUREAU_ALLOW_MERGE=1 git merge …` was **allowed** and journaled as a `human`
-   override span (never silent). Verified via the temp DB's `bureau_journal`.
+4. **The hook refuses out-of-band merges — proven live** (throwaway repo, hooks
+   pointed at this script, temp DB), for BOTH paths:
+   - `git merge --no-ff feature` into `main` → **refused** (guardrail span), main
+     unchanged;
+   - `git merge --ff-only feature` (the fast-forward bypass) → **refused by the
+     reference-transaction hook** in the `prepared` phase, main unchanged;
+   - `BUREAU_ALLOW_MERGE=1 git merge --ff-only …` → **allowed**, journaled as an
+     override span (never silent).
+   Verified via the temp DB's `bureau_journal` (refused + override spans).
 
 ## Notes / honest limitations
 
 - On the git version tested, `MERGE_HEAD` is not exposed at `pre-merge-commit`
-  time (only `AUTO_MERGE`), so the incoming tip isn't always resolvable in-hook.
-  This is not a defect: the tracked delivery path merges on the **remote** via
-  the PR provider, so any **local** merge into `main` is by definition
-  out-of-band. The hook therefore refuses local merges into `main` (fail-closed),
-  which is the desired scar-prevention behavior; `git pull` fast-forwards create
-  no commit and fire no hook. `mergeAllowed` remains the precise predicate for
-  the resolvable-tip case and documents "blessed".
+  time (only `AUTO_MERGE`), so the incoming tip isn't always resolvable in that
+  hook. That is not a defect: any **local** non-ff merge into `main` is
+  out-of-band (the tracked path merges on the remote), so pre-merge-commit
+  fail-closed-refuses it. Fast-forward advances (which resolve no MERGE_HEAD and
+  create no commit) are handled by the **reference-transaction** hook instead,
+  which evaluates the actual new tip against `mergeAllowed` and the remote.
+- **Fast-forward gap (senior REVISE, round 1) — CLOSED.** The first submission
+  only had pre-merge-commit/pre-commit, which a `git merge --ff-only` bypasses.
+  The reference-transaction hook was added to catch fast-forward/reset advances
+  of `main`; proven live (ff refused, override allowed). See
+  `docs/reviews/verdict-a1.md`.
 - **Not yet done (operator/live steps of A1, intentionally out of this stream):**
   installing the hooks in *this* repo (`npm run hooks:install`), the live
   intake→`done` run capture, and lifting the hand-merge pause in

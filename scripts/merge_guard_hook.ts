@@ -19,9 +19,12 @@
  * silent. The tracked delivery path (pr.merge) merges on the REMOTE via the PR
  * provider, so it never trips this local hook — only manual git does.
  *
- * Known limitation: a fast-forward merge creates no commit and runs no hook.
- * The installer sets `merge.ff = false` on this repo so a manual merge into
- * main always creates a merge commit the hook can inspect.
+ * Fast-forward advances of main create no commit, so pre-merge-commit /
+ * pre-commit never fire for them. The `reference-transaction` hook (below)
+ * closes that gap — it runs on ANY update to the protected ref, fast-forwards
+ * and resets included, while still allowing a `git pull` of history already
+ * delivered on the remote. The installer also sets `merge.ff = false` so a
+ * manual non-ff merge creates an inspectable commit for the earlier hooks.
  */
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -209,8 +212,147 @@ export function runMergeGuardHook(hookName: string): number {
   return decision.exitCode;
 }
 
-// Invoked directly by the git hook wrapper: `node ... merge_guard_hook.ts <hookName>`
+// ---------------------------------------------------------------------------
+// reference-transaction hook — closes the fast-forward bypass.
+//
+// pre-merge-commit / pre-commit only fire when a COMMIT is created. A
+// fast-forward merge (`git merge --ff-only wt/x`, or `--ff` overriding
+// merge.ff=false) advances `main` with no commit object, so those hooks never
+// run — the exact muscle-memory move behind the 2026-08-24 scar. The
+// reference-transaction hook fires on ANY update to a ref, fast-forwards
+// included, so it is the real backstop.
+//
+// It must NOT break `git pull`: a legitimate main advance pulls history that
+// was already delivered on the remote (pr.merge merges there). So a new tip
+// that is already contained in `origin/<branch>` is allowed — it came through
+// the tracked path on the remote. Everything else advancing local `main` must
+// be blessed in the DB, or overridden.
+// ---------------------------------------------------------------------------
+
+const ZERO_OID = /^0+$/;
+
+export interface RefUpdateInput {
+  ref: string;
+  oldValue: string;
+  newValue: string;
+  protectedRef: string;
+  allowOverride: boolean;
+}
+
+/**
+ * Pure decision for one ref update line. `isOnProtectedRemote(tip)` answers
+ * "is this commit already on origin/<branch>?" (delivered remote history);
+ * `isBlessed(tip)` is the DB predicate. No git, no I/O — unit-testable.
+ */
+export function decideRefUpdate(
+  input: RefUpdateInput,
+  isBlessed: (tip: string) => { allowed: boolean; reason: string },
+  isOnProtectedRemote: (tip: string) => boolean
+): HookDecision {
+  if (input.ref !== input.protectedRef) {
+    return { exitCode: 0, reason: `${input.ref} is not the protected ref`, outcome: 'allow', tip: null };
+  }
+  // Branch deletion (new = zero) and creation (old = zero) are not the scar
+  // (advancing main to unreviewed work) — leave them to git.
+  if (ZERO_OID.test(input.newValue) || ZERO_OID.test(input.oldValue)) {
+    return { exitCode: 0, reason: `ref create/delete on ${input.ref}`, outcome: 'allow', tip: null };
+  }
+  if (input.oldValue === input.newValue) {
+    return { exitCode: 0, reason: 'no-op ref update', outcome: 'allow', tip: input.newValue };
+  }
+  if (input.allowOverride) {
+    return { exitCode: 0, reason: `BUREAU_ALLOW_MERGE override — operator advanced ${input.ref}`, outcome: 'override', tip: input.newValue };
+  }
+  // Already delivered on the remote → this is a pull/fetch of blessed history.
+  if (isOnProtectedRemote(input.newValue)) {
+    return { exitCode: 0, reason: `new tip ${input.newValue.slice(0, 12)} is already on the remote — delivered history`, outcome: 'allow', tip: input.newValue };
+  }
+  const verdict = isBlessed(input.newValue);
+  return {
+    exitCode: verdict.allowed ? 0 : 1,
+    reason: verdict.allowed
+      ? verdict.reason
+      : `${verdict.reason}. A fast-forward or reset to ${input.ref} is refused unless the tip travelled the tracked path (BUREAU_ALLOW_MERGE=1 to override)`,
+    outcome: verdict.allowed ? 'allow' : 'refuse',
+    tip: input.newValue
+  };
+}
+
+/** Is `tip` contained in the protected branch's remote-tracking ref? */
+function isOnProtectedRemote(branch: string, tip: string): boolean {
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  // Verify the remote ref exists first, else is-ancestor errors are ambiguous.
+  if (git(`rev-parse --verify --quiet ${remoteRef}`) === null) return false;
+  try {
+    execSync(`git merge-base --is-ancestor ${tip} ${remoteRef}`, { stdio: ['ignore', 'ignore', 'ignore'] });
+    return true; // exit 0 → tip is an ancestor-or-equal of the remote tip
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * reference-transaction hook entry. Git runs it in three states ('prepared',
+ * 'committed', 'aborted') and pipes `<old> <new> <ref>` lines on stdin. We only
+ * act in 'prepared' — the phase where a non-zero exit aborts the whole update.
+ */
+export function runReferenceTransactionGuard(state: string): number {
+  if (state !== 'prepared') return 0;
+
+  let raw = '';
+  try {
+    raw = fs.readFileSync(0, 'utf8');
+  } catch {
+    return 0; // no stdin — nothing to guard
+  }
+  const protectedBranch = process.env.BUREAU_PROTECTED_BRANCH || 'main';
+  const protectedRef = `refs/heads/${protectedBranch}`;
+  const allowOverride = process.env.BUREAU_ALLOW_MERGE === '1';
+
+  const relevant = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.split(/\s+/))
+    .filter((p) => p.length >= 3 && p[2] === protectedRef);
+
+  if (relevant.length === 0) return 0; // this transaction doesn't touch the protected ref
+
+  let db: DbConnection | null = null;
+  try {
+    db = openDbConnection(process.env.BUREAU_DB_PATH || 'db/bureau.db');
+  } catch (err: any) {
+    process.stderr.write(
+      `\n[merge-guard] could not evaluate the merge law for ${protectedRef} (${err?.message ?? err}). ` +
+        `Refusing the update. Set BUREAU_ALLOW_MERGE=1 to override.\n\n`
+    );
+    return allowOverride ? 0 : 1;
+  }
+
+  const dbRef = db;
+  for (const [oldValue, newValue] of relevant) {
+    const decision = decideRefUpdate(
+      { ref: protectedRef, oldValue, newValue, protectedRef, allowOverride },
+      (tip) => mergeAllowed(dbRef, tip),
+      (tip) => isOnProtectedRemote(protectedBranch, tip)
+    );
+    journalOutcome(dbRef, decision, 'reference-transaction');
+    if (decision.exitCode !== 0) {
+      process.stderr.write(`\n[merge-guard] REFUSED (ref update): ${decision.reason}\n\n`);
+      return decision.exitCode;
+    }
+    if (decision.outcome === 'override') {
+      process.stderr.write(`\n[merge-guard] ${decision.reason}\n\n`);
+    }
+  }
+  return 0;
+}
+
+// Invoked directly by the git hook wrapper: `node ... merge_guard_hook.ts <hookName> [state]`
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('merge_guard_hook.ts')) {
   const hookName = process.argv[2] || 'pre-merge-commit';
+  if (hookName === 'reference-transaction') {
+    process.exit(runReferenceTransactionGuard(process.argv[3] || ''));
+  }
   process.exit(runMergeGuardHook(hookName));
 }
