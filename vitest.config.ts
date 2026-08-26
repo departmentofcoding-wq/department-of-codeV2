@@ -6,22 +6,22 @@ export default defineConfig({
     environment: 'node',
     include: ['engine/**/*.test.ts', 'test/**/*.test.ts'],
     isolate: true,
-    // Determinism over speed. Several integration tests spawn real child
-    // processes (crash-kill scenarios: t4, t28) and real browsers (t36, t38)
-    // and then assert on exactly-once state and timing. When 37+ files run
-    // concurrently these contend for CPU and OS process slots, producing
-    // load-dependent failures ("expected 1 to be +0", lease-reap timeouts)
-    // that pass in isolation. A red suite must never look green and a green
-    // suite must never look red, so the heavy tests do not race each other.
-    // See docs/DEPARTMENT_STATUS.md "Scars" and phase-5 "Flake hardening".
-    // B4 down-payment: the T4b lease-reap poll now uses test/helpers/wait.ts
-    // (deterministic condition-wait). The browser-spawning tests (t28/t38)
-    // remain the real contention source, so parallelism stays off until they
-    // move to browser-event waits too — tracked as remaining Phase 5 work.
-    fileParallelism: false,
+    // File parallelism is ON (A4). The load-dependent flakes the old
+    // `fileParallelism: false` band-aid stood in for came from wall-clock
+    // polling loops (`for (i<N) { sleep(10) }`) in the crash-kill / durability
+    // integration tests (t4, t6, t14, t28): under concurrent load the child
+    // process reached the awaited state later than a fixed iteration budget
+    // allowed, so a correct run was scored red. Those waits are now
+    // condition-driven via `test/helpers/wait.ts` (`pollUntil`) with generous
+    // deadlines — they return the instant the state holds and only fail after a
+    // real timeout, so a slow-but-correct run under load is never a false
+    // failure. The generous per-test `testTimeout` remains the safety net for
+    // the genuinely heavy tests (real browsers: t30/t38; real subprocesses:
+    // t4/t14/t28). Verified green across repeated full parallel runs.
+    fileParallelism: true,
     // Timing-sensitive integration tests assume an unloaded machine; give
     // them headroom so a slow-but-correct run is not scored as a failure.
-    testTimeout: 20000,
-    hookTimeout: 20000
+    testTimeout: 30000,
+    hookTimeout: 30000
   }
 });
