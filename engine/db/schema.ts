@@ -31,6 +31,7 @@ export function applySchema(db: DatabaseSync): void {
       attempts INTEGER NOT NULL DEFAULT 0,
       pull_request_url TEXT,
       intake_session_id TEXT,
+      acceptance_tests TEXT,
       archived_at TEXT, archived_by TEXT, archive_reason TEXT,
       completed_at TEXT, completed_by TEXT, completion_commit TEXT, completion_note TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -60,6 +61,9 @@ export function applySchema(db: DatabaseSync): void {
       verify_fixes_before INTEGER NOT NULL,
       stdout_tail TEXT,
       stderr_tail TEXT,
+      stages TEXT,
+      pass_before INTEGER,
+      pass_after INTEGER,
       started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
       actor_role TEXT NOT NULL, provider TEXT NOT NULL,
       model TEXT NOT NULL, account TEXT
@@ -342,6 +346,13 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_intake_sessions', name: 'project_id', definition: 'TEXT REFERENCES bureau_projects(id)' },
   { table: 'bureau_dispatches', name: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_work_reviews', name: 'reviewed_commit', definition: 'TEXT' },
+  // Multi-tier verification (A3 D0 freeze). Staged verify records per-stage
+  // outcomes + full-suite pass counts; tasks name the tests that prove
+  // acceptance (stage 'fail-to-pass'). All nullable — legacy rows read null.
+  { table: 'bureau_verify_runs', name: 'stages', definition: 'TEXT' },
+  { table: 'bureau_verify_runs', name: 'pass_before', definition: 'INTEGER' },
+  { table: 'bureau_verify_runs', name: 'pass_after', definition: 'INTEGER' },
+  { table: 'bureau_tasks', name: 'acceptance_tests', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_id', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' }
@@ -387,6 +398,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           recover_attempts INTEGER NOT NULL DEFAULT 0,
           pull_request_url TEXT,
           intake_session_id TEXT,
+          acceptance_tests TEXT,
           archived_at TEXT, archived_by TEXT, archive_reason TEXT,
           completed_at TEXT, completed_by TEXT, completion_commit TEXT, completion_note TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -400,6 +412,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,
+          acceptance_tests,
           archived_at, archived_by, archive_reason,
           completed_at, completed_by, completion_commit, completion_note,
           created_at, updated_at
@@ -409,6 +422,7 @@ export function applyBootMigrations(db: DatabaseSync): void {
           verifier_exit_code, approved_at, approved_by, merged_at, merged_by,
           priority, work_uuid, work_title, plan_rounds, verify_fixes, cycles,
           attempts, recover_attempts, pull_request_url, intake_session_id,
+          acceptance_tests,
           archived_at, archived_by, archive_reason,
           completed_at, completed_by, completion_commit, completion_note,
           created_at, updated_at

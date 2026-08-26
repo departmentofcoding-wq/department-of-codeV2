@@ -145,6 +145,19 @@ export const VACUOUS_VERIFY_COMMANDS = [
   'pass'
 ] as const;
 
+// Multi-tier verification (A3 — docs/plan-bureau-kernel-roadmap.md). The single
+// `verify.run` command becomes a staged pipeline inside the existing job; these
+// are the frozen, ORDERED stage kinds. The kernel contract is unchanged — verify
+// stays deterministic, bureau-owned, exit-code 0 — only the command gets smarter.
+// Stage 3 (mutation spot-check on the diff's own guards) is deliberately deferred.
+export const VERIFY_STAGES = [
+  'structural',   // tsc --noEmit + linter on changed files (the greenwashed-build scar)
+  'fail-to-pass', // the tests named by the task's acceptance criteria (task.acceptance_tests)
+  'pass-to-pass'  // the full suite; the run records pass_before/pass_after (no regression)
+] as const;
+
+export type VerifyStage = typeof VERIFY_STAGES[number];
+
 export const DETERMINISTIC_ATTRIBUTION = {
   provider: 'deterministic',
   model: 'core',
