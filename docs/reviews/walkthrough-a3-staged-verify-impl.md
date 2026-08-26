@@ -1,7 +1,11 @@
 # Walkthrough — A3: staged verifier implementation
 
-**Branch:** `wt/a3-staged-verify-impl` (stacked on `wt/a3-d0-staged-verify-freeze`)
+**Branch:** `wt/a3-staged-verify-impl` (rebased onto current `main` = A1+A2+D0)
 **Stream:** Part A / A3 (implementation) of `docs/plan-bureau-kernel-roadmap.md`
+
+> **Base note:** this branch was rebased onto current `main` (which already
+> contains A1 and A2 and the A3 D0 freeze), so its diff is clean — no phantom
+> deletions of A1/A2 files. Numbers below are measured on the rebased tip.
 
 ## What this stream does
 
@@ -36,8 +40,8 @@ exited 0 — exactly what `handleVerifyOutcome` already consumes.
 
 ## Claims (for independent senior verification)
 
-1. **Suite green:** `449 / 96` pass; `npm run build` clean. (D0 base 441/95 → +8,
-   the T47 file.)
+1. **Suite green:** `473 / 99` pass on the rebased tip; `npm run build` clean.
+   (D0 base on current main was 465/99 → +8, the T47 file.)
 2. **Back-compat:** the 8 existing verify test files
    (t9/t22/t23/t24/t27/t28/t29/t50) stay green — with nothing else configured the
    pipeline degrades to running just `verify_cmd`, so exit code, tails,
