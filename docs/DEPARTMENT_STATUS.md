@@ -16,6 +16,31 @@ phase plan, then git. Nothing important lives only in a chat window.
 | In flight | Nothing. Clean handoff point. |
 | Next action | **Phase 7 continues → `docs/phase-7-plan.md`.** Two real tasks shipped (`c7f9b37`, `1c14534`); the two live-harness bugs the ntfy run exposed are fixed (new-conversation readiness gate; completion-detection no longer reads "working" from agent prose). **Immediate next — the one remaining flow gap: workspace/worktree reconciliation.** The harness junior writes in its own IDE workspace, not a bureau worktree, so the auto-flow stops at the work review; wire `verify.run → needs-review` against the junior's actual branch so a task can reach `done` automatically (done-gate invariant — verifier exit 0 + human approval — stays absolute). Also still open from before: A2 `[llm]` provider-doubling, A3 budget-refusal proof, C1 delivery (PR/merge/backup) against a sandbox *remote*. After Phase 7: **Phase 8 — multi-task / concurrency at scale.** Gemini keys live (env + gitignored `secrets/google.env`); ceilings live in `bureau_meta` (`review:plan_rounds_ceiling`=7, `review:work_rounds_ceiling`=5). |
 
+**ZCode 3.8.1 senior harness recalibrated — GLM senior drives again (2026-08-26,
+merged `e8f8097`):** the zai/GLM senior broke when ZCode upgraded to 3.8.1
+(`run_senior --senior zai` failed at submit). Two calibration drifts, both
+diagnosed live over CDP and fixed in `engine/harness/senior.ts` `ZCodeSession`:
+(1) **submit** — the composer is a multiline rich-text editor (Enter = newline, and
+it never clears the contenteditable DOM on send), so the old "press Enter then
+check the box emptied" mis-fired both ways; now clicks the real control
+`button[data-testid="v4-composer-send"]` and confirms via the Send button
+re-disabling / a Stop control appearing (never DOM text). (2) **completion** —
+`probeActivity`'s `canSend` was gated by an `onHomeScreen` heuristic keyed on
+markers ("Add context"/"Full access"/"Plan mode") that are NORMAL composer controls
+in 3.8.1, so `canSend` was always false and every finished review read as a
+**stall**; now `working = [data-testid="v4-stop"]`, `canSend = [data-testid=
+"v4-composer-send"] present && !working`. Pure functions
+(`buildReviewPrompt`/`parseVerdict`/`detectUncapturedReview`) untouched;
+`SENIOR_HOME_SCREEN_MARKERS` retained for `detectUncapturedReview`. **Proven live
+end-to-end:** post-fix, `run_senior --senior zai` COMPLETED — GLM worked 8m33s and
+returned `VERDICT: APPROVE` (re-ran suite twice + build) on the prior console
+branch. This branch itself reviewed by the **claude** senior (APPROVE, independent
+of ZCode to avoid circularity; verdict `docs/reviews/verdict-zcode-send-
+recalibration.md`) + operator-verified. Suite 435/435, build clean on merged
+`main` (`--no-ff`). Scar: GUI selectors are version-fragile — prefer stable
+`data-testid`s over label heuristics; never treat a contenteditable's DOM text as a
+submit signal.
+
 **Console Projects tab + mobile-responsive UI + ntfy expansion (2026-08-25, merged
 `e9a1b7f`):** two operator-requested console features shipped through the review
 loop. (1) **Projects tab** — the multi-repo engine (`bureau_projects`,
