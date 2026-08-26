@@ -7,6 +7,9 @@ export function applySchema(db: DatabaseSync): void {
       name TEXT NOT NULL UNIQUE,
       path_to_repo TEXT NOT NULL,
       description TEXT,
+      github_url TEXT,
+      provisioned_by TEXT,
+      visibility TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -355,7 +358,10 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_tasks', name: 'acceptance_tests', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_kind', definition: 'TEXT' },
   { table: 'bureau_watchdog_findings', name: 'subject_id', definition: 'TEXT' },
-  { table: 'bureau_watchdog_findings', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' }
+  { table: 'bureau_watchdog_findings', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'bureau_projects', name: 'github_url', definition: 'TEXT' },
+  { table: 'bureau_projects', name: 'provisioned_by', definition: 'TEXT' },
+  { table: 'bureau_projects', name: 'visibility', definition: 'TEXT' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {

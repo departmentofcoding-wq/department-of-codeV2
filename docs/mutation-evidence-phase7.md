@@ -246,3 +246,29 @@ tokens × price; period rollup recorded+computed totals and time-window scoping 
 all in `cost.test.ts`. Real rollup demonstrated on the live `db/bureau.db` via
 `npm run cost:report` (Google officer model: 23445/3517 tokens, basis=unpriced,
 flagged floor). Restoration verified; suite 479/101, `npm run build` clean.
+
+## Stream addendum — self-serve project provisioning (`wt/junior-a-project-provisioning`, task `6490336d`)
+
+Executed by the operator-side session against tip `7e25e53` (the senior's
+round-3 REVISE asked for exactly this; its sandbox cannot check out worktrees).
+Each mutation: neuter the real code → run
+`test/unit/tc_project_provisioning.test.ts` → record → `git checkout` restore.
+Suite green after every restore (9/9). One test was STRENGTHENED first:
+T-PROV-4's `name:'..'` traversal assertion was redundantly caught by the slug
+guard (which rejects `..` before containment runs), so a
+`repoPrefix:'../evil/'` vector was added — the only input the containment
+guard uniquely catches (the slug check validates the requested name, not the
+prefix-joined canonical).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-PROV-1 | Target path must sit strictly inside projects_root (`engine/projects/provision.ts` step 6) | `if (rel.startsWith('..') …)` → `if (false)` | T-PROV-4 (repoPrefix traversal vector) | 1 failed / 8 passed (hostile `../evil/` prefix escaped the root); restored → 9/9 |
+| M-PROV-2 | Actor allowlist — only junior/senior/human-operator may provision (`provision.ts` step 1) | real check → `if (false as boolean)` (the round-2 handoff's actual defect) | T-PROV-5 (verifier refused + guardrail span) | 1 failed / 8 passed (verifier could provision); restored → 9/9 |
+| M-PROV-3 | Public visibility is human-operator-only (`provision.ts` step 2) | `if (visibility === 'public' && actorRole !== 'human-operator')` → `if (false as boolean)` | T-PROV-5 (junior/senior public refused, operator allowed) | 1 failed / 8 passed (junior could create a public repo); restored → 9/9 |
+| M-PROV-4 | Registration only after remote success — no orphan row on remote failure (`provision.ts` steps 9→10) | registration block moved verbatim to BEFORE `createRemote` (github_url nulled) | T-PROV-7 (no DB row on remote failure) + T-PROV-1/T-PROV-8 (assert the real URL) | 3 failed / 6 passed (row existed after remote failure); restored → 9/9 |
+
+Honesty notes: M-PROV-4's first surgery attempt produced a duplicate
+declaration (collection error, "no tests") — discarded as invalid evidence and
+redone as a clean structural move. All four mutations restored and re-verified
+green. Full suite 488/488 twice + `npm run build` clean on the fix tip before
+mutation runs.
