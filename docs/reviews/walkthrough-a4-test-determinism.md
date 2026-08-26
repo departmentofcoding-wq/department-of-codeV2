@@ -36,8 +36,13 @@ scored red. Serializing all files hid this by keeping the machine unloaded.
   they are semantic delays (waiting for a lease TTL to elapse), not flake
   sources.
 
-The real-browser tests (`t30`, `t38`) and real-subprocess tests are covered by
-the generous per-test `testTimeout`, not a global serialization.
+The real-browser tests and real-subprocess tests are covered by generous
+per-test timeouts, not a global serialization: `t30` (15s override), `t38`
+(30s exec budget), and — added in this stream after senior review — **`t36`**,
+the heaviest real-browser test (more browser round-trips than t30), which
+previously had **no** explicit `it()` timeout and silently rode the global
+default; it now carries an explicit **45s** budget. All three were included in
+the repeated full parallel runs.
 
 ## Claims (for independent senior verification)
 
