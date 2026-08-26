@@ -107,7 +107,11 @@ export const BUDGET_META_KEYS = {
   ROLLING_24H_TOKENS_CEILING: 'budget:rolling_24h_tokens:ceiling',
   ROLLING_24H_REQUESTS_CEILING: 'budget:rolling_24h_requests:ceiling',
   VERIFY_FIXES_CEILING: 'verify:fixes:ceiling',
-  VERIFY_TIMEOUT_MS: 'verify:timeout_ms'
+  VERIFY_TIMEOUT_MS: 'verify:timeout_ms',
+  // Optional department-wide structural stage command (A3 staged verify), e.g.
+  // 'npm run build'. Unset → the structural stage is skipped. Kept a meta key
+  // (not hardcoded) so the kernel never assumes a language/toolchain.
+  VERIFY_STRUCTURAL_CMD: 'verify:structural_cmd'
 } as const;
 
 export const HARNESS_META_KEYS = {

@@ -5,7 +5,7 @@ import { completeJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { handleVerifyOutcome, type VerifyOutcomeResult } from './loop.ts';
-import { runVerifier } from './verifier.ts';
+import { runStagedVerifier } from './verifier.ts';
 
 export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   const taskId = ctx.payload.taskId ?? ctx.job.task_id;
@@ -42,8 +42,10 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   const startTime = new Date().toISOString();
   const verifyFixesBefore = task.verify_fixes;
 
-  // 3. Execute child verifier process
-  const outcome = await runVerifier(ctx.db, taskId, workspaceHandle.path);
+  // 3. Execute the staged verifier (structural → fail-to-pass → pass-to-pass).
+  //    Aggregate exit code is 0 iff every non-skipped stage passed — the same
+  //    contract handleVerifyOutcome consumes.
+  const outcome = await runStagedVerifier(ctx.db, taskId, workspaceHandle.path);
   const finishedTime = new Date().toISOString();
 
   // 4. Atomic Finalization Transaction (DB logic, run row, state transitions, job completion)
@@ -55,9 +57,10 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
     ctx.db.run(
       `INSERT INTO bureau_verify_runs (
         id, task_id, exit_code, signal, timed_out, duration_ms,
-        verify_fixes_before, stdout_tail, stderr_tail, started_at, finished_at,
+        verify_fixes_before, stdout_tail, stderr_tail, stages, pass_before, pass_after,
+        started_at, finished_at,
         actor_role, provider, model, account
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       runId,
       taskId,
       outcome.exitCode,
@@ -67,6 +70,9 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
       verifyFixesBefore,
       outcome.stdoutTail,
       outcome.stderrTail,
+      JSON.stringify(outcome.stages),
+      outcome.passBefore,
+      outcome.passAfter,
       startTime,
       finishedTime,
       VERIFIER_ATTRIBUTION.actor_role,
@@ -86,7 +92,10 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
         run_id: runId,
         exit_code: outcome.exitCode,
         timed_out: outcome.timedOut,
-        duration_ms: outcome.durationMs
+        duration_ms: outcome.durationMs,
+        stages: outcome.stages.map((s) => ({ stage: s.stage, exit_code: s.exit_code, skipped: s.skipped ?? false })),
+        pass_before: outcome.passBefore,
+        pass_after: outcome.passAfter
       }
     });
 

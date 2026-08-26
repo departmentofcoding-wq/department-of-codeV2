@@ -207,3 +207,23 @@ throwaway bare git remote and proves the anti-false-claim readback
 is exercised directly). The boot-door `normalizeModelIds` heals existing DBs
 holding the prefixed id (repoints the assignment, drops the old row) — covered
 by the heal test. Restoration verified after each mutation; suite + build green.
+
+## Stream addendum — A3 staged verifier implementation (`wt/a3-staged-verify-impl`)
+
+Builds on the A3 D0 freeze. Turns `verify.run` into a staged pipeline
+(structural → fail-to-pass → pass-to-pass) inside the existing job, short-
+circuiting on the first failing stage; the aggregate exit code stays 0 iff every
+non-skipped stage passed (the unchanged kernel contract).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-STAGE-1 | A failing stage fails the run and short-circuits the rest (`engine/verify/verifier.ts` runStagedVerifier) | `const stageOk = res.exitCode === 0 && !res.timedOut` → `const stageOk = true` | `t47_staged_verify.test.ts` "structural failure short-circuits…" + "fail-to-pass failure short-circuits before pass-to-pass" | 2 failed / 6 passed (a failing stage no longer failed the run; later stages still ran); restored → 8/8 pass |
+
+Other guards covered by direct tests (verified by inspection): vacuous stage
+command refused per stage; graceful degradation to pass-to-pass only when
+structural/acceptance are unconfigured (skipped entries); pass_before/pass_after
+recorded from the prior/this run; job persistence of the stages JSON + pass
+counts and the needs-review transition — all in `t47_staged_verify.test.ts`.
+Back-compat: the 8 existing verify test files (t9/t22/t23/t24/t27/t28/t29/t50)
+stay green — the staged runner degrades to the single verify_cmd. Restoration
+verified; suite 449/96, `npm run build` clean.
