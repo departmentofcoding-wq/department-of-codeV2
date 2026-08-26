@@ -464,5 +464,51 @@ export function applyBootMigrations(db: DatabaseSync): void {
       WHERE status IN ('detected', 'recovering');
     `);
   }
+
+  // 4. Normalize provider-prefixed model ids on existing DBs. A model id must
+  //    never embed its own provider (it doubles the provider in the (provider,
+  //    model) rollup key and is sent verbatim to the provider API). The only
+  //    offender shipped was 'ollama/qwen2.5-coder' → 'qwen2.5-coder'. Idempotent:
+  //    a no-op once healed, and it repoints the child assignment before dropping
+  //    the old parent row so the FK stays satisfied at every step.
+  normalizeModelIds(db);
+}
+
+/** Rename any provider-prefixed model id to its clean form, repointing role
+ *  assignments. Currently: 'ollama/qwen2.5-coder' → 'qwen2.5-coder'. */
+function normalizeModelIds(db: DatabaseSync): void {
+  const hasModels = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bureau_models'`).get();
+  if (!hasModels) return;
+
+  const renames: Array<{ from: string; to: string }> = [{ from: 'ollama/qwen2.5-coder', to: 'qwen2.5-coder' }];
+  for (const { from, to } of renames) {
+    const old = db.prepare('SELECT * FROM bureau_models WHERE id = ?').get(from) as
+      | { id: string; provider: string; display: string; price_in_usd_per_mtok: number | null; price_out_usd_per_mtok: number | null; enabled: number; notes: string | null }
+      | undefined;
+    if (!old) continue;
+
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      // Ensure the clean row exists (copy the old row's fields if absent).
+      const existing = db.prepare('SELECT 1 FROM bureau_models WHERE id = ?').get(to);
+      if (!existing) {
+        db.prepare(
+          `INSERT INTO bureau_models (id, provider, display, price_in_usd_per_mtok, price_out_usd_per_mtok, enabled, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(to, old.provider, old.display, old.price_in_usd_per_mtok, old.price_out_usd_per_mtok, old.enabled, old.notes);
+      }
+      // Repoint children, then drop the prefixed parent row.
+      db.prepare('UPDATE bureau_assignments SET model_id = ? WHERE model_id = ?').run(to, from);
+      db.prepare('DELETE FROM bureau_models WHERE id = ?').run(from);
+      db.exec('COMMIT;');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // already aborted
+      }
+      throw err;
+    }
+  }
 }
 

@@ -188,3 +188,22 @@ full delivery tail (work-review APPROVE → worktree.prepare → verify.run →
 needs-review → operator approve → pr.create → pr.merge → done, no direct state
 writes) by `t45_delivery_tail.test.ts`. Restoration verified after the
 mutation; full suite green across all files, `npm run build` clean.
+
+## Stream addendum — Phase-7 leftovers: attribution + budget-refusal proof + sandbox-remote delivery (`wt/a2-phase7-leftovers`)
+
+Closes A2. Two guards mutation-proven live (mutate → watch the named test fail
+→ restore → re-run green); delivery backup exercised against a REAL bare remote.
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-LLM-1 | A model id never embeds its own provider (`engine/models/seed.ts`; poisons the (provider,model) rollup key) | Reverted the officer/ollama model id + assignment to the prefixed `ollama/qwen2.5-coder` | `tc_llm_attribution.test.ts` "no seeded model id carries its own '<provider>/' prefix" (+ the heal test) | 2 failed / 1 passed (a seeded id embedded its provider); restored → 3/3 pass |
+| M-BUDGET-1 | Rolling-24h token/request ceiling refuses over-budget runs BEFORE any call (`engine/llm/call_model.ts`) | Disabled the guard: `if (overTokenBudget \|\| overReqBudget)` → `if (false && ...)` | `t15_budget_ceiling.test.ts` (request + new token ceiling cases, ×2 db impls) | 4 failed / 0 passed (the run overspent past the ceiling, no guardrail); restored → 4/4 pass |
+
+Delivery against a real remote (C1): `t46_sandbox_remote.test.ts` pushes to a
+throwaway bare git remote and proves the anti-false-claim readback
+(`engine/durability/backup_push.ts`) both ways — a real push matches on readback
+(success span), and a push that reports success without landing is caught as a
+`mismatch` guardrail + `BackupPushError`. Not mutation (the guard's failure mode
+is exercised directly). The boot-door `normalizeModelIds` heals existing DBs
+holding the prefixed id (repoints the assignment, drops the old row) — covered
+by the heal test. Restoration verified after each mutation; suite + build green.

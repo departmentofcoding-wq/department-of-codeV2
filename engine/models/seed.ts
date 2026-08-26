@@ -56,8 +56,13 @@ export function seedPhase1OfficerRoster(db: DbConnection): void {
     notes: 'Google Gemini free-tier model'
   });
 
+  // Model id carries NO provider prefix — the provider lives in its own column.
+  // A prefixed id (the old 'ollama/qwen2.5-coder') doubled the provider in the
+  // (provider, model) rollup key AND was sent verbatim to Ollama as a malformed
+  // model name. `normalizeModelIds` in the boot door heals any live DB still
+  // holding the prefixed id.
   registerModel(db, {
-    id: 'ollama/qwen2.5-coder',
+    id: 'qwen2.5-coder',
     provider: 'ollama',
     display: 'Qwen 2.5 Coder (Ollama)',
     price_in_usd_per_mtok: null,
@@ -66,7 +71,7 @@ export function seedPhase1OfficerRoster(db: DbConnection): void {
     notes: 'Local Ollama instruct model'
   });
 
-  assignRole(db, 'task-intake-officer', 'ollama', 'ollama/qwen2.5-coder');
+  assignRole(db, 'task-intake-officer', 'ollama', 'qwen2.5-coder');
 
   db.run(
     `INSERT INTO bureau_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,

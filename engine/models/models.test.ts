@@ -57,7 +57,7 @@ describe('A5: Model Registry & Assignments', () => {
 
     // The Phase 1 Ollama model is still registered (fallback if the operator
     // later provisions Ollama), just no longer the officer's assignment.
-    const ollamaModel = getModel(db, 'ollama/qwen2.5-coder');
+    const ollamaModel = getModel(db, 'qwen2.5-coder');
     expect(ollamaModel).toBeDefined();
     expect(ollamaModel?.provider).toBe('ollama');
   });
@@ -67,7 +67,7 @@ describe('A5: Model Registry & Assignments', () => {
     let db = openDbConnection(dbPath);
     db.run("DELETE FROM bureau_meta WHERE key = 'seed:phase1-officer-roster'");
     db.run("DELETE FROM bureau_assignments WHERE role = 'task-intake-officer'");
-    db.run("DELETE FROM bureau_models WHERE id IN ('gemini-2.5-flash', 'ollama/qwen2.5-coder')");
+    db.run("DELETE FROM bureau_models WHERE id IN ('gemini-2.5-flash', 'qwen2.5-coder')");
 
     // Ensure Phase 0 model remains so listModels > 0
     expect(getModel(db, 'glm-5.2')).toBeDefined();
@@ -81,7 +81,7 @@ describe('A5: Model Registry & Assignments', () => {
     const officerAssignment = getAssignment(db, 'task-intake-officer');
     expect(officerAssignment).toBeDefined();
     expect(officerAssignment?.backend).toBe('ollama');
-    expect(officerAssignment?.model_id).toBe('ollama/qwen2.5-coder');
+    expect(officerAssignment?.model_id).toBe('qwen2.5-coder');
 
     const googleModel = getModel(db, 'gemini-2.5-flash');
     expect(googleModel).toBeDefined();
