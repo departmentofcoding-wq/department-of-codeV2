@@ -1,4 +1,4 @@
-import type { ActorRole, IntakeMessageRole, IntakeSessionState, JobState, SpanKind, TaskState } from './constants.ts';
+import type { ActorRole, IntakeMessageRole, IntakeSessionState, JobState, SpanKind, TaskState, VerifyStage } from './constants.ts';
 
 export interface AttributionTuple {
   actor_role: ActorRole;
@@ -30,6 +30,10 @@ export interface BureauTaskRow {
   intent: string | null;
   spec: string | null;
   acceptance: string | null;
+  /** The specific tests that PROVE acceptance — the input to verify stage
+   *  'fail-to-pass' (A3). Drafted at intake, confirmed under the verify gate.
+   *  Null when a task predates staged verify or names no targeted tests. */
+  acceptance_tests: string | null;
   verify_cmd: string | null;
   setup_cmd: string | null;
   state: TaskState;
@@ -342,12 +346,31 @@ export interface BureauVerifyRunRow {
   verify_fixes_before: number;
   stdout_tail: string | null;
   stderr_tail: string | null;
+  /** JSON-encoded VerifyStageResult[] — the per-stage outcomes of a staged
+   *  verify run (A3). Null for legacy single-command runs. */
+  stages: string | null;
+  /** Full-suite passing test count before/after the run, so the ledger can prove
+   *  no regression (the pass-to-pass stage). Null when not a staged run. */
+  pass_before: number | null;
+  pass_after: number | null;
   started_at: string;
   finished_at: string;
   actor_role: string;
   provider: string;
   model: string;
   account: string | null;
+}
+
+/** One stage's outcome within a staged verify run (A3). Serialized into
+ *  BureauVerifyRunRow.stages. The overall run's exit code stays the contract:
+ *  0 iff every non-skipped stage exited 0. */
+export interface VerifyStageResult {
+  stage: VerifyStage;
+  exit_code: number;
+  duration_ms: number;
+  /** True when the stage had nothing to run (e.g. no acceptance_tests named). */
+  skipped?: boolean;
+  detail?: string | null;
 }
 
 export interface WorkspaceHandle {
