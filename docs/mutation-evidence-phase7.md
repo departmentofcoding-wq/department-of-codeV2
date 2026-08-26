@@ -226,4 +226,5 @@ recorded from the prior/this run; job persistence of the stages JSON + pass
 counts and the needs-review transition — all in `t47_staged_verify.test.ts`.
 Back-compat: the 8 existing verify test files (t9/t22/t23/t24/t27/t28/t29/t50)
 stay green — the staged runner degrades to the single verify_cmd. Restoration
-verified; suite 449/96, `npm run build` clean.
+verified; suite **473/100** on the rebased tip (was 449/96 pre-rebase onto
+A1+A2+D0), `npm run build` clean.

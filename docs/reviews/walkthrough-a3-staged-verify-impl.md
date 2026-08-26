@@ -40,8 +40,8 @@ exited 0 — exactly what `handleVerifyOutcome` already consumes.
 
 ## Claims (for independent senior verification)
 
-1. **Suite green:** `473 / 99` pass on the rebased tip; `npm run build` clean.
-   (D0 base on current main was 465/99 → +8, the T47 file.)
+1. **Suite green:** `473 / 100` pass on the rebased tip; `npm run build` clean.
+   (D0 base on current main was 465/99 → +8 tests, +1 file, the T47 file.)
 2. **Back-compat:** the 8 existing verify test files
    (t9/t22/t23/t24/t27/t28/t29/t50) stay green — with nothing else configured the
    pipeline degrades to running just `verify_cmd`, so exit code, tails,
