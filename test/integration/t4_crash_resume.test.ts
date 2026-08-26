@@ -66,14 +66,11 @@ describe.each(testImplementations)('T4a: Crash-Resume, simulated halt ($name)', 
 
     runner1.start();
 
-    // Wait until child jobs are enqueued and at least one is in 'running' state
-    let runningChild: BureauJobRow | undefined;
-    for (let i = 0; i < 50; i++) {
-      const jobs = db.all<BureauJobRow>('SELECT * FROM bureau_jobs');
-      runningChild = jobs.find((j) => j.id.startsWith('parent-chain-1:sleep:') && j.state === 'running');
-      if (runningChild) break;
-      await new Promise((res) => setTimeout(res, 10));
-    }
+    // Wait (deterministically) until a child job is in 'running' state.
+    const runningChild = await pollUntil(
+      () => db.all<BureauJobRow>('SELECT * FROM bureau_jobs').find((j) => j.id.startsWith('parent-chain-1:sleep:') && j.state === 'running'),
+      { timeoutMs: 15000, intervalMs: 10, label: 't4 parent-chain child running' }
+    );
 
     expect(runningChild).toBeDefined();
 
@@ -173,12 +170,10 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       // Runner process 1
       const child1 = spawnChild();
 
-      let runningChild: BureauJobRow | undefined;
-      for (let i = 0; i < 1500 && runningChild === undefined; i++) {
-        const jobs = testDb.all<BureauJobRow>('SELECT * FROM bureau_jobs');
-        runningChild = jobs.find((j) => j.id.startsWith('kill-chain-1:sleep:') && j.state === 'running');
-        if (!runningChild) await new Promise((res) => setTimeout(res, 10));
-      }
+      const runningChild = await pollUntil(
+        () => testDb.all<BureauJobRow>('SELECT * FROM bureau_jobs').find((j) => j.id.startsWith('kill-chain-1:sleep:') && j.state === 'running'),
+        { timeoutMs: 20000, intervalMs: 10, label: 't4 kill-chain child running' }
+      );
       expect(runningChild).toBeDefined();
 
       // Hard kill mid-job
@@ -227,12 +222,16 @@ describe('T4b: Crash-Resume — hard process kill (real node:sqlite)', () => {
       };
 
       // Under a busy test run (vitest parallel workers), spawning two Node
-      // processes can cost several seconds — the budget must absorb that
-      // overhead and still give the resumed chain time to finish.
-      for (let i = 0; i < 3000; i++) {
-        if (allDone()) break;
-        await new Promise((res) => setTimeout(res, 10));
-      }
+      // processes can cost several seconds — the deterministic wait returns the
+      // instant the whole chain is done and only fails after a generous deadline.
+      await pollUntil(() => allDone() || undefined, {
+        // ≥ the old 3000×10ms budget; this is the heaviest, most contention-prone
+        // test (two real subprocesses under full parallelism). The it() timeout
+        // is 60s, so keep the deadline generous rather than shrinking it.
+        timeoutMs: 30000,
+        intervalMs: 10,
+        label: 't4 kill-chain fully resumed (parent + 3 children done)'
+      });
 
       // Graceful stop, with a force-kill backstop if the signal is lost
       await new Promise<void>((resolve) => {

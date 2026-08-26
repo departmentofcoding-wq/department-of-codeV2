@@ -8,6 +8,7 @@ import type { BureauIntakeMessageRow, BureauIntakeSessionRow } from '../../engin
 import { createSession, updateSessionDraft } from '../../engine/intake/index.ts';
 import { enqueueJob } from '../../engine/jobs/jobs.ts';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
+import { pollUntil } from '../helpers/wait.ts';
 
 import { killTree } from '../../engine/verify/tree_kill.ts';
 
@@ -53,12 +54,11 @@ describe('T14: Durability — Mid-Turn Process Kill & Resume (real node:sqlite)'
       // 1. Spawn Runner Process 1
       const child1 = spawnChild();
 
-      // Wait until job is claimed ('running')
-      for (let i = 0; i < 500; i++) {
-        const j = testDb.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', job.id);
-        if (j?.state === 'running') break;
-        await new Promise((res) => setTimeout(res, 10));
-      }
+      // Wait until job is claimed ('running') — deterministic condition-wait.
+      await pollUntil(
+        () => testDb.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', job.id)?.state === 'running' || undefined,
+        { timeoutMs: 15000, intervalMs: 10, label: 't14 job claimed (running)' }
+      );
 
       // 2. Hard kill process mid-turn
       killTree(child1.pid);
@@ -75,11 +75,10 @@ describe('T14: Durability — Mid-Turn Process Kill & Resume (real node:sqlite)'
       // 3. Spawn Runner Process 2 to resume
       const child2 = spawnChild();
 
-      for (let i = 0; i < 1000; i++) {
-        const j = testDb.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', job.id);
-        if (j?.state === 'done') break;
-        await new Promise((res) => setTimeout(res, 10));
-      }
+      await pollUntil(
+        () => testDb.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', job.id)?.state === 'done' || undefined,
+        { timeoutMs: 15000, intervalMs: 10, label: 't14 resumed job done' }
+      );
 
       killTree(child2.pid);
       await new Promise<void>((res) => child2.once('exit', () => res()));

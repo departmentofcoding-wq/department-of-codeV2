@@ -70,7 +70,12 @@ describe.each(testImplementations)('T6: Dead Letter & Backoff Integration Test (
     let lastAttempts = 0;
     let current: BureauJobRow | undefined;
 
-    for (let i = 0; i < 200; i++) {
+    // Sample the job as it retries and back off, until it dead-letters. A
+    // wall-clock DEADLINE (not a fixed iteration count) keeps the sampling loop
+    // but makes it robust under load — the retries/dead-letter can take longer
+    // when many files run in parallel, and a slow-but-correct run must not fail.
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
       current = db.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', job.id);
       if (current && current.attempts !== lastAttempts) {
         lastAttempts = current.attempts;

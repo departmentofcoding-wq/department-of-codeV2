@@ -11,6 +11,7 @@ import { killTree } from '../../engine/verify/tree_kill.ts';
 import { Runner } from '../../runner/main.ts';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
 import { FakeWorkspaceProvider } from '../helpers/fake_workspace_provider.ts';
+import { pollUntil } from '../helpers/wait.ts';
 
 describe('T28: Crash Safety Mid-Verify Integration Test', () => {
   it(
@@ -92,17 +93,18 @@ runner.start();
         runnerProc.stderr.on('data', (d) => { runnerStderr += d.toString(); });
       }
 
-      // Wait for task state to transition to 'verifying'
+      // Wait (deterministically) for the child runner to move the task to
+      // 'verifying'. pollUntil returns the instant the row shows it and only
+      // fails after a generous deadline, so a slow-but-correct run under load
+      // isn't scored as a failure (the property fileParallelism:false stood in for).
       let stateWasVerifying = false;
-      for (let i = 0; i < 200; i++) {
-        await new Promise((res) => setTimeout(res, 25));
-        const t = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
-        if (t?.state === 'verifying') {
-          stateWasVerifying = true;
-          break;
-        }
-      }
-      if (!stateWasVerifying) {
+      try {
+        await pollUntil(
+          () => db.get<BureauTaskRow>('SELECT state FROM bureau_tasks WHERE id = ?', taskId)?.state === 'verifying' || undefined,
+          { timeoutMs: 15000, intervalMs: 25, label: 't28 task reaches verifying' }
+        );
+        stateWasVerifying = true;
+      } catch {
         console.error('T28 runnerProc failed to reach verifying. Stdout:', runnerStdout, 'Stderr:', runnerStderr);
       }
       expect(stateWasVerifying).toBe(true);
@@ -119,14 +121,15 @@ runner.start();
       const freshRunner = new Runner(db, { BUREAU_POLL_MS: 10, BUREAU_LEASE_MS: 5000, BUREAU_HEARTBEAT_MS: 200 });
       freshRunner.start();
 
-      // Await completion of resumed job
+      // Await completion of the resumed job (deterministic condition-wait).
       let finalTask: BureauTaskRow | undefined;
-      for (let i = 0; i < 300; i++) {
-        await new Promise((res) => setTimeout(res, 50));
+      try {
+        finalTask = await pollUntil(() => {
+          const t = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
+          return t?.state === 'needs-review' ? t : null;
+        }, { timeoutMs: 15000, intervalMs: 50, label: 't28 resume to needs-review' });
+      } catch {
         finalTask = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
-        if (finalTask?.state === 'needs-review') {
-          break;
-        }
       }
 
       await freshRunner.stop();
@@ -147,6 +150,6 @@ runner.start();
         fs.rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     },
-    20000
+    40000
   );
 });

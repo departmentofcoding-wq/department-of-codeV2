@@ -173,5 +173,8 @@ describe('T36: End-to-End Integration Test (Milestone CX)', () => {
       expect(detail.nonce).toBe(pair.observation.nonce);
       expect(pair.observation.nonce).toBe(pair.nonce);
     }
-  });
+    // Explicit generous budget: this drives a real headless browser (more
+    // round-trips than t30) and now runs under full file parallelism, so it does
+    // not silently ride the global default (A4).
+  }, 45000);
 });
