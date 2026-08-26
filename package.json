@@ -21,7 +21,8 @@
     "console": "node --experimental-strip-types scripts/console.ts",
     "runner": "node --experimental-strip-types runner/main.ts",
     "junior": "node --experimental-strip-types scripts/run_junior.ts",
-    "project": "node --experimental-strip-types scripts/project.ts"
+    "project": "node --experimental-strip-types scripts/project.ts",
+    "hooks:install": "node --experimental-strip-types scripts/install_git_hooks.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

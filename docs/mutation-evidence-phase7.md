@@ -165,3 +165,26 @@ Introduces first-class `bureau_projects` table and maps tasks / intake sessions 
 
 Restoration verified after each mutation: all project test files re-ran green (17/17 tests across 3 files); full suite 401/401 across 91 files, `npm run build` clean twice.
 
+
+## Stream addendum — Merge-law enforcement (git hook) + delivery-tail regression lock (`wt/a1-reconciliation-mergehook`)
+
+Closes A1: the delivery tail was already wired in code but only covered
+per-stage, and the merge law was prose + review discipline only (no tooling).
+This stream adds a machine-checkable merge-law predicate + git hook, a
+seam-joined tail regression test (T45), and records the mutation below live
+(mutate → watch the named test fail → restore → re-run green).
+
+| Id | Guard | Mutation applied | Test that caught it | Observed |
+|---|---|---|---|---|
+| M-MERGE-1 | A commit is blessed only if a Senior-approved work review names EXACTLY that commit (`engine/delivery/merge_guard.ts`) | Dropped `reviewed_commit = ?` from the approved-review lookup (accept any approved review) | `tc_merge_guard.test.ts` "refuses a forged commit with no work review at all (the out-of-band scar)" | 1 failed / 4 passed (`expected true to be false` — a forged commit was blessed); restored → 5/5 pass |
+
+Other guards covered by direct tests (verified by inspection, not mutation):
+the done-gate transitivity (an approved commit whose task has not reached
+`done`/`merged_at` is refused) and the empty-hash refusal by
+`tc_merge_guard.test.ts`; the hook decision layer (off-branch allow, plain
+hand-commit refusal on main, unblessed-merge refusal, operator override
+recorded not silent) by the `decideHookOutcome` block in the same file; and the
+full delivery tail (work-review APPROVE → worktree.prepare → verify.run →
+needs-review → operator approve → pr.create → pr.merge → done, no direct state
+writes) by `t45_delivery_tail.test.ts`. Restoration verified after the
+mutation; full suite green across all files, `npm run build` clean.
