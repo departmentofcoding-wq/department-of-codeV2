@@ -513,32 +513,56 @@ export class ZCodeSession {
           'Recalibrate ZCODE_INPUT_MATCHERS in engine/harness/senior.ts.'
       );
     }
-    await this.pressKey('Enter', 'Enter', 13);
-    await new Promise(r => setTimeout(r, 400));
-    // Submit: ZCode may not submit on Enter — if our text is still in the box,
-    // click the Send/Submit control.
-    await this.evaluate(`(() => {
-      const el = document.querySelector('[data-bureau-input="1"]');
-      const still = el && (el.innerText || el.value || '').trim().length > 0;
-      if (!still) return 'sent-enter';
-      const send = [...document.querySelectorAll('button,[role=button]')]
-        .find(b => /send|submit/i.test((b.getAttribute('aria-label')||b.innerText||'')));
-      if (send) { send.click(); return 'sent-button'; }
-      return 'unsent';
+    // Submit by clicking the composer's Send control — NOT by pressing Enter.
+    // Calibrated live against ZCode 3.8.1 (2026-08-26): the composer is multiline,
+    // so Enter inserts a newline and never submits; and its rich-text editor does
+    // NOT clear the contenteditable's DOM text when a message is sent. The old
+    // "press Enter, then check the box emptied" therefore mis-fired both ways.
+    // The real control is `button[data-testid="v4-composer-send"]` (aria-label
+    // "Send", type=submit), enabled ONLY while the editor MODEL is non-empty and
+    // flipping back to DISABLED the instant a send is accepted. So we click it and
+    // read the enabled→disabled flip (or a Stop/generating control) as the submit
+    // signal — never the DOM text, which lingers after a real send.
+    const clicked = await this.evaluate(`(() => {
+      const btn = document.querySelector('[data-testid="v4-composer-send"]')
+        || [...document.querySelectorAll('button,[role=button]')].find(b =>
+             ((b.getAttribute('aria-label')||'').trim().toLowerCase() === 'send')
+             || (b.getAttribute('type') === 'submit' && /\\bsend\\b/i.test(b.innerText||'')));
+      if (!btn) return 'no-button';
+      if (btn.disabled === true || btn.getAttribute('aria-disabled') === 'true') return 'disabled';
+      btn.click();
+      return 'clicked';
     })()`);
-    await new Promise(r => setTimeout(r, 300));
-    // Confirm the box actually cleared (submitted). An unsent prompt must fail —
-    // it must never masquerade as a completed review against the home screen.
-    const submitted = await this.evaluate(`(() => {
-      const el = document.querySelector('[data-bureau-input="1"]');
-      const cleared = !el || (el.innerText || el.value || '').trim().length === 0;
-      if (el) el.removeAttribute('data-bureau-input');
-      return cleared;
-    })()`);
+    if (clicked !== 'clicked') {
+      await this.evaluate(`(() => { const el = document.querySelector('[data-bureau-input="1"]'); if (el) el.removeAttribute('data-bureau-input'); })()`);
+      throw new HarnessError(
+        clicked === 'disabled'
+          ? 'ZCode: the Send control was disabled after typing — the review prompt did not register in the ' +
+              'composer model. Recalibrate text insertion in engine/harness/senior.ts.'
+          : 'ZCode: no composer Send control found ([data-testid="v4-composer-send"] / aria-label "Send"). ' +
+              'Recalibrate the Send selector in engine/harness/senior.ts.'
+      );
+    }
+    // Confirm the send was ACCEPTED: the Send button re-disables (model emptied)
+    // or a Stop/generating control appears. Poll briefly; the DOM text is NOT a
+    // reliable signal for this editor, so we never read it here.
+    let submitted = false;
+    for (let i = 0; i < 20 && !submitted; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      submitted = await this.evaluate(`(() => {
+        const btn = document.querySelector('[data-testid="v4-composer-send"]')
+          || [...document.querySelectorAll('button,[role=button]')].find(b => (b.getAttribute('aria-label')||'').trim().toLowerCase() === 'send');
+        const sendGone = !btn || btn.disabled === true || btn.getAttribute('aria-disabled') === 'true';
+        const generating = [...document.querySelectorAll('button,[role=button]')]
+          .some(b => /^(stop|cancel)$/i.test(((b.getAttribute('aria-label')||b.innerText)||'').trim()));
+        return sendGone || generating;
+      })()`);
+    }
+    await this.evaluate(`(() => { const el = document.querySelector('[data-bureau-input="1"]'); if (el) el.removeAttribute('data-bureau-input'); })()`);
     if (!submitted) {
       throw new HarnessError(
-        'ZCode: the review prompt was typed but never submitted (no working Send/Submit control). ' +
-          'Recalibrate the Send selector in engine/harness/senior.ts.'
+        'ZCode: clicked Send but saw no submit (button never re-disabled, no generating indicator). ' +
+          'Recalibrate the submit signal in engine/harness/senior.ts.'
       );
     }
   }
@@ -602,28 +626,32 @@ export class ZCodeSession {
 
   private async probeActivity(): Promise<AgentActivity> {
     return (await this.evaluate(`(() => {
-      const btns = [...document.querySelectorAll('button,[role=button]')];
-      const has = re => btns.some(b => re.test(((b.getAttribute('aria-label')||b.innerText)||'').trim()));
+      // Calibrated live against ZCode 3.8.1 (2026-08-26). While GLM generates, the
+      // composer's Send button is REPLACED by a Stop button
+      // (data-testid="v4-stop"); when it finishes, the Send button
+      // (data-testid="v4-composer-send") returns. These testids are the reliable
+      // activity signals — they do NOT collide with the composer's own
+      // "Add context"/"Full access"/"Plan mode" controls, whose text the OLD
+      // home-screen heuristic mistook for the welcome screen, so canSend was
+      // pinned false and every finished review was misread as a stall.
+      const stopBtn = !!document.querySelector('[data-testid="v4-stop"]');
+      const sendBtn = document.querySelector('[data-testid="v4-composer-send"]');
+      // Fallbacks (label-based) in case the testids drift again.
+      const labelStop = [...document.querySelectorAll('button,[role=button]')]
+        .some(b => /^(stop|cancel)$/i.test(((b.getAttribute('aria-label')||b.innerText)||'').trim()));
       // A live progress indicator is a SMALL standalone status label ("Working",
-      // "Generating…", "Thinking…") — NOT the word buried in the agent's own reply
-      // prose (e.g. "working tree clean"), which used to make the waiter believe the
-      // agent was still generating forever and run to the job timeout with no
-      // verdict captured. Match a leaf element whose ENTIRE text is a progress word
-      // (optional trailing dots/ellipsis); Stop/Cancel stays the primary signal.
+      // "Generating…") — NOT the word buried in the reply prose (e.g. "working tree
+      // clean"). Match only a leaf element whose ENTIRE text is a progress word.
       const progressRe = new RegExp(${JSON.stringify(AGENT_PROGRESS_LABEL_RE.source)}, 'i');
       const statusWorking = [...document.querySelectorAll('span,div,p,button,[role=status],[aria-live]')]
         .some(e => e.children.length === 0 && progressRe.test((e.innerText||'').trim()));
-      const working = has(/^(stop|cancel)$/i) || statusWorking;
-      // The empty home screen ALSO has a "Send" button, so "Send is present" alone
-      // used to read as idle-complete — the harness then "finished" against the
-      // welcome chrome and produced a phantom REVISE. Suppress canSend while the
-      // distinctive home-screen chrome (permission-mode controls, present only
-      // before a conversation exists) is on screen, so the waiter never calls the
-      // home screen "done": it stays inactive → stalls → fails loudly instead.
-      const homeMarkers = [${SENIOR_HOME_SCREEN_MARKERS.map(re => JSON.stringify(re.source)).join(', ')}];
-      const bodyText = document.body.innerText || '';
-      const onHomeScreen = homeMarkers.filter(s => new RegExp(s, 'i').test(bodyText)).length >= 2;
-      const canSend = has(/^send$/i) && !onHomeScreen;
+      const working = stopBtn || labelStop || statusWorking;
+      // Ready for the next message (idle/done) = the Send button is back AND we are
+      // not mid-generation. The empty home screen also shows a Send button, but by
+      // the time we wait we have already submitted a prompt (sendPrompt verifies
+      // the send landed), so a present-and-not-working Send button here means the
+      // reply is finished — not the welcome screen.
+      const canSend = !!sendBtn && !working;
       return { working, canSend, len: document.body.innerText.length };
     })()`)) as AgentActivity;
   }
