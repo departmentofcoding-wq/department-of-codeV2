@@ -83,4 +83,29 @@ describe.each(testImplementations)('T15: Budget Ceiling Enforcement ($name)', ({
     expect(spans.length).toBeGreaterThan(0);
     expect(spans.some((s) => s.detail.includes('budget_exceeded'))).toBe(true);
   });
+
+  it('declines on the rolling-24h TOKEN ceiling too (not just requests)', async () => {
+    // One turn spends 150 tokens (100 in + 50 out). A ceiling of 120 is already
+    // exceeded after turn 1, so turn 2 must be refused before any call.
+    db.run(
+      `INSERT INTO bureau_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      BUDGET_META_KEYS.ROLLING_24H_TOKENS_CEILING,
+      '120'
+    );
+
+    const session = createSession(db, { title: 'Token Budget Test', attribution: humanAttr });
+    const mockClient = new MockClient([
+      { text: 'Turn 1', tokensIn: 100, tokensOut: 50, latencyMs: 10, costUsd: null, finishReason: 'stop', truncated: false },
+      { text: 'Turn 2 (blocked)', tokensIn: 100, tokensOut: 50, latencyMs: 10, costUsd: null, finishReason: 'stop', truncated: false }
+    ]);
+
+    await runOfficerTurn(db, session.id, { customClient: mockClient });
+    expect(mockClient.callHistory).toHaveLength(1);
+
+    await expect(runOfficerTurn(db, session.id, { customClient: mockClient })).rejects.toThrow(/ceiling exceeded/);
+    expect(mockClient.callHistory).toHaveLength(1); // no call beyond the token ceiling
+
+    const spans = db.all<BureauJournalRow>(`SELECT * FROM bureau_journal WHERE kind = 'guardrail'`);
+    expect(spans.some((s) => s.detail.includes('budget_exceeded') && s.detail.includes('token'))).toBe(true);
+  });
 });
