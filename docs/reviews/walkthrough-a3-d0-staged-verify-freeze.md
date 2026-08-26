@@ -1,7 +1,14 @@
 # Walkthrough — A3 D0: Staged Verification Contract Freeze
 
-**Branch:** `wt/a3-d0-staged-verify-freeze` (cut from `main` = `562d2a9`)
+**Branch:** `wt/a3-d0-staged-verify-freeze` (rebased onto current `main` = A1+A2)
 **Stream:** Part A / A3 (D0 freeze) of `docs/plan-bureau-kernel-roadmap.md`
+
+> **Base note (senior REVISE round 1, addressed):** originally cut from
+> `562d2a9`, which predated A1 and A2, so the two-dot review diff falsely showed
+> A1/A2 files as deleted. The branch has been **rebased onto current `main`**
+> (which contains A1 + A2), so the diff is now clean — only the D0 additions —
+> and the numbers below are measured on the rebased tip. Merge is a real
+> three-way `git merge`, never a patch-apply.
 **Milestone type:** D0 contract-freeze — schema + vocab only, **no behavior**,
 merged BEFORE the stage-runner implementation stream branches (department phase
 discipline).
@@ -38,9 +45,9 @@ idempotency on reopen.
 
 ## Claims (for independent senior verification)
 
-1. **Behavior-preserving:** full suite `441 / 95` passes (baseline 435/94 → +6,
-   the freeze test only), `npm run build` (`tsc --noEmit`) clean. No existing test
-   changed.
+1. **Behavior-preserving:** full suite `465 / 99` passes on the rebased tip
+   (current `main` was 459/98 → +6, the freeze test only), `npm run build`
+   (`tsc --noEmit`) clean. No existing test changed.
 2. **Additive/nullable:** a legacy-shaped `bureau_verify_runs` insert (no
    `stages`/`pass_*`) succeeds and reads null; the staged payload round-trips.
 3. **Migration-safe:** columns present on a fresh boot AND after a close/reopen
