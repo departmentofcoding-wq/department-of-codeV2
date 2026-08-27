@@ -283,6 +283,12 @@ export function findSeniorBinary(cfg: SeniorConfig): string {
 // Claude CLI senior (subprocess, headless review)
 // ---------------------------------------------------------------------------
 
+export const DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS = 1200000;
+
+export function resolveClaudeSeniorTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Number(env['CLAUDE_SENIOR_TIMEOUT_MS'] || DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS);
+}
+
 export class ClaudeCliSenior implements SeniorDriver {
   private readonly cfg: SeniorConfig;
   private readonly model?: string;
@@ -324,7 +330,7 @@ export class ClaudeCliSenior implements SeniorDriver {
       const timer = setTimeout(() => {
         killTree();
         reject(new HarnessError('Claude CLI senior timed out'));
-      }, Number(process.env['CLAUDE_SENIOR_TIMEOUT_MS'] || 180000));
+      }, resolveClaudeSeniorTimeoutMs());
       child.stdout.on('data', d => (out += d));
       child.stderr.on('data', d => (err += d));
       child.on('error', e => {

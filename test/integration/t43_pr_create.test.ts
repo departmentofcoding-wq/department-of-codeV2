@@ -103,8 +103,8 @@ describe('T43: pr.create Job Integration Test', () => {
 
     await handlePrCreate(mockCtx);
 
-    // Verify branch pushed and PR created in fake provider
-    expect(fakePrProvider.pushedBranches).toContain(`bureau-wt-${taskId}`);
+    // Verify branch pushed via refspec and PR created in fake provider
+    expect(fakePrProvider.pushedBranches).toContain(`HEAD:refs/heads/bureau-wt-${taskId}`);
     expect(fakePrProvider.createdPrs).toHaveLength(1);
     expect(fakePrProvider.createdPrs[0].body).toContain(`Reviewed commit: ${tipHash}`);
 

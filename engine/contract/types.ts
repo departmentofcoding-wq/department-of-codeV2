@@ -416,7 +416,7 @@ export interface CreatePrResult {
 }
 
 export interface PrProvider {
-  pushBranch(branch: string): Promise<void>;
+  pushBranch(branch: string, cwd?: string): Promise<void>;
   createPr(input: CreatePrInput): Promise<CreatePrResult>;
   mergePr(number: number): Promise<void>;
 }

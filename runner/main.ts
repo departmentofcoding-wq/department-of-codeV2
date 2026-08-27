@@ -56,6 +56,8 @@ const STOP_TIMEOUT_MS = 10_000;
 
 import { getWorkspaceProviderOverride, setWorkspaceProvider } from '../engine/contract/workspace-seam.ts';
 import { GitWorkspaceProvider } from '../engine/worktrees/manager.ts';
+import { getPrProviderOverride, setPrProviderOverride } from '../engine/contract/pr-seam.ts';
+import { GhCliPrProvider } from '../engine/delivery/gh_cli_pr_provider.ts';
 import { getIdeDriverOverride, setIdeDriverOverride } from '../engine/contract/ide-driver-seam.ts';
 import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
 import { GatedIdeDriver } from '../engine/selectors/gate.ts';
@@ -111,6 +113,10 @@ export class Runner {
 
     if (!getWorkspaceProviderOverride()) {
       setWorkspaceProvider(new GitWorkspaceProvider());
+    }
+
+    if (!getPrProviderOverride()) {
+      setPrProviderOverride(new GhCliPrProvider());
     }
 
     if (!getIdeDriverOverride()) {

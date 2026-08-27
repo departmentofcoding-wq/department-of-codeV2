@@ -144,6 +144,13 @@ on quota:
 - **Whole-body text is noisy.** Reading `document.body.innerText` can capture
   menus/panels; `extractAgentReply` slices the reply relative to the sent prompt
   instead.
+- **Junior-dispatch stall (IDE relaunched without debug port — S6).** On a
+  junior-dispatch stall or failure to connect, suspect an Antigravity IDE or
+  Antigravity 2.0 instance that was restarted manually or by an auto-update
+  without `--remote-debugging-port`. Recovery: kill all Antigravity processes
+  (`taskkill /IM "Antigravity.exe" /F` / `taskkill /IM "Antigravity IDE.exe" /F`)
+  and relaunch with the appropriate debug flag (`--remote-debugging-port=9333`
+  for IDE, `--remote-debugging-port=9334` for 2.0).
 
 ## Tests & evidence
 

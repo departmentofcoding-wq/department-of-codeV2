@@ -1,5 +1,7 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import type { AttributionTuple } from '../engine/contract/index.ts';
+import type { AttributionTuple, DbConnection } from '../engine/contract/index.ts';
 import { openDbConnection } from '../engine/db/index.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
 import { confirmVerify, createSession, getOpenSessions, getSessionWithMessages, updateSessionDraft, appendIntakeMessage } from '../engine/intake/index.ts';
@@ -7,14 +9,78 @@ import { getProject, listProjects } from '../engine/projects/index.ts';
 import { enqueueJob } from '../engine/jobs/jobs.ts';
 import { drainSingleJob } from '../runner/main.ts';
 
-const humanAttr: AttributionTuple = {
+export const humanAttr: AttributionTuple = {
   actor_role: 'human-operator',
   provider: 'deterministic',
   model: 'core',
   account: 'operator'
 };
 
-async function main() {
+export interface IntakeSessionResolution {
+  mode: 'explicit' | 'continue' | 'fresh';
+  sessionId: string;
+  isNew: boolean;
+}
+
+export function resolveIntakeSession(
+  db: DbConnection,
+  options: { session?: string; continue?: boolean },
+  positionals: string[] = [],
+  resolvedProjectId: string | null = null,
+  attribution: AttributionTuple = humanAttr
+): IntakeSessionResolution {
+  let sessionId = options.session;
+
+  if (!sessionId) {
+    if (options.continue) {
+      const openSessions = getOpenSessions(db);
+      if (openSessions.length > 0) {
+        sessionId = openSessions[0].id;
+        if (resolvedProjectId) {
+          updateSessionDraft(db, sessionId, { projectId: resolvedProjectId });
+        }
+        if (positionals.length > 0) {
+          const prompt = positionals.join(' ');
+          appendIntakeMessage(db, sessionId, {
+            role: 'human',
+            content: prompt,
+            attribution
+          });
+        }
+        return { mode: 'continue', sessionId, isNew: false };
+      }
+    }
+
+    const initialPrompt = positionals.length > 0 ? positionals.join(' ') : 'New intake task';
+    const session = createSession(db, {
+      title: initialPrompt,
+      projectId: resolvedProjectId,
+      attribution
+    });
+    sessionId = session.id;
+    appendIntakeMessage(db, sessionId, {
+      role: 'human',
+      content: initialPrompt,
+      attribution
+    });
+    return { mode: 'fresh', sessionId, isNew: true };
+  } else {
+    if (resolvedProjectId) {
+      updateSessionDraft(db, sessionId, { projectId: resolvedProjectId });
+    }
+    if (positionals.length > 0) {
+      const prompt = positionals.join(' ');
+      appendIntakeMessage(db, sessionId, {
+        role: 'human',
+        content: prompt,
+        attribution
+      });
+    }
+    return { mode: 'explicit', sessionId, isNew: false };
+  }
+}
+
+export async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     options: {
@@ -22,6 +88,7 @@ async function main() {
       'confirm-verify': { type: 'boolean', short: 'c' },
       show: { type: 'boolean', short: 's' },
       session: { type: 'string' },
+      continue: { type: 'boolean' },
       file: { type: 'boolean', short: 'f' },
       project: { type: 'string', short: 'p' }
     },
@@ -29,7 +96,6 @@ async function main() {
   });
 
   const db = openDbConnection();
-  let sessionId = values.session;
 
   let resolvedProjectId: string | null = null;
   if (values.project) {
@@ -42,39 +108,13 @@ async function main() {
     resolvedProjectId = proj.id;
   }
 
-  if (!sessionId) {
-    const openSessions = getOpenSessions(db);
-    if (openSessions.length > 0) {
-      sessionId = openSessions[0].id;
-      if (resolvedProjectId) {
-        updateSessionDraft(db, sessionId, { projectId: resolvedProjectId });
-      }
-    } else {
-      const initialPrompt = positionals[0] ?? 'New intake task';
-      const session = createSession(db, {
-        title: initialPrompt,
-        projectId: resolvedProjectId,
-        attribution: humanAttr
-      });
-      sessionId = session.id;
-      appendIntakeMessage(db, sessionId, {
-        role: 'human',
-        content: initialPrompt,
-        attribution: humanAttr
-      });
-    }
-  } else if (resolvedProjectId) {
-    updateSessionDraft(db, sessionId, { projectId: resolvedProjectId });
-  }
-
-  if (positionals.length > 0 && !values.session && getOpenSessions(db).length > 0) {
-    const prompt = positionals.join(' ');
-    appendIntakeMessage(db, sessionId, {
-      role: 'human',
-      content: prompt,
-      attribution: humanAttr
-    });
-  }
+  const { sessionId } = resolveIntakeSession(
+    db,
+    { session: values.session, continue: values.continue },
+    positionals,
+    resolvedProjectId,
+    humanAttr
+  );
 
   if (values.answer) {
     appendIntakeMessage(db, sessionId, {
@@ -150,4 +190,6 @@ async function main() {
   db.close();
 }
 
-void main();
+if (typeof process !== 'undefined' && process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  void main();
+}

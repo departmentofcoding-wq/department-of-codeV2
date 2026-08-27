@@ -54,7 +54,7 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     } as any;
     const p = buildJuniorPlanPrompt(task);
     expect(p).toMatch(/Do NOT write any code/i);
-    expect(p).toMatch(/wt\//i); // the plan standard the rubric will enforce
+    expect(p).toMatch(/bureau-wt-/i); // the plan standard the rubric will enforce
     expect(p).toMatch(/mutation/i);
     expect(p).toContain('Build a clicker');
     expect(p).toContain('one button increments');

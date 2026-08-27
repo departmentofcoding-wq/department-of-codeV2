@@ -283,15 +283,22 @@ export async function runWorkReviewCycle(
     // commit any pending edits (checkpoint) and record the worktree tip as this
     // review's `reviewed_commit`. That satisfies pr.create's guard
     // (`reviewed_commit === branch tip`) so the junior's ACTUAL work is what gets
-    // pushed and merged — not an empty diff. Guarded on a registered provider +
-    // an existing worktree: provider-less unit tests (and any task whose junior
-    // never reached a worktree) simply leave `reviewed_commit` null, and pr.create
-    // safely REFUSES rather than merging an unreviewed tree.
-    const wsProvider = getWorkspaceProviderOverride();
-    if (wsProvider) {
+    // pushed and merged — not an empty diff.
+    const wtRow = db.get<{ path: string; status: string }>(
+      "SELECT path, status FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+      task.id
+    );
+
+    if (wtRow) {
+      const wsProvider = getWorkspaceProviderOverride();
+      if (wsProvider) {
+        try {
+          await wsProvider.checkpoint(db, task.id, attribution, 'walkthrough-approved');
+        } catch {
+          // Checkpoint failure is best-effort before recording tip
+        }
+      }
       try {
-        await wsProvider.getWorkspaceHandle(db, task.id); // throws if no worktree
-        await wsProvider.checkpoint(db, task.id, attribution, 'walkthrough-approved');
         const tip = await getBranchTipCommit(db, task.id);
         db.run('UPDATE bureau_work_reviews SET reviewed_commit = ? WHERE id = ?', tip, reviewId);
         journal(db, {
@@ -304,14 +311,24 @@ export async function runWorkReviewCycle(
         });
       } catch (err: any) {
         journal(db, {
-          kind: 'system',
+          kind: 'guardrail',
           attribution,
           taskId: task.id,
           workUuid: task.work_uuid,
           jobId: opts.jobId ?? null,
-          detail: { action: 'reviewed_commit_skipped', reason: err?.message ?? String(err), reviewId }
+          detail: { reason: 'reviewed_commit_failed', error: err?.message ?? String(err), reviewId }
         });
+        throw new Error(`Failed to record reviewed_commit for task ${task.id}: ${err?.message ?? String(err)}`);
       }
+    } else {
+      journal(db, {
+        kind: 'guardrail',
+        attribution,
+        taskId: task.id,
+        workUuid: task.work_uuid,
+        jobId: opts.jobId ?? null,
+        detail: { reason: 'no_worktree_row_for_task', reviewId, taskId: task.id }
+      });
     }
     // Advance the task into the department done-gate instead of dead-ending in
     // `claimed`. Enqueue `worktree.prepare`, which registers the bureau worktree
