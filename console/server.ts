@@ -16,6 +16,7 @@ import { taskGaps, isVacuousVerify } from '../engine/contract/validation.ts';
 import { createSession, appendIntakeMessage, getSession, getSessionWithMessages } from '../engine/intake/index.ts';
 import { confirmVerify } from '../engine/intake/confirm.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
+import { fileAgentTask, AgentFileError, AGENT_IDENTITIES } from '../engine/filing/agent_file.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
 import { listProjects, registerProject } from '../engine/projects/index.ts';
 import { sendTestNotification } from '../engine/state/notifications.ts';
@@ -54,6 +55,8 @@ import {
   type StartIntakeRequest,
   type IntakeReplyRequest,
   type ConfirmFileResult,
+  type FileAgentTaskRequest,
+  type FileAgentTaskResult,
   type GoogleKeyStatusDTO,
   type SaveGoogleKeysRequest,
   type NtfySettingsDTO,
@@ -1133,6 +1136,75 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             detail: { action: 'intake_confirm_file_refused', sessionId, reason: err.message }
           });
           sendError(res, 400, 'FILE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      // --- Agent task-filing door: peer agents file attributed tasks (no intake chat) ---
+      // The console token IS the auth; the `agent` field is journal identity only.
+      // Fail-closed: the engine's autofile flag gate still applies until the
+      // operator opts in, so this endpoint refuses with 403 by default.
+      if (req.method === 'POST' && pathname === '/api/tasks/file') {
+        let body: FileAgentTaskRequest;
+        try {
+          body = (await parseJsonBody(req)) as FileAgentTaskRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const title = typeof body.title === 'string' ? body.title.trim() : '';
+        const intent = typeof body.intent === 'string' ? body.intent.trim() : '';
+        const verifyCmd = typeof body.verifyCmd === 'string' ? body.verifyCmd.trim() : '';
+        if (!title || !intent || !verifyCmd) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'title', 'intent', and 'verifyCmd' are required and cannot be blank");
+          return;
+        }
+
+        const agentKey = (typeof body.agent === 'string' ? body.agent : 'claude').trim().toLowerCase();
+        const identity = AGENT_IDENTITIES[agentKey as keyof typeof AGENT_IDENTITIES];
+        if (!identity) {
+          sendError(res, 400, 'VALIDATION_ERROR', `Unknown agent '${body.agent}'. Known: ${Object.keys(AGENT_IDENTITIES).join(', ')}`);
+          return;
+        }
+        const attribution: AttributionTuple = { ...identity };
+
+        try {
+          const task = fileAgentTask(db, {
+            title,
+            intent,
+            spec: typeof body.spec === 'string' && body.spec.trim() ? body.spec : null,
+            acceptance: typeof body.acceptance === 'string' && body.acceptance.trim() ? body.acceptance : null,
+            verifyCmd,
+            projectId: typeof body.projectId === 'string' && body.projectId.trim() ? body.projectId : null,
+            idempotencyKey: typeof body.idempotencyKey === 'string' && body.idempotencyKey.trim() ? body.idempotencyKey : null,
+            attribution
+          });
+          const result: FileAgentTaskResult = {
+            ok: true,
+            task_id: task.id,
+            state: task.state,
+            title: task.title ? redactOutput(task.title) : '',
+            created_at: task.created_at
+          };
+          sendJson(res, 201, result);
+        } catch (err: any) {
+          if (err instanceof AgentFileError) {
+            // Typed refusal — the engine already journaled its guardrail span.
+            const status = err.code === 'autofile_disabled' || err.code === 'actor_not_allowed' ? 403 : 400;
+            sendError(res, status, err.code, err.message);
+            return;
+          }
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            detail: { action: 'agent_task_file_failed', reason: err.message }
+          });
+          sendError(res, 500, 'AGENT_FILE_FAILED', err.message || 'Agent task filing failed');
         }
         return;
       }

@@ -22,6 +22,7 @@
     "runner": "node --experimental-strip-types runner/main.ts",
     "junior": "node --experimental-strip-types scripts/run_junior.ts",
     "project": "node --experimental-strip-types scripts/project.ts",
+    "task:file": "node --experimental-strip-types scripts/file_task.ts",
     "hooks:install": "node --experimental-strip-types scripts/install_git_hooks.ts",
     "cost:report": "node --experimental-strip-types scripts/cost_report.ts"
   },

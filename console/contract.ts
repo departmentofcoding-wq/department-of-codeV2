@@ -288,6 +288,28 @@ export interface ConfirmFileResult {
   created_at: string;
 }
 
+// --- Agent task-filing door (peer agents: Claude / GLM) ---
+
+export interface FileAgentTaskRequest {
+  title: string;
+  intent: string;
+  spec?: string;
+  acceptance?: string;
+  verifyCmd: string;
+  projectId?: string;
+  /** Journal identity only — the console token IS the auth. 'claude' | 'glm'; default 'claude'. */
+  agent?: string;
+  idempotencyKey?: string;
+}
+
+export interface FileAgentTaskResult {
+  ok: boolean;
+  task_id: string;
+  state: string;
+  title: string;
+  created_at: string;
+}
+
 // --- Settings: Google API keys (env-only; never the DB/journal) ---
 
 /** Masked status of configured Google keys — safe for the browser. */
@@ -605,6 +627,12 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/projects',
     auth: 'token',
     description: 'Register a project by name + folder path (validated on disk as a git repo)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/file',
+    auth: 'token',
+    description: 'Agent task-filing door: auto-confirm verify + file a task under the autofile opt-in (fail-closed until enabled)'
   }
 ] as const;
 
