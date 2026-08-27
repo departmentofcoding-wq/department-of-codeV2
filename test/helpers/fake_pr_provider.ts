@@ -11,7 +11,7 @@ export class FakePrProvider implements PrProvider {
   public shouldFailMerge = false;
   public failReason = 'FakePrProvider injected failure';
 
-  public async pushBranch(branch: string): Promise<void> {
+  public async pushBranch(branch: string, _cwd?: string): Promise<void> {
     if (this.shouldFailPush) {
       throw new Error(this.failReason);
     }

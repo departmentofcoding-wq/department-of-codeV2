@@ -54,3 +54,46 @@ green again. Guard → mutation → catcher test → failure output → restore.
 Executed 2026-08-27 on branch `wt/agent-task-door` by the implementing session;
 both mutations reproduced → restored → re-verified in one sitting, failure output
 captured verbatim from `npx vitest run`.
+
+---
+
+## M-TAIL-1 — provider-free reviewed_commit recording (F2)
+
+- **Guard:** `engine/flow/work_review_cycle.ts` — `if (wtRow)` records `reviewed_commit`
+  whenever a `bureau_worktrees` row exists, reading the worktree path from the DB
+  provider-free via `getBranchTipCommit(db, task.id)`.
+- **Mutation:** restored the old `if (wsProvider)` check around tip recording so
+  that provider-less execution leaves `reviewed_commit` as `null`.
+- **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `records reviewed_commit on APPROVE when worktree row exists even without workspace provider`:
+  ```
+  FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > F2: Record reviewed_commit when worktree row exists (provider-free) > records reviewed_commit on APPROVE when worktree row exists even without workspace provider
+  AssertionError: expected null to be '05bf2b1ea3a410c801036263a1ffd830cdb13…' // Object.is equality
+
+  - Expected: 
+  "05bf2b1ea3a410c801036263a1ffd830cdb1313c"
+
+  + Received: 
+  null
+  ```
+  (The review row's `reviewed_commit` remained null because `wsProvider` was null.)
+- **Restore:** gate restored to `if (wtRow)` (provider-free); test suite green (14/14).
+
+---
+
+## M-TAIL-2 — one-branch refspec push in pr.create (F3)
+
+- **Guard:** `engine/delivery/pr_create.ts` — `await prProvider.pushBranch(refspec, wtRow?.path)`
+  where `refspec = 'HEAD:refs/heads/' + branchName`. Pushes the worktree's actual checked-out HEAD
+  directly to the remote ref without relying on local branch name match.
+- **Mutation:** reverted to pushing literal branch name: `await prProvider.pushBranch(branchName, wtRow?.path)`.
+- **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `pr_create pushes HEAD:refs/heads/bureau-wt-<taskId> refspec`:
+  ```
+  FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > F3: One-branch model (prompts + pr_create refspec) > pr_create pushes HEAD:refs/heads/bureau-wt-<taskId> refspec
+  AssertionError: expected [ 'bureau-wt-task-f3-pr' ] to include 'HEAD:refs/heads/bureau-wt-task-f3-pr'
+  ```
+  (The provider pushed the literal branch name rather than the refspec.)
+- **Restore:** push restored to `refspec`; test suite green (14/14).
+
+Executed 2026-08-27 on branch `wt/junior-a-delivery-tail` by the implementing session;
+both mutations reproduced → restored → re-verified in one sitting, failure output
+captured verbatim from `npx vitest run`.

@@ -31,8 +31,8 @@ export function evaluatePlanRubric(planText: string): PlanRubricResult {
   const missing: string[] = [];
 
   // 1. Branch named
-  if (!/wt\/|branch/i.test(planText)) {
-    missing.push('branch name (wt/...)');
+  if (!/wt\/|bureau-wt-|branch/i.test(planText)) {
+    missing.push('branch name (bureau-wt-... or wt/...)');
   }
 
   // 2. Scope enumerable

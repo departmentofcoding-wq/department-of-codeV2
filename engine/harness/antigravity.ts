@@ -471,7 +471,7 @@ export function extractAgentReply(fullText: string, prompt: string): string {
  */
 export const PLAN_MARKERS: RegExp[] = [
   /^(implementation plan|the plan|here'?s (the|my) plan|plan:)/i,
-  /^#{1,3}\s*plan\b/i
+  /^#{1,3}\s*(implementation\s+plan|the\s+plan|plan)\b/i
 ];
 export const WALKTHROUGH_MARKERS: RegExp[] = [
   /^(walkthrough|summary of changes|here'?s what i (did|changed|built)|changes made)/i,

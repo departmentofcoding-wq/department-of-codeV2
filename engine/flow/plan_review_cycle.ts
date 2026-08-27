@@ -126,10 +126,11 @@ export function buildJuniorPlanPrompt(
   return (
     'Here is a task for you to plan. Do NOT write any code yet — a senior will ' +
     'review your implementation plan first.\n\n' +
-    'Your plan MUST include: (1) a branch name in the form wt/..., (2) an ' +
+    `Your plan MUST include: (1) work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches, (2) an ` +
     'enumerable scope (components and files to change), (3) the tests you will ' +
     'add and the mutation evidence you will record, and (4) a walkthrough / ' +
     'verification plan.\n\n' +
+    'Format requirement: Emit your plan in a marked, structured format using a top-level # Implementation Plan (or ## Plan) header with sections corresponding to the requirements above. Conversational responses without a structured plan will be rejected.\n\n' +
     (priorFeedback
       ? `The senior reviewed your PREVIOUS plan and required these changes — address every point:\n` +
         `${priorFeedback}\n\n`
@@ -186,7 +187,7 @@ export function buildImplementationPrompt(
   const planLabel = basis.approved ? 'APPROVED PLAN' : 'PLAN (implement, addressing the changes above)';
   return (
     header +
-    'Rules: work on the branch named in the plan; add the tests the plan names; ' +
+    `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; add the tests the plan names; ` +
     'when done, finish with a walkthrough section summarizing what changed, the ' +
     'test results, and the verification you ran.\n\n' +
     '===== TASK =====\n' +

@@ -26,8 +26,8 @@ export class GhCliPrProvider implements PrProvider {
     }
   }
 
-  public async pushBranch(branch: string): Promise<void> {
-    this.runCommand('git', ['push', 'origin', branch]);
+  public async pushBranch(branch: string, cwd?: string): Promise<void> {
+    this.runCommand('git', ['push', 'origin', branch], cwd);
   }
 
   public async createPr(input: CreatePrInput): Promise<CreatePrResult> {

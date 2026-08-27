@@ -101,8 +101,14 @@ export async function handlePrCreate(ctx: JobContext): Promise<void> {
   // Async PR creation operations outside DB transaction
   const prProvider = getPrProvider();
   const branchName = `bureau-wt-${taskId}`;
+  const refspec = `HEAD:refs/heads/${branchName}`;
 
-  await prProvider.pushBranch(branchName);
+  const wtRow = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    taskId
+  );
+
+  await prProvider.pushBranch(refspec, wtRow?.path);
 
   const title = `feat(${taskId}): ${task.title}`;
   const body = `Automated PR for task ${taskId}\n\nReviewed commit: ${currentTip}\n\nIntent: ${task.intent || 'N/A'}`;
