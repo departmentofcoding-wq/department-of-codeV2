@@ -30,7 +30,7 @@ green again. Guard → mutation → catcher test → failure output → restore.
     Tests  1 failed | 5 passed (6)
     ```
 - **Restore:** gate reverted to `if (!isAgentAutofileEnabled(db))`; both files green
-  (14/14 across the two). `git diff` confirmed only the intended +21/+1 lines remained.
+  (17/17 across the tc_tail_fixes suite). `git diff` confirmed only the intended +21/+1 lines remained.
 
 ## M-AGENTFILE-2 — the actor allowlist
 
@@ -76,7 +76,7 @@ captured verbatim from `npx vitest run`.
   null
   ```
   (The review row's `reviewed_commit` remained null because `wsProvider` was null.)
-- **Restore:** gate restored to `if (wtRow)` (provider-free); test suite green (14/14).
+- **Restore:** gate restored to `if (wtRow)` (provider-free); test suite green (17/17).
 
 ---
 
@@ -92,8 +92,8 @@ captured verbatim from `npx vitest run`.
   AssertionError: expected [ 'bureau-wt-task-f3-pr' ] to include 'HEAD:refs/heads/bureau-wt-task-f3-pr'
   ```
   (The provider pushed the literal branch name rather than the refspec.)
-- **Restore:** push restored to `refspec`; test suite green (14/14).
+- **Restore:** push restored to `refspec`; test suite green (17/17).
 
-Executed 2026-08-27 on branch `wt/junior-a-delivery-tail` by the implementing session;
+Executed 2026-08-27 on branch `bureau-wt-e156395d-369f-494c-8237-ea1be5ee1aa8` by the implementing session;
 both mutations reproduced → restored → re-verified in one sitting, failure output
 captured verbatim from `npx vitest run`.
