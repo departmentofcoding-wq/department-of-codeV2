@@ -141,6 +141,27 @@ export const PROVISION_ACTOR_ROLES = [
 
 export type ProvisionActorRole = typeof PROVISION_ACTOR_ROLES[number];
 
+// The agent task-filing door (engine/filing/agent_file.ts). A NEW allowlist
+// array, sibling to PROVISION_ACTOR_ROLES — the ACTOR_ROLES vocabulary above
+// stays frozen. Peer agents file as senior-engineer (identity carried by
+// provider+model); the human door remains allowed so the operator can use the
+// same machinery without the conversational intake.
+export const AGENT_FILE_ACTOR_ROLES = [
+  'senior-engineer',
+  'human-operator'
+] as const;
+
+export type AgentFileActorRole = typeof AGENT_FILE_ACTOR_ROLES[number];
+
+// Intake meta keys (bureau_meta k/v — no schema migration). The agent-autofile
+// opt-in is OFF by default: fileAgentTask refuses (fail-closed) until the
+// operator sets it. It only lifts the START-side human verify-confirm gate for
+// agent-filed tasks; the done-gate (verifier exit 0 + human approval) is
+// absolute and untouched.
+export const INTAKE_META_KEYS = {
+  AGENT_AUTOFILE: 'intake:agent_autofile'
+} as const;
+
 // Raised 3 → 7: real plans often need several revise rounds to converge, and the
 // department would rather keep iterating than stall. At the ceiling the flow no
 // longer blocks — it proceeds to implementation with the outstanding feedback and
