@@ -20,7 +20,13 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
   });
 
   it('2. Endpoint Manifest: every endpoint declares method, path, description, and token auth', () => {
-    expect(ENDPOINTS.length).toBe(31);
+    // Count reconciliation: docs/plan-phase8-entry.md (Stream B) stated the freeze as
+    // 30 -> 32, but that baseline predates the agent task-filing door (POST
+    // /api/tasks/file, merged 67eb81f) which moved the base 30 -> 31. Stream B adds
+    // exactly two endpoints — GET /api/settings/github and POST /api/projects/provision
+    // (both asserted below) — so the reconciled freeze is 31 -> 33, NOT 32. The stale
+    // task number is superseded here on purpose rather than silently frozen.
+    expect(ENDPOINTS.length).toBe(33);
 
     const paths = ENDPOINTS.map(e => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/health');
@@ -51,8 +57,10 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
     expect(paths).toContain('GET /api/settings/ntfy');
     expect(paths).toContain('POST /api/settings/ntfy');
     expect(paths).toContain('POST /api/settings/ntfy/test');
+    expect(paths).toContain('GET /api/settings/github');
     expect(paths).toContain('GET /api/projects');
     expect(paths).toContain('POST /api/projects');
+    expect(paths).toContain('POST /api/projects/provision');
     expect(paths).toContain('POST /api/tasks/file');
 
     for (const ep of ENDPOINTS) {

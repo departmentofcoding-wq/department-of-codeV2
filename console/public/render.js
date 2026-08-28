@@ -555,12 +555,17 @@ export function renderProjectsTable(projects) {
     const safeId = escapeHtml(p.id);
     const safeName = escapeHtml(p.name);
     const safePath = escapeHtml(p.path_to_repo);
+    const hrefGithub = safeHref(p.github_url);
+    const safeGithub = p.github_url
+      ? (hrefGithub ? `<a href="${hrefGithub}" target="_blank" rel="noopener noreferrer" class="project-github-link">${escapeHtml(p.github_url)}</a>` : escapeHtml(p.github_url))
+      : '—';
     const safeDescription = escapeHtml(p.description || '—');
     const safeCreated = escapeHtml(p.created_at);
     return `
       <tr class="project-row" data-project-id="${safeId}">
         <td><strong>${safeName}</strong></td>
         <td><code class="project-path">${safePath}</code></td>
+        <td>${safeGithub}</td>
         <td>${safeDescription}</td>
         <td class="metric-sub">${safeCreated}</td>
       </tr>
@@ -574,6 +579,7 @@ export function renderProjectsTable(projects) {
           <tr>
             <th>Project</th>
             <th>Folder Location</th>
+            <th>GitHub Remote</th>
             <th>Description</th>
             <th>Registered</th>
           </tr>
@@ -582,6 +588,34 @@ export function renderProjectsTable(projects) {
           ${rows}
         </tbody>
       </table>
+    </div>
+  `;
+}
+
+/**
+ * Renders in-flight or completed provisioning status chip.
+ * @param {string} jobId
+ * @param {string} name
+ * @param {'queued' | 'running' | 'done' | 'failed' | string} state
+ * @returns {string}
+ */
+export function renderProvisioningChip(jobId, name, state) {
+  const safeJobId = escapeHtml(jobId);
+  const safeName = escapeHtml(name);
+  let label = `⏳ Provisioning ${safeName}...`;
+  let statusClass = 'chip-provisioning';
+
+  if (state === 'done' || state === 'provisioned') {
+    label = `✅ Provisioned`;
+    statusClass = 'chip-done';
+  } else if (state === 'failed' || state === 'error') {
+    label = `❌ Failed`;
+    statusClass = 'chip-failed';
+  }
+
+  return `
+    <div class="provisioning-chip ${statusClass}" data-job-id="${safeJobId}">
+      <span class="chip-label">${label}</span>
     </div>
   `;
 }
@@ -759,8 +793,63 @@ export function renderNtfySettingsCard(status) {
 }
 
 /**
+ * Renders the GitHub CLI authentication and repo configuration card.
+ * @param {import('../contract.ts').GithubSettingsDTO | undefined} status
+ * @returns {string}
+ */
+export function renderGithubSettingsCard(status) {
+  const isAuth = Boolean(status?.authenticated);
+  const login = status?.login ? escapeHtml(status.login) : null;
+  const scopes = status?.scopes || [];
+  const projectsRoot = status?.projects_root ? escapeHtml(status.projects_root) : '—';
+  const repoPrefix = status?.repo_prefix ? escapeHtml(status.repo_prefix) : '—';
+
+  const authBadge = isAuth
+    ? `<span class="badge state-active">Connected</span>`
+    : `<span class="badge state-inactive">Disconnected</span>`;
+
+  const accountLine = isAuth && login
+    ? `<strong>@${login}</strong>`
+    : `<span class="text-muted">Not authenticated with GitHub CLI (gh)</span>`;
+
+  const scopesList = scopes.length
+    ? scopes.map(s => `<span class="badge category-badge">${escapeHtml(s)}</span>`).join(' ')
+    : '<span class="text-muted">None</span>';
+
+  return `
+    <div class="card table-card full-width" id="github-settings-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+        <h3>GitHub Remote Connection</h3>
+        ${authBadge}
+      </div>
+      <p class="metric-sub" style="margin-bottom:0.75rem;">
+        Shows the active GitHub CLI (<code>gh</code>) authentication status and configuration for self-serve project provisioning.
+      </p>
+      <div class="settings-github-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; margin-top:0.75rem;">
+        <div>
+          <div class="metric-sub">Account</div>
+          <div>${accountLine}</div>
+        </div>
+        <div>
+          <div class="metric-sub">Token Scopes</div>
+          <div>${scopesList}</div>
+        </div>
+        <div>
+          <div class="metric-sub">Projects Root</div>
+          <div><code>${projectsRoot}</code></div>
+        </div>
+        <div>
+          <div class="metric-sub">Repo Prefix</div>
+          <div><code>${repoPrefix}</code></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Renders the console settings view.
- * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string, googleKeys?: any, ntfySettings?: any }} [settings]
+ * @param {{ theme?: string, isPaused?: boolean, hasToken?: boolean, tokenPreview?: string, googleKeys?: any, ntfySettings?: any, githubSettings?: any }} [settings]
  * @returns {string}
  */
 export function renderSettings(settings = {}) {
@@ -773,6 +862,7 @@ export function renderSettings(settings = {}) {
   return `
     <div class="dashboard-grid">
       ${renderGoogleKeysCard(settings.googleKeys)}
+      ${renderGithubSettingsCard(settings.githubSettings)}
       ${renderNtfySettingsCard(settings.ntfySettings)}
 
       <div class="card stat-card">

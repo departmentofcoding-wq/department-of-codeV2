@@ -7,9 +7,23 @@ import { journal } from '../journal/writer.ts';
 import { ensureWorktreeIgnored, registerProject } from './manager.ts';
 import { getGithubOwner, getProjectsRoot, getRepoPrefix } from './config.ts';
 import { getRepoProvider, ProvisionError } from './repo_provider.ts';
+import { projectProvisionJobId } from '../jobs/ids.ts';
 
 const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 const SLUG_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function resolveJobId(db: DbConnection, canonicalName?: string, explicitJobId?: string): string | undefined {
+  if (explicitJobId) {
+    const row = db.get<{ id: string }>('SELECT id FROM bureau_jobs WHERE id = ?', explicitJobId);
+    if (row) return row.id;
+  }
+  if (canonicalName) {
+    const candidateId = projectProvisionJobId(canonicalName);
+    const row = db.get<{ id: string }>('SELECT id FROM bureau_jobs WHERE id = ?', candidateId);
+    if (row) return row.id;
+  }
+  return undefined;
+}
 
 export async function provisionProject(
   db: DbConnection,
@@ -103,6 +117,7 @@ export async function provisionProject(
     journal(db, {
       kind: 'guardrail',
       attribution: input.attribution,
+      jobId: resolveJobId(db, canonicalName, input.jobId),
       detail: {
         reason: 'project_already_exists',
         name: canonicalName,
@@ -120,6 +135,7 @@ export async function provisionProject(
     journal(db, {
       kind: 'guardrail',
       attribution: input.attribution,
+      jobId: resolveJobId(db, canonicalName, input.jobId),
       detail: {
         reason: 'path_containment_violation',
         targetPath,
@@ -139,6 +155,7 @@ export async function provisionProject(
       journal(db, {
         kind: 'guardrail',
         attribution: input.attribution,
+        jobId: resolveJobId(db, canonicalName, input.jobId),
         detail: { reason: 'directory_collision_not_dir', targetPath }
       });
       throw new ProvisionError(`Target path '${targetPath}' already exists and is not a directory.`, 'DIRECTORY_COLLISION');
@@ -158,6 +175,7 @@ export async function provisionProject(
       journal(db, {
         kind: 'guardrail',
         attribution: input.attribution,
+        jobId: resolveJobId(db, canonicalName, input.jobId),
         detail: { reason: 'directory_collision', targetPath }
       });
       throw new ProvisionError(`Target directory '${targetPath}' already exists and is not an adoptable project scaffold.`, 'DIRECTORY_COLLISION');
@@ -208,13 +226,28 @@ export async function provisionProject(
   const repoProvider = options?.repoProvider ?? getRepoProvider();
   const githubOwner = input.githubOwner ?? getGithubOwner(db);
 
-  const remoteResult = await repoProvider.createRemote({
-    name: canonicalName,
-    owner: githubOwner,
-    visibility,
-    sourcePath: targetPath,
-    description: input.description ?? null
-  });
+  let remoteResult: { url: string };
+  try {
+    remoteResult = await repoProvider.createRemote({
+      name: canonicalName,
+      owner: githubOwner,
+      visibility,
+      sourcePath: targetPath,
+      description: input.description ?? null
+    });
+  } catch (err: any) {
+    journal(db, {
+      kind: 'guardrail',
+      attribution: input.attribution,
+      jobId: resolveJobId(db, canonicalName, input.jobId),
+      detail: {
+        reason: 'remote_creation_failed',
+        name: canonicalName,
+        error: err.message
+      }
+    });
+    throw err;
+  }
 
   // 10. Database Registration — through the EXISTING registerProject gate
   // (its on-disk dir + git-repo checks re-verify what we just built; its
@@ -233,6 +266,7 @@ export async function provisionProject(
   journal(db, {
     kind: 'project-provisioned',
     attribution: input.attribution,
+    jobId: resolveJobId(db, canonicalName, input.jobId),
     detail: {
       projectId: row.id,
       name: row.name,
