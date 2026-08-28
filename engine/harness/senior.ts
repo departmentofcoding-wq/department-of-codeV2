@@ -121,17 +121,35 @@ export function parseVerdict(raw: string): { verdict: Verdict; feedback: string 
 }
 
 /**
- * Distinctive visible chrome of the CDP senior's EMPTY home screen — the
- * permission-mode controls that exist only before a conversation is started.
- * A real review reply never contains these standalone labels. Used to tell a
- * genuine (if verdict-less) review apart from a capture of the welcome screen.
+ * Distinctive visible chrome of the CDP senior's EMPTY home screen — text that
+ * renders ONLY before a conversation has started. Calibrated live against
+ * ZCode 3.9.2 (2026-08-28): the empty screen (`[data-testid="chat-empty"]`)
+ * shows a time-of-day greeting hero ("Good afternoon! Leave the rest to me."),
+ * a "Select project" picker, the hero hint "Ask ZCode anything, @ to add
+ * context, / for commands or capabilities", and rotating template suggestion
+ * cards (observed: "Weekly Summary", "Error Fix", "PPT Creation", "Idle-time
+ * task"; a 2026-08-28 incident capture: "Summarize the events of the week…",
+ * "CI Failures & Flaky Test Report").
+ *
+ * Scar: the OLD set (Ask before changes / Edit automatically / Plan mode /
+ * Add context / Full access) was verified live to be PERSISTENT COMPOSER CHROME
+ * — the permission-mode dropdown and its Add-context/Full-access controls are
+ * visible during an ACTIVE conversation too, so a genuine review that happened
+ * to lack a clean VERDICT: line was false-posited as a home-screen capture.
+ * Those labels are deliberately gone from this set; a review quoting one of
+ * them is no longer rejected. The template-card markers below rotate, so the
+ * durable signals are the greeting hero, "Select project", and the hero hint.
  */
 export const SENIOR_HOME_SCREEN_MARKERS: RegExp[] = [
-  /\bAsk before changes\b/i,
-  /\bEdit automatically\b/i,
-  /\bPlan mode\b/i,
-  /\bAdd context\b/i,
-  /\bFull access\b/i
+  /^Good (?:morning|afternoon|evening)!/im,
+  /\bAsk ZCode anything\b/i,
+  /\bSelect project\b/i,
+  // Template suggestion cards (observed variants — they rotate daily).
+  /\bSummarize the events of the week\b/i,
+  /\bCI Failures & Flaky Test Report\b/i,
+  /\bWeekly Summary\b/i,
+  /\bPPT Creation\b/i,
+  /\bIdle-time task\b/i
 ];
 
 /**
