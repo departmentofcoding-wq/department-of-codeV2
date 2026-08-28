@@ -22,7 +22,7 @@ export function processImageName(binaryPath: string): string {
 /** Build the best-effort "kill every process of this image" command. Pure. */
 export function buildKillProcessCommand(exeName: string): string {
   const quoted = `"${exeName}"`;
-  return process.platform === 'win32' ? `taskkill /IM ${quoted} /F` : `pkill -f ${quoted}`;
+  return process.platform === 'win32' ? `taskkill /IM ${quoted} /F` : `pkill -x ${quoted}`;
 }
 
 /** Kill every running process of the named image, swallowing all errors. */

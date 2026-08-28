@@ -193,8 +193,14 @@ describe('WS1 — runSeniorWithRecovery (one mid-death relaunch, then fail)', ()
 });
 
 describe('WS1 — senior process image + kill command (pure)', () => {
+  const originalPlatform = process.platform;
+
   afterEach(() => {
     delete process.env['ZCODE_PATH'];
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true
+    });
   });
 
   it('seniorProcessImageName derives the exe name from the env-overridden binary', () => {
@@ -213,8 +219,22 @@ describe('WS1 — senior process image + kill command (pure)', () => {
     if (process.platform === 'win32') {
       expect(cmd).toBe('taskkill /IM "Antigravity IDE.exe" /F');
     } else {
-      expect(cmd).toBe('pkill -f "Antigravity IDE.exe"');
+      expect(cmd).toBe('pkill -x "Antigravity IDE.exe"');
     }
+  });
+
+  it('buildKillProcessCommand on POSIX platforms uses exact name matching (pkill -x)', () => {
+    for (const plat of ['linux', 'darwin'] as const) {
+      Object.defineProperty(process, 'platform', { value: plat, configurable: true });
+      expect(buildKillProcessCommand('ZCode')).toBe('pkill -x "ZCode"');
+      expect(buildKillProcessCommand('Antigravity IDE.exe')).toBe('pkill -x "Antigravity IDE.exe"');
+    }
+  });
+
+  it('buildKillProcessCommand on Windows platform uses taskkill /IM "<image>" /F', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    expect(buildKillProcessCommand('ZCode.exe')).toBe('taskkill /IM "ZCode.exe" /F');
+    expect(buildKillProcessCommand('Antigravity IDE.exe')).toBe('taskkill /IM "Antigravity IDE.exe" /F');
   });
 
   it('killSeniorProcesses never throws, even for an image that does not exist', async () => {
