@@ -188,15 +188,299 @@ describe('T-C7: Projects API (register + list git repos the bureau works in)', (
     expect(badToken.statusCode).toBe(401);
   });
 
-  it('6. Endpoint manifest: both project endpoints are declared and token-guarded', () => {
+  it('6. Endpoint manifest: all project endpoints are declared and token-guarded', () => {
     const projectEndpoints = ENDPOINTS.filter((e) => e.path.startsWith('/api/projects'));
-    expect(projectEndpoints.length).toBe(2);
+    expect(projectEndpoints.length).toBe(3);
     const paths = projectEndpoints.map((e) => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/projects');
     expect(paths).toContain('POST /api/projects');
+    expect(paths).toContain('POST /api/projects/provision');
     for (const ep of projectEndpoints) {
       expect(ep.auth).toBe('token');
       expect(ep.description).toBeTruthy();
     }
   });
+
+  it('7. POST /api/projects/provision: enqueues project.provision job with deterministic id, returns 202', async () => {
+    const port = await server();
+
+    const res = await api<{ ok: boolean; jobId: string; canonicalName: string; state: string }>(
+      port,
+      TOKEN,
+      'POST',
+      '/api/projects/provision',
+      {
+        name: 'my-new-app',
+        description: 'A newly provisioned project',
+        visibility: 'private'
+      }
+    );
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.jobId).toBe('project.provision:dept-my-new-app');
+    expect(res.body.canonicalName).toBe('dept-my-new-app');
+    expect(res.body.state).toBe('pending');
+
+    // Verify job row in DB
+    const job = db.get<{ id: string; kind: string; payload: string; state: string }>(
+      'SELECT * FROM bureau_jobs WHERE id = ?',
+      res.body.jobId
+    );
+    expect(job).toBeDefined();
+    expect(job?.kind).toBe('project.provision');
+    expect(job?.state).toBe('pending');
+    const payload = JSON.parse(job!.payload);
+    expect(payload.name).toBe('my-new-app');
+    expect(payload.visibility).toBe('private');
+    expect(payload.attribution.actor_role).toBe('human-operator');
+
+    // Verify human journal entry
+    const journalEntry = db.get<{ kind: string; detail: string }>(
+      "SELECT * FROM bureau_journal WHERE kind = 'human' AND job_id = ?",
+      res.body.jobId
+    );
+    expect(journalEntry).toBeDefined();
+    const detail = JSON.parse(journalEntry!.detail);
+    expect(detail.action).toBe('project_provision_enqueued');
+  });
+
+  it('8. POST /api/projects/provision: Idempotency — duplicate calls return identical jobId without duplicating rows', async () => {
+    const port = await server();
+
+    const res1 = await api<{ ok: boolean; jobId: string; canonicalName: string }>(
+      port,
+      TOKEN,
+      'POST',
+      '/api/projects/provision',
+      { name: 'idempotent-proj' }
+    );
+    expect(res1.statusCode).toBe(202);
+
+    const res2 = await api<{ ok: boolean; jobId: string; canonicalName: string }>(
+      port,
+      TOKEN,
+      'POST',
+      '/api/projects/provision',
+      { name: 'idempotent-proj' }
+    );
+    expect(res2.statusCode).toBe(202);
+    expect(res1.body.jobId).toBe(res2.body.jobId);
+
+    const jobs = db.all<{ id: string }>(
+      'SELECT * FROM bureau_jobs WHERE id = ?',
+      res1.body.jobId
+    );
+    expect(jobs.length).toBe(1);
+  });
+
+  it('9. POST /api/projects/provision: Validation — blank name returns 400 VALIDATION_ERROR', async () => {
+    const port = await server();
+
+    const blankName = await api<ApiErrorResponse>(
+      port,
+      TOKEN,
+      'POST',
+      '/api/projects/provision',
+      { name: '   ' }
+    );
+    expect(blankName.statusCode).toBe(400);
+    expect(blankName.body.code).toBe('VALIDATION_ERROR');
+
+    const missingName = await api<ApiErrorResponse>(
+      port,
+      TOKEN,
+      'POST',
+      '/api/projects/provision',
+      {}
+    );
+    expect(missingName.statusCode).toBe(400);
+    expect(missingName.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('10. POST /api/projects/provision: Auth gate — fails closed (401) without valid token', async () => {
+    const port = await server();
+
+    const noToken = await api<ApiErrorResponse>(
+      port,
+      null,
+      'POST',
+      '/api/projects/provision',
+      { name: 'unauth-proj' }
+    );
+    expect(noToken.statusCode).toBe(401);
+    expect(noToken.body.code).toBe('UNAUTHORIZED');
+
+    const badToken = await api<ApiErrorResponse>(
+      port,
+      'invalid-token',
+      'POST',
+      '/api/projects/provision',
+      { name: 'unauth-proj' }
+    );
+    expect(badToken.statusCode).toBe(401);
+    expect(badToken.body.code).toBe('UNAUTHORIZED');
+  });
+
+  it('11. Polling via GET /api/journal?job_id=<jobId> reflects job state through all transitions', async () => {
+    const { FakeRepoProvider } = await import('../helpers/fake_repo_provider.ts');
+    const { setRepoProviderOverride, resetRepoProvider, setProjectsRoot } = await import('../../engine/projects/index.ts');
+    const { drainSingleJob } = await import('../../runner/main.ts');
+
+    const fakeRepo = new FakeRepoProvider();
+    setRepoProviderOverride(fakeRepo);
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bureau-poll-test-'));
+    tempDirs.push(root);
+    setProjectsRoot(db, root);
+
+    try {
+      const port = await server();
+
+      // 1. Enqueue provision job
+      const provRes = await api<{ ok: boolean; jobId: string; canonicalName: string }>(
+        port,
+        TOKEN,
+        'POST',
+        '/api/projects/provision',
+        { name: 'pollable-proj', description: 'Testing polling flow' }
+      );
+      expect(provRes.statusCode).toBe(202);
+      const jobId = provRes.body.jobId;
+
+      // 2. Poll before drain: only human enqueued span present, no project-provisioned span yet
+      const pollPending = await api<Array<{ kind: string; job_id: string }>>(
+        port,
+        TOKEN,
+        'GET',
+        `/api/journal?job_id=${encodeURIComponent(jobId)}`
+      );
+      expect(pollPending.statusCode).toBe(200);
+      expect(pollPending.body.some(s => s.kind === 'project-provisioned')).toBe(false);
+
+      // 3. Drain the job with FakeRepoProvider
+      await drainSingleJob(db, jobId);
+
+      // 4. Poll after drain: project-provisioned span is now present
+      const pollDone = await api<Array<{ kind: string; job_id: string; detail: string }>>(
+        port,
+        TOKEN,
+        'GET',
+        `/api/journal?job_id=${encodeURIComponent(jobId)}`
+      );
+      expect(pollDone.statusCode).toBe(200);
+      const provisionedSpan = pollDone.body.find(s => s.kind === 'project-provisioned');
+      expect(provisionedSpan).toBeDefined();
+
+      // 5. Verify project is now in GET /api/projects with github_url
+      const projList = await api<ProjectDTO[]>(port, TOKEN, 'GET', '/api/projects');
+      expect(projList.statusCode).toBe(200);
+      const found = projList.body.find(p => p.name === 'dept-pollable-proj');
+      expect(found).toBeDefined();
+      expect(found?.github_url).toContain('https://github.com/');
+
+      // 6. Test failure polling transition
+      fakeRepo.shouldFailCreate = true;
+      fakeRepo.failReason = 'Injected failure for polling test';
+      const failRes = await api<{ ok: boolean; jobId: string }>(
+        port,
+        TOKEN,
+        'POST',
+        '/api/projects/provision',
+        { name: 'failing-proj' }
+      );
+      expect(failRes.statusCode).toBe(202);
+      const failJobId = failRes.body.jobId;
+
+      await drainSingleJob(db, failJobId);
+
+      const pollFailed = await api<Array<{ kind: string; job_id: string; detail: string }>>(
+        port,
+        TOKEN,
+        'GET',
+        `/api/journal?job_id=${encodeURIComponent(failJobId)}`
+      );
+      expect(pollFailed.statusCode).toBe(200);
+      const guardrailSpan = pollFailed.body.find(s => s.kind === 'guardrail');
+      expect(guardrailSpan).toBeDefined();
+    } finally {
+      resetRepoProvider();
+    }
+  });
+
+  it('12. GET /api/settings/github: returns masked shape composed from fake provider + DB config', async () => {
+    const { FakeRepoProvider } = await import('../helpers/fake_repo_provider.ts');
+    const { setRepoProviderOverride, resetRepoProvider, setProjectsRoot, setRepoPrefix } = await import('../../engine/projects/index.ts');
+
+    const fakeRepo = new FakeRepoProvider();
+    fakeRepo.authStatus = {
+      authenticated: true,
+      login: 'bureau-test-user',
+      scopes: ['repo', 'read:org', 'admin:org_hook']
+    };
+    setRepoProviderOverride(fakeRepo);
+
+    setProjectsRoot(db, 'D:\\custom\\projects\\root');
+    setRepoPrefix(db, 'dept-');
+
+    try {
+      const port = await server();
+
+      const res = await api<{
+        authenticated: boolean;
+        login: string | null;
+        scopes: string[];
+        projects_root: string;
+        repo_prefix: string;
+      }>(port, TOKEN, 'GET', '/api/settings/github');
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.authenticated).toBe(true);
+      expect(res.body.login).toBe('bureau-test-user');
+      expect(res.body.scopes).toEqual(['repo', 'read:org', 'admin:org_hook']);
+      expect(res.body.projects_root).toBe('D:\\custom\\projects\\root');
+      expect(res.body.repo_prefix).toBe('dept-');
+    } finally {
+      resetRepoProvider();
+    }
+  });
+
+  it('13. Whole-Response Key Hygiene: serialized response asserts absence of secret tokens', async () => {
+    const { FakeRepoProvider } = await import('../helpers/fake_repo_provider.ts');
+    const { setRepoProviderOverride, resetRepoProvider } = await import('../../engine/projects/index.ts');
+
+    const fakeRepo = new FakeRepoProvider();
+    setRepoProviderOverride(fakeRepo);
+
+    try {
+      const port = await server();
+
+      // Raw http request to inspect raw headers + body text
+      const rawRes = await new Promise<{ headers: http.IncomingHttpHeaders; rawBody: string }>((resolve, reject) => {
+        const req = http.request(
+          `http://127.0.0.1:${port}/api/settings/github`,
+          {
+            method: 'GET',
+            headers: { [CONSOLE_TOKEN_HEADER]: TOKEN }
+          },
+          (res) => {
+            let body = '';
+            res.on('data', c => body += c);
+            res.on('end', () => resolve({ headers: res.headers, rawBody: body }));
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+
+      const serialized = JSON.stringify(rawRes.headers) + ' ' + rawRes.rawBody;
+
+      // Scan for any pattern of GitHub token prefixes
+      const tokenRegex = /(ghp_[a-zA-Z0-9]{20,}|gho_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,})/;
+      expect(tokenRegex.test(serialized)).toBe(false);
+    } finally {
+      resetRepoProvider();
+    }
+  });
 });
+

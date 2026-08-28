@@ -8,6 +8,7 @@ import {
   renderWorkers,
   renderAssetsTable,
   renderProjectsTable,
+  renderProvisioningChip,
   renderJournalTimeline,
   renderSettings,
   renderRelaunchState,
@@ -203,13 +204,16 @@ async function loadSettingsView() {
 
   let googleKeys = { count: 0, masked: [] };
   let ntfySettings = { ntfy_server_url: 'https://ntfy.sh', ntfy_topic: '', enabled: false, events: [] };
+  let githubSettings = undefined;
   try {
-    const [keysRes, ntfyRes] = await Promise.allSettled([
+    const [keysRes, ntfyRes, githubRes] = await Promise.allSettled([
       apiFetch('/api/settings/google-keys'),
-      apiFetch('/api/settings/ntfy')
+      apiFetch('/api/settings/ntfy'),
+      apiFetch('/api/settings/github')
     ]);
     if (keysRes.status === 'fulfilled') googleKeys = keysRes.value;
     if (ntfyRes.status === 'fulfilled') ntfySettings = ntfyRes.value;
+    if (githubRes.status === 'fulfilled') githubSettings = githubRes.value;
   } catch (e) {
     // Non-fatal; render with empty status.
   }
@@ -220,7 +224,8 @@ async function loadSettingsView() {
     hasToken: Boolean(consoleToken),
     tokenPreview,
     googleKeys,
-    ntfySettings
+    ntfySettings,
+    githubSettings
   });
 
   document.getElementById('save-google-keys-btn')?.addEventListener('click', saveGoogleKeys);
@@ -540,14 +545,57 @@ async function saveAssetForm(e) {
 }
 
 // --- Projects ---
+const activeProvisioningPolls = new Map();
+
+function setProjectModalMode(mode) {
+  const registerBtn = document.getElementById('project-mode-register-btn');
+  const provisionBtn = document.getElementById('project-mode-provision-btn');
+  const modeInput = document.getElementById('project-form-mode');
+  const pathField = document.getElementById('project-field-path');
+  const pathInput = document.getElementById('project-form-path');
+  const visibilityField = document.getElementById('project-field-visibility');
+  const helpEl = document.getElementById('project-modal-help');
+  const saveBtn = document.getElementById('project-modal-save-btn');
+  const title = document.getElementById('project-modal-title');
+
+  if (modeInput) modeInput.value = mode;
+
+  if (mode === 'provision') {
+    registerBtn?.classList.remove('active');
+    provisionBtn?.classList.add('active');
+    pathField?.classList.add('hidden');
+    if (pathInput) pathInput.removeAttribute('required');
+    visibilityField?.classList.remove('hidden');
+    if (title) title.textContent = 'Provision New Project';
+    if (helpEl) {
+      helpEl.innerHTML = 'Provision a new git repository + GitHub remote. The repository will be initialized locally and pushed to GitHub.';
+    }
+    if (saveBtn) saveBtn.textContent = 'Provision Project';
+  } else {
+    provisionBtn?.classList.remove('active');
+    registerBtn?.classList.add('active');
+    pathField?.classList.remove('hidden');
+    if (pathInput) pathInput.setAttribute('required', '');
+    visibilityField?.classList.add('hidden');
+    if (title) title.textContent = 'Add Project';
+    if (helpEl) {
+      helpEl.innerHTML = 'Register a git repository the department can run tasks against. The folder must exist on disk and be a git repo; <code>/.bureau-worktrees/</code> is added to its <code>.gitignore</code> automatically.';
+    }
+    if (saveBtn) saveBtn.textContent = 'Save Project';
+  }
+}
+
 function openProjectModal() {
   const modal = document.getElementById('project-modal');
   const nameInput = document.getElementById('project-form-name');
   const pathInput = document.getElementById('project-form-path');
   const descInput = document.getElementById('project-form-description');
+  const visSelect = document.getElementById('project-form-visibility');
   if (nameInput) nameInput.value = '';
   if (pathInput) pathInput.value = '';
   if (descInput) descInput.value = '';
+  if (visSelect) visSelect.value = 'private';
+  setProjectModalMode('register');
   if (modal) modal.classList.remove('hidden');
   if (nameInput) nameInput.focus();
 }
@@ -558,10 +606,32 @@ function closeProjectModal() {
 
 async function saveProjectForm(e) {
   e.preventDefault();
+  const mode = document.getElementById('project-form-mode')?.value || 'register';
   const name = document.getElementById('project-form-name')?.value.trim();
-  const pathToRepo = document.getElementById('project-form-path')?.value.trim();
   const description = document.getElementById('project-form-description')?.value.trim() || undefined;
 
+  if (mode === 'provision') {
+    if (!name) {
+      showToast(renderErrorToast('Project Name is required.'));
+      return;
+    }
+    const visibility = document.getElementById('project-form-visibility')?.value || 'private';
+    try {
+      const res = await apiFetch('/api/projects/provision', {
+        method: 'POST',
+        body: JSON.stringify({ name, description, visibility })
+      });
+      showToast(`<div class="toast"><span class="toast-icon">⏳</span> Provisioning started for "${res.canonicalName || name}"</div>`);
+      closeProjectModal();
+      startProvisioningPoll(res.jobId, res.canonicalName || name);
+    } catch (err) {
+      // Error toast handled by apiFetch
+    }
+    return;
+  }
+
+  // Register mode
+  const pathToRepo = document.getElementById('project-form-path')?.value.trim();
   if (!name || !pathToRepo) {
     showToast(renderErrorToast('Project Name and Folder Location are required.'));
     return;
@@ -578,6 +648,98 @@ async function saveProjectForm(e) {
   } catch (err) {
     // Error toast handled by apiFetch (e.g. path not found / not a git repo)
   }
+}
+
+function startProvisioningPoll(jobId, name) {
+  if (activeProvisioningPolls.has(jobId)) return;
+
+  const container = document.getElementById('provisioning-chips-container');
+  if (container) {
+    let chip = container.querySelector(`[data-job-id="${CSS.escape(jobId)}"]`);
+    if (!chip) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = renderProvisioningChip(jobId, name, 'running');
+      container.appendChild(wrapper.firstElementChild);
+    }
+  }
+
+  const POLL_MS = 2000;
+  // Safety net: never poll forever. A real provision finishes well inside this;
+  // if no terminal signal ever arrives (a lost journal write, a dead runner) the
+  // chip resolves to 'failed' instead of spinning indefinitely.
+  const MAX_POLL_MS = 5 * 60 * 1000;
+  const startedAt = Date.now();
+
+  const pollInterval = setInterval(async () => {
+    try {
+      const entries = await apiFetch(`/api/journal?job_id=${encodeURIComponent(jobId)}`);
+      const list = Array.isArray(entries) ? entries : [];
+      const provisionedSpan = list.find(e => e.kind === 'project-provisioned');
+      const guardrailSpan = list.find(e => e.kind === 'guardrail');
+      // A non-guardrail failure — the gh/git seam throwing, an unexpected error,
+      // or the runner exhausting attempts — is journaled by failJob as a system
+      // span { action:'fail', terminal:true }, NOT a guardrail. Without matching it
+      // here the chip would poll forever on exactly that path (the senior's finding).
+      const terminalFailSpan = list.find(e => {
+        if (e.kind !== 'system') return false;
+        let d = e.detail;
+        try { if (typeof d === 'string') d = JSON.parse(d); } catch { return false; }
+        return d && d.action === 'fail' && d.terminal === true;
+      });
+
+      if (provisionedSpan) {
+        clearInterval(pollInterval);
+        activeProvisioningPolls.delete(jobId);
+        updateProvisioningChip(jobId, name, 'done');
+        showToast(`<div class="toast"><span class="toast-icon">✅</span> Project "${name}" provisioned successfully</div>`);
+        await loadProjectsView();
+        setTimeout(() => removeProvisioningChip(jobId), 3000);
+      } else if (guardrailSpan || terminalFailSpan) {
+        clearInterval(pollInterval);
+        activeProvisioningPolls.delete(jobId);
+        updateProvisioningChip(jobId, name, 'failed');
+        let failReason = 'Provisioning failed';
+        const failSpan = guardrailSpan || terminalFailSpan;
+        try {
+          const detail = typeof failSpan.detail === 'string' ? JSON.parse(failSpan.detail) : failSpan.detail;
+          if (detail?.reason) failReason = detail.reason;
+          else if (detail?.error) failReason = detail.error;
+        } catch {}
+        showToast(renderErrorToast(`Provisioning failed: ${failReason}`));
+        setTimeout(() => removeProvisioningChip(jobId), 5000);
+      } else if (Date.now() - startedAt > MAX_POLL_MS) {
+        clearInterval(pollInterval);
+        activeProvisioningPolls.delete(jobId);
+        updateProvisioningChip(jobId, name, 'failed');
+        showToast(renderErrorToast(
+          `Provisioning status unknown after ${Math.round(MAX_POLL_MS / 60000)} min — check the runner/logs for job ${jobId}`
+        ));
+        setTimeout(() => removeProvisioningChip(jobId), 5000);
+      }
+    } catch (err) {
+      // transient poll error
+    }
+  }, POLL_MS);
+
+  activeProvisioningPolls.set(jobId, pollInterval);
+}
+
+function updateProvisioningChip(jobId, name, state) {
+  const container = document.getElementById('provisioning-chips-container');
+  if (!container) return;
+  const chip = container.querySelector(`[data-job-id="${CSS.escape(jobId)}"]`);
+  if (chip) {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = renderProvisioningChip(jobId, name, state);
+    chip.replaceWith(wrapper.firstElementChild);
+  }
+}
+
+function removeProvisioningChip(jobId) {
+  const container = document.getElementById('provisioning-chips-container');
+  if (!container) return;
+  const chip = container.querySelector(`[data-job-id="${CSS.escape(jobId)}"]`);
+  if (chip) chip.remove();
 }
 
 // --- Conversational Intake ---
@@ -781,6 +943,8 @@ function setupEventListeners() {
   document.getElementById('asset-form')?.addEventListener('submit', saveAssetForm);
 
   // Projects modal & form
+  document.getElementById('project-mode-register-btn')?.addEventListener('click', () => setProjectModalMode('register'));
+  document.getElementById('project-mode-provision-btn')?.addEventListener('click', () => setProjectModalMode('provision'));
   document.getElementById('new-project-btn')?.addEventListener('click', openProjectModal);
   document.getElementById('project-modal-close-btn')?.addEventListener('click', closeProjectModal);
   document.getElementById('project-modal-cancel-btn')?.addEventListener('click', closeProjectModal);

@@ -463,8 +463,11 @@ export class ZCodeSession {
   async newConversation(): Promise<boolean> {
     await this.pressKey('Escape', 'Escape', 27);
     return !!(await this.evaluate(`(() => {
-      const b = [...document.querySelectorAll('button,[role=button],a')]
-        .find(x => /^(new task|new conversation|new chat)$/i.test(((x.getAttribute('aria-label')||x.innerText)||'').trim()));
+      // ZCode 3.9.2: the new-conversation control is [data-testid="conversation-new-task"];
+      // fall back to the label match for older builds.
+      const b = document.querySelector('[data-testid="conversation-new-task"]')
+        || [...document.querySelectorAll('button,[role=button],a')]
+             .find(x => /^(new task|new conversation|new chat)$/i.test(((x.getAttribute('aria-label')||x.innerText)||'').trim()));
       if (!b) return false; b.click(); return true;
     })()`));
   }
@@ -492,9 +495,15 @@ export class ZCodeSession {
         const a = ((e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('placeholder')||'')).toLowerCase();
         return want.some(w => a.includes(w)) ? 1 : 0;
       };
-      // Prefer a scored input; fall back to the last editable only if nothing
-      // scores. Tag it so the insert/submit checks below re-find THIS element.
-      const el = cands.find(score) || cands[cands.length - 1];
+      // ZCode 3.9.2: the composer is [data-testid="v4-composer-input"] — a
+      // role=textbox contenteditable with NO aria-label/placeholder, so the scored
+      // heuristic never matched and the "last contenteditable" fallback grabbed the
+      // wrong editable when the projects panel was mounted (the prompt never landed,
+      // the harness captured the home-screen chrome, and the phantom-verdict guard
+      // fail-closed the review). Target the composer testid explicitly first; keep the
+      // scored/last-editable fallback for older builds. Tag it so the insert/submit
+      // checks below re-find THIS element.
+      const el = document.querySelector('[data-testid="v4-composer-input"]') || cands.find(score) || cands[cands.length - 1];
       if (!el) return false;
       el.focus();
       el.setAttribute('data-bureau-input', '1');
@@ -581,8 +590,11 @@ export class ZCodeSession {
   async selectModel(modelName: string): Promise<string> {
     await this.pressKey('Escape', 'Escape', 27);
     const opened = await this.evaluate(`(() => {
-      const b = [...document.querySelectorAll('button,[role=button]')]
-        .find(x => (x.getAttribute('aria-label')||'') === 'Choose model');
+      // ZCode 3.9.2: the model picker trigger is [data-testid="chat-model-select-trigger"]
+      // (was aria-label="Choose model"). Try the testid first, then the old label.
+      const b = document.querySelector('[data-testid="chat-model-select-trigger"]')
+        || [...document.querySelectorAll('button,[role=button]')]
+             .find(x => (x.getAttribute('aria-label')||'') === 'Choose model');
       if (!b) return false; b.click(); return true;
     })()`);
     if (!opened) throw new HarnessError('ZCode model picker ("Choose model") not found');
@@ -601,8 +613,9 @@ export class ZCodeSession {
     }
     await new Promise(r => setTimeout(r, 400));
     const label = await this.evaluate(`(() => {
-      const b = [...document.querySelectorAll('button,[role=button]')]
-        .find(x => (x.getAttribute('aria-label')||'') === 'Choose model');
+      const b = document.querySelector('[data-testid="chat-model-select-trigger"]')
+        || [...document.querySelectorAll('button,[role=button]')]
+             .find(x => (x.getAttribute('aria-label')||'') === 'Choose model');
       return b ? (b.innerText||'').trim() : '';
     })()`);
     return label || modelName;

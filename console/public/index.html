@@ -88,6 +88,7 @@
         <h2 class="section-title">Projects</h2>
         <button id="new-project-btn" class="btn btn-primary btn-sm">+ Add Project</button>
       </div>
+      <div id="provisioning-chips-container" class="provisioning-chips-container" style="margin-bottom: 1rem;"></div>
       <div id="projects-container">
         <div class="card empty-state">Loading projects...</div>
       </div>
@@ -193,20 +194,32 @@
         <h3 id="project-modal-title">Add Project</h3>
         <button id="project-modal-close-btn" class="btn-icon" title="Close">✕</button>
       </div>
-      <p class="intake-help metric-sub">
+      <div class="modal-mode-tabs" style="display: flex; gap: 0.5rem; margin-top: 0.75rem; margin-bottom: 0.5rem;">
+        <button type="button" id="project-mode-register-btn" class="btn btn-secondary btn-sm active">Register Existing</button>
+        <button type="button" id="project-mode-provision-btn" class="btn btn-secondary btn-sm">Create New</button>
+      </div>
+      <p id="project-modal-help" class="intake-help metric-sub">
         Register a git repository the department can run tasks against. The folder
         must exist on disk and be a git repo; <code>/.bureau-worktrees/</code> is
         added to its <code>.gitignore</code> automatically.
       </p>
       <form id="project-form" style="margin-top: 1rem;">
+        <input type="hidden" id="project-form-mode" value="register" />
         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
           <div>
             <label for="project-form-name" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Project Name *</label>
             <input type="text" id="project-form-name" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. Department of Code" required />
           </div>
-          <div>
+          <div id="project-field-path">
             <label for="project-form-path" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Folder Location *</label>
-            <input type="text" id="project-form-path" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. D:\\repos\\my-project" required />
+            <input type="text" id="project-form-path" class="intake-input" style="width: 100%; box-sizing: border-box;" placeholder="e.g. D:\\repos\\my-project" />
+          </div>
+          <div id="project-field-visibility" class="hidden">
+            <label for="project-form-visibility" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Visibility</label>
+            <select id="project-form-visibility" class="intake-input" style="width: 100%; box-sizing: border-box;">
+              <option value="private" selected>private</option>
+              <option value="public">public</option>
+            </select>
           </div>
           <div>
             <label for="project-form-description" class="metric-sub" style="display:block; margin-bottom: 0.25rem;">Description</label>
