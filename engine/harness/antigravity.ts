@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HarnessError } from './errors.ts';
 import { AGENT_PROGRESS_LABEL_RE, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
+import { killProcessesByImageName, processImageName } from './process-control.ts';
 
 /**
  * Antigravity IDE integration — "run the junior with code."
@@ -179,6 +180,86 @@ export async function ensureJuniorRunning(
     await new Promise(r => setTimeout(r, 500));
   }
   throw new HarnessError(`${cfg.label} launched but no CDP endpoint on port ${port} within timeout`);
+}
+
+// ---------------------------------------------------------------------------
+// Wedged-junior recovery: the port answers but the GUI never comes up
+// ---------------------------------------------------------------------------
+
+/** The junior app's process-image name (what taskkill /IM wants). Pure. */
+export function juniorProcessImageName(cfg: JuniorConfig): string {
+  const override = process.env[cfg.envPath];
+  return processImageName(override || cfg.binaryCandidates.find(c => path.isAbsolute(c)) || cfg.binaryCandidates[0] || cfg.id);
+}
+
+/**
+ * Best-effort: kill every running process of the junior's app — needed before a
+ * recovery relaunch because Electron keeps tray/helper processes that hold the
+ * single-instance handshake. Never throws ("not found" is a fine outcome).
+ */
+export async function killJuniorProcesses(cfg: JuniorConfig): Promise<void> {
+  await killProcessesByImageName(juniorProcessImageName(cfg));
+}
+
+export interface JuniorRecoveryDeps {
+  isPortLive?: (port: number) => Promise<boolean>;
+  killProcesses?: (cfg: JuniorConfig) => Promise<void>;
+  spawn?: (binary: string, args: string[]) => child_process.ChildProcess;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * FORCED clean relaunch of a junior. Scar (dead job 8c6f373e, 2026-08-28): a
+ * WEDGED instance answers the CDP port but never opens a usable window —
+ * "opened a window … but no CDP window titled '<taskId> - Antigravity IDE'
+ * appeared within timeout" — and `ensureJuniorRunning` no-ops on a live port,
+ * so nothing ever fixed it and the dispatch burned all attempts against the
+ * same dead instance. This always kills the app's processes and relaunches it
+ * with the debug port, then waits for CDP. Throws if the endpoint never comes
+ * up.
+ */
+export async function recoverJuniorRunning(
+  cfg: JuniorConfig,
+  opts: { timeoutMs?: number; deps?: JuniorRecoveryDeps } = {}
+): Promise<EnsureResult> {
+  const port = cfg.cdpPort;
+  const deps = {
+    isPortLive: opts.deps?.isPortLive ?? isDebugPortLive,
+    killProcesses: opts.deps?.killProcesses ?? killJuniorProcesses,
+    spawn:
+      opts.deps?.spawn ??
+      ((binary: string, args: string[]) => child_process.spawn(binary, args, { detached: true, stdio: 'ignore' })),
+    sleep: opts.deps?.sleep ?? (async (ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  };
+  // Unconditional: a wedged instance has a LIVE port, so reuse is exactly wrong.
+  await deps.killProcesses(cfg);
+  const binary = findJuniorBinary(cfg);
+  const child = deps.spawn(binary, buildAntigravityArgs(port));
+  child.unref?.();
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await deps.isPortLive(port)) return { launched: true, port, child };
+    await deps.sleep(500);
+  }
+  throw new HarnessError(
+    `${cfg.label}: forced relaunch did not bring up a CDP endpoint on port ${port} within ` +
+      `${Math.round(timeoutMs / 1000)}s — the installation may be broken or the port blocked.`
+  );
+}
+
+/**
+ * Match the "wedged GUI" failure shape: the junior's CDP port answered, a
+ * window/workbench was asked for, but no usable window ever appeared. Pure —
+ * keyed off the exact `ensureFolderWindowWs` / main-window-attach messages so
+ * ordinary agent/calibration errors never trigger a relaunch.
+ */
+export function isJuniorWedgedWindowError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /no CDP window titled .+ appeared within timeout/i.test(msg) ||
+    /workbench (?:window did not become available|did not become available)/i.test(msg)
+  );
 }
 
 function cdpGet(port: number, urlPath: string, timeoutMs = 2000): Promise<any> {

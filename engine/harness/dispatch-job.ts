@@ -6,7 +6,8 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
-import { getAntigravityDriver } from './antigravity-seam.ts';
+import { getAntigravityDriver, type AntigravityDriver, type AntigravityRunOptions, type AntigravityRunResult } from './antigravity-seam.ts';
+import { isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 
@@ -39,6 +40,31 @@ export interface JuniorDispatchPayload {
    *  chained work.cycle knows which senior/model to use. */
   workSeniorId?: string;
   workSeniorModel?: string;
+}
+
+/**
+ * Drive the junior for one dispatch attempt, self-healing a WEDGED GUI in
+ * flight: when the run fails with the wedged-window shape (port answered, but
+ * no CDP window/workbench ever appeared — dead job 8c6f373e), force a clean
+ * relaunch of that junior and retry the run ONCE before letting the attempt
+ * fail. Without this, all of `junior.dispatch`'s attempts burned against the
+ * same dead instance. Non-wedged failures (agent errors, calibration misses,
+ * aborts) propagate untouched. The `recover` seam exists so unit tests can
+ * verify the retry policy with a fake driver and a fake relauncher.
+ */
+export async function runJuniorCommandWithWedgedRecovery(
+  driver: AntigravityDriver,
+  prompt: string,
+  opts: AntigravityRunOptions,
+  recover: (cfg: JuniorConfig) => Promise<unknown> = cfg => recoverJuniorRunning(cfg)
+): Promise<AntigravityRunResult> {
+  try {
+    return await driver.runCommand(prompt, opts);
+  } catch (err) {
+    if (!isJuniorWedgedWindowError(err)) throw err;
+    await recover(resolveJunior(opts.junior));
+    return await driver.runCommand(prompt, opts);
+  }
 }
 
 export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
@@ -137,15 +163,19 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         }
       }
 
-      const result = await ag.runCommand(payload.prompt, {
-        junior: payload.junior,
-        port: payload.antigravityPort,
-        model: payload.model,
-        folder: workFolder,
-        requireFolder,
-        freshConversation: payload.freshConversation,
-        signal: ctx.signal
-      });
+      const result = await runJuniorCommandWithWedgedRecovery(
+        ag,
+        payload.prompt,
+        {
+          junior: payload.junior,
+          port: payload.antigravityPort,
+          model: payload.model,
+          folder: workFolder,
+          requireFolder,
+          freshConversation: payload.freshConversation,
+          signal: ctx.signal
+        }
+      );
 
       // Persist plan/walkthrough/full-output as reviewable department data.
       // Guarded to the rich (real-driver) path so fake-driver tests, which

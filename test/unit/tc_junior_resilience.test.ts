@@ -1,0 +1,181 @@
+import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type child_process from 'node:child_process';
+import { HarnessError } from '../../engine/harness/errors.ts';
+import {
+  isJuniorWedgedWindowError,
+  JUNIORS,
+  juniorProcessImageName,
+  killJuniorProcesses,
+  recoverJuniorRunning,
+  resolveJunior
+} from '../../engine/harness/antigravity.ts';
+import { runJuniorCommandWithWedgedRecovery } from '../../engine/harness/dispatch-job.ts';
+import type { AntigravityDriver, AntigravityRunResult } from '../../engine/harness/antigravity-seam.ts';
+
+/**
+ * WS2 — recovering a downed/WEDGED junior. The real failure (dead job 8c6f373e)
+ * was an instance whose CDP port answered but whose window never appeared:
+ * `ensureJuniorRunning` no-ops on a live port, so `recoverJuniorRunning` always
+ * kills + relaunches, and the dispatch retries once in flight. All tests use
+ * fake killers/launchers/drivers — no real Antigravity is launched or killed.
+ */
+
+function fakeChild(): child_process.ChildProcess {
+  return { unref: vi.fn() } as unknown as child_process.ChildProcess;
+}
+
+/** Temp "installed" binary + env override so findJuniorBinary resolves. */
+function withFakeJuniorBinary<T>(envVar: string, fn: (bin: string) => Promise<T>): Promise<T> {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jun-rec-'));
+  const bin = path.join(tmp, 'Antigravity.exe');
+  fs.writeFileSync(bin, '');
+  const saved = process.env[envVar];
+  process.env[envVar] = bin;
+  return fn(bin).finally(() => {
+    if (saved === undefined) delete process.env[envVar];
+    else process.env[envVar] = saved;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+}
+
+describe('WS2 — recoverJuniorRunning (forced clean relaunch)', () => {
+  it('ALWAYS kills + relaunches even when the port is live — reuse is exactly wrong for a wedge', async () => {
+    await withFakeJuniorBinary(JUNIORS.B.envPath, async bin => {
+      const kill = vi.fn();
+      const spawn = vi.fn(() => fakeChild());
+      const res = await recoverJuniorRunning(JUNIORS.B, {
+        deps: { isPortLive: async () => true, killProcesses: kill, spawn, sleep: async () => {} }
+      });
+      expect(res).toMatchObject({ launched: true, port: 9334 });
+      expect(kill).toHaveBeenCalledTimes(1); // the wedge itself died
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(spawn).toHaveBeenCalledWith(bin, ['--remote-debugging-port=9334']);
+    });
+  });
+
+  it('kills and relaunches a fully-down instance too, polling until the port answers', async () => {
+    await withFakeJuniorBinary(JUNIORS.A.envPath, async bin => {
+      const kill = vi.fn();
+      const spawn = vi.fn(() => fakeChild());
+      let probes = 0;
+      const res = await recoverJuniorRunning(JUNIORS.A, {
+        deps: { isPortLive: async () => ++probes > 2, killProcesses: kill, spawn, sleep: async () => {} }
+      });
+      expect(res).toMatchObject({ launched: true, port: 9333 });
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(spawn).toHaveBeenCalledWith(bin, ['--remote-debugging-port=9333']);
+    });
+  });
+
+  it('throws a clear error when even the forced relaunch never exposes CDP', async () => {
+    await withFakeJuniorBinary(JUNIORS.B.envPath, async () => {
+      await expect(
+        recoverJuniorRunning(JUNIORS.B, {
+          timeoutMs: 50,
+          deps: { isPortLive: async () => false, killProcesses: vi.fn(), spawn: () => fakeChild(), sleep: async () => {} }
+        })
+      ).rejects.toThrow(/forced relaunch did not bring up a CDP endpoint on port 9334/);
+    });
+  });
+
+  it('juniorProcessImageName derives the exe name (env override first)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jun-img-'));
+    try {
+      process.env[JUNIORS.A.envPath] = path.join(tmp, 'Antigravity IDE.exe');
+      expect(juniorProcessImageName(JUNIORS.A)).toBe('Antigravity IDE.exe');
+    } finally {
+      delete process.env[JUNIORS.A.envPath];
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('killJuniorProcesses never throws for an image that does not exist', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jun-kill-'));
+    try {
+      // Deliberately nonexistent image — never a real department app.
+      process.env[JUNIORS.B.envPath] = path.join(tmp, 'NoSuchJuniorApp-71cc.exe');
+      await expect(killJuniorProcesses(JUNIORS.B)).resolves.toBeUndefined();
+    } finally {
+      delete process.env[JUNIORS.B.envPath];
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('WS2 — isJuniorWedgedWindowError (the wedge signature)', () => {
+  it('matches the two real wedged-window failure messages', () => {
+    expect(
+      isJuniorWedgedWindowError(
+        new HarnessError(
+          "Antigravity IDE: opened a window on 'D:\\repo\\.bureau-worktrees\\abc123' but no CDP window titled " +
+            "'abc123 - Antigravity IDE' appeared within timeout."
+        )
+      )
+    ).toBe(true);
+    expect(isJuniorWedgedWindowError(new Error('Antigravity 2.0 workbench window did not become available in time.'))).toBe(true);
+  });
+
+  it('does not match ordinary agent/calibration failures', () => {
+    expect(isJuniorWedgedWindowError(new HarnessError("Chat input ('Message input') not found"))).toBe(false);
+    expect(isJuniorWedgedWindowError(new HarnessError('Antigravity 2.0 junior did not complete: no progress for the stall window.'))).toBe(
+      false
+    );
+    expect(isJuniorWedgedWindowError(new Error('LLM decision step failed'))).toBe(false);
+  });
+});
+
+describe('WS2 — runJuniorCommandWithWedgedRecovery (dispatch heals in flight)', () => {
+  const ok: AntigravityRunResult = { transcript: 'done', launched: false, junior: 'A' };
+
+  it('a wedged-window failure triggers ONE relaunch and the retry succeeds', async () => {
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new HarnessError(
+          "Antigravity IDE: opened a window on 'D:/wt/task-9' but no CDP window titled 'task-9 - Antigravity IDE' appeared within timeout."
+        )
+      )
+      .mockResolvedValueOnce(ok);
+    const driver: AntigravityDriver = { runCommand };
+    const recover = vi.fn();
+    const res = await runJuniorCommandWithWedgedRecovery(driver, 'do the work', { junior: 'A' }, recover);
+    expect(res).toBe(ok);
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(recover).toHaveBeenCalledWith(resolveJunior('A'));
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes the recovery at the junior the dispatch selected', async () => {
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Antigravity 2.0 workbench window did not become available in time.'))
+      .mockResolvedValueOnce({ ...ok, junior: 'B' });
+    const recover = vi.fn();
+    await runJuniorCommandWithWedgedRecovery({ runCommand }, 'prompt', { junior: 'B' }, recover);
+    expect(recover).toHaveBeenCalledWith(resolveJunior('B'));
+    expect(recover.mock.calls[0]![0].id).toBe('B');
+  });
+
+  it('a NON-wedged failure propagates with no relaunch at all', async () => {
+    const runCommand = vi.fn().mockRejectedValue(new HarnessError("Chat input ('Message input') not found"));
+    const recover = vi.fn();
+    await expect(runJuniorCommandWithWedgedRecovery({ runCommand }, 'p', {}, recover)).rejects.toThrow(/Chat input/);
+    expect(recover).not.toHaveBeenCalled();
+    expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('a SECOND wedged failure propagates after exactly one recovery', async () => {
+    const runCommand = vi.fn().mockRejectedValue(
+      new Error('Antigravity 2.0 workbench window did not become available in time.')
+    );
+    const recover = vi.fn();
+    await expect(runJuniorCommandWithWedgedRecovery({ runCommand }, 'p', { junior: 'B' }, recover)).rejects.toThrow(
+      /workbench window did not become available/
+    );
+    expect(recover).toHaveBeenCalledTimes(1); // one in-flight heal, not a loop
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+});
