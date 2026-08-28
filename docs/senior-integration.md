@@ -54,9 +54,41 @@ The only real bound is the **inactivity window**, not elapsed time. Both
 (senior) use it; the seams pass `stallMs`, never a hard cap. Unit-tested in
 `test/unit/tc_agent_wait.test.ts` (incl. "an actively-working agent is never cut off").
 
+The **Claude CLI senior** follows the same philosophy for its subprocess
+(`engine/harness/inactivity-guard.ts`): a single inactivity timer resets on every
+stdout/stderr `data` event, so an actively-streaming review is never cut off —
+only `CLAUDE_SENIOR_STALL_MS` (default 5 min) of total silence kills it, with
+`CLAUDE_SENIOR_MAX_MS` (default 1h, back-compat source `CLAUDE_SENIOR_TIMEOUT_MS`)
+as the last-resort absolute cap. On either give-up the process tree is killed and
+the partial output is **not** recorded as a review.
+
 Known follow-up: when the ZCode/GLM senior spawns **side panes** (Terminal/Browser/Review)
 during a deep audit, its final verdict can land outside the main transcript — a ZCode-UX
 capture calibration separate from the wait logic.
+
+## Self-healing: a downed senior restarts itself
+
+The department must run unattended, so the senior GUI is no longer a single point
+of failure (`engine/harness/senior.ts`):
+
+- `ensureSeniorRunning(cfg)` — reuse a live CDP endpoint, else kill any zombie/tray
+  processes of the app and relaunch it with `--remote-debugging-port` (polls up to
+  40s). Scar: ZCode keeps a **tray process holding the single-instance lock**;
+  a plain relaunch hands off to it and never re-exposes the port, so recovery
+  kills **all** ZCode processes first (`taskkill /IM ZCode.exe /F`, best-effort).
+- `ZCodeSenior.review` calls it before every attach (the old "relaunch it by
+  hand" fail-closed throw is gone), and if the app dies **mid-review** (CDP
+  socket closed / attach failure — classified by `isSeniorConnectionError`, which
+  deliberately excludes home-screen captures, calibration misses, and stalls),
+  it relaunches **once** and retries the whole sequence. A second failure — or
+  any non-connection failure — propagates; a partial review is never recorded.
+- **Single-instance mutex** (`engine/harness/zcode-lock.ts`): only one driver may
+  use ZCode at a time — a second `newConversation()` resets the first's in-flight
+  review. `review` holds a lockfile (`{pid, acquiredAt}`, default
+  `%TEMP%\dept-of-code-zcode.lock`, override with `ZCODE_LOCK_PATH`) for the whole
+  review; a live holder makes a second driver wait briefly (5s) then **fail fast**
+  with "ZCode busy" instead of colliding. A stale lock (holder PID gone, or older
+  than 2h) is taken over automatically.
 
 ## Quota / usage
 
@@ -103,12 +135,18 @@ duplication, and it repeats until the round ceiling.
    reads it back: if the prompt did not land in the box, or is still sitting there
    unsent after Enter + the Send-button fallback, it throws (`HarnessError`)
    instead of proceeding. A misconfigured selector now fails **loudly and fast**.
-2. **The idle probe ignores the home screen's Send button** — `ZCodeSession.probeActivity`
-   suppresses `canSend` while ≥2 `SENIOR_HOME_SCREEN_MARKERS` are on screen, so
-   `waitForAgentIdle` never calls the welcome screen "done".
-3. **Post-capture guard** — `ZCodeSenior.review` runs `detectUncapturedReview(full)`
+2. **Post-capture guard** — `ZCodeSenior.review` runs `detectUncapturedReview(raw)`
    before parsing; a capture dominated by home-screen chrome with no `VERDICT:`
-   line throws rather than becoming a phantom REVISE.
+   line throws rather than becoming a phantom REVISE. The marker set
+   (`SENIOR_HOME_SCREEN_MARKERS`) was recalibrated live against ZCode 3.9.2
+   (2026-08-28): it now keys on text that renders ONLY on the empty
+   new-conversation screen — the greeting hero ("Good afternoon! …"),
+   "Select project", the "Ask ZCode anything …" hero hint, and the template
+   suggestion cards. The old markers (Add context / Full access / the
+   permission-mode labels) are persistent composer chrome visible during an
+   ACTIVE conversation too, so a genuine verdict-less review quoting them was
+   false-posited; they are gone from the set. The "≥2 markers AND no VERDICT
+   line" rule is unchanged (conservative on purpose).
 
 Fail-closed-to-REVISE is still correct for a *genuine* verdict-less review; the
 guards only distinguish "captured no review at all" from "captured a real review."
@@ -168,13 +206,21 @@ node --experimental-strip-types scripts/run_senior.ts --senior zai --kind plan \
 - **ZCode senior (CDP):** ZCode must expose a debug port on `9335`. Because
   Electron requires the flag at launch **and** ZCode keeps its login only on the
   default profile (a fresh `--user-data-dir` starts logged-out and self-closes),
-  you must **fully quit ZCode**, then relaunch it with the flag:
+  the harness now does this itself: `ensureSeniorRunning` kills any running ZCode
+  processes (the tray process holds the single-instance lock) and relaunches the
+  binary with the flag whenever the port is not live — including mid-review, once.
+  To start it by hand instead:
   ```powershell
   & "$env:LOCALAPPDATA\Programs\ZCode\ZCode.exe" --remote-debugging-port=9335
   ```
-  The `ZCodeSenior` driver refuses with this instruction if the port is not live.
   The chat-input selector (`ZCODE_INPUT_MATCHERS`) is best-effort until calibrated
   on the first live attach.
+
+> **Stale-runner warning (scar, 2026-08-28):** after merging a harness fix, you
+> must **relaunch the runner AND the console** for it to take effect — the
+> long-lived runner process keeps executing the old code, and the console mints
+> a fresh auth token only on restart, so a restarted runner with a stale console
+> token fails auth against an otherwise-correct harness.
 
 ## Plan-review cycle — the corrected order (junior authors, senior reviews)
 
