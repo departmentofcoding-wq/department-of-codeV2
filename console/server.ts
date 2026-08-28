@@ -19,6 +19,9 @@ import { fileTask } from '../engine/filing/file_task.ts';
 import { fileAgentTask, AgentFileError, AGENT_IDENTITIES } from '../engine/filing/agent_file.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
 import { listProjects, registerProject } from '../engine/projects/index.ts';
+import { getProjectsRoot, getRepoPrefix } from '../engine/projects/config.ts';
+import { getRepoProvider } from '../engine/projects/repo_provider.ts';
+import { projectProvisionJobId } from '../engine/jobs/ids.ts';
 import { sendTestNotification } from '../engine/state/notifications.ts';
 import { NOTIFICATION_EVENTS } from '../engine/notifications/events.ts';
 import { applyGoogleRoster } from '../engine/models/seed.ts';
@@ -63,7 +66,10 @@ import {
   type SaveNtfySettingsRequest,
   type TestNtfyResult,
   type ProjectDTO,
-  type CreateProjectRequest
+  type CreateProjectRequest,
+  type ProvisionProjectRequest,
+  type ProvisionProjectResult,
+  type GithubSettingsDTO
 } from './contract.ts';
 import type { BureauProjectRow } from '../engine/contract/types.ts';
 
@@ -217,6 +223,9 @@ function toProjectDTO(p: BureauProjectRow): ProjectDTO {
     name: redactOutput(p.name),
     path_to_repo: redactOutput(p.path_to_repo),
     description: p.description ? redactOutput(p.description) : null,
+    github_url: p.github_url ? redactOutput(p.github_url) : null,
+    provisioned_by: p.provisioned_by ? redactOutput(p.provisioned_by) : null,
+    visibility: p.visibility ? redactOutput(p.visibility) : null,
     created_at: p.created_at,
     updated_at: p.updated_at
   };
@@ -487,11 +496,12 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
 
       if (req.method === 'GET' && pathname === '/api/journal') {
         const taskId = reqUrl.searchParams.get('taskId') ?? undefined;
+        const jobId = reqUrl.searchParams.get('job_id') || reqUrl.searchParams.get('jobId') || undefined;
         const kind = (reqUrl.searchParams.get('kind') ?? undefined) as any;
         const limitStr = reqUrl.searchParams.get('limit');
         const limit = limitStr ? parseInt(limitStr, 10) : undefined;
 
-        const rows = timeline(db, { taskId, kind, limit });
+        const rows = timeline(db, { taskId, jobId, kind, limit });
         const dtos: JournalEntryDTO[] = rows.map(r => ({
           id: r.id,
           ts: r.ts,
@@ -1362,6 +1372,22 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         return;
       }
 
+      // --- Settings: masked GitHub connection status ---
+      if (req.method === 'GET' && pathname === '/api/settings/github') {
+        const authStatus = await getRepoProvider().getAuthStatus();
+        const projectsRoot = getProjectsRoot(db);
+        const repoPrefix = getRepoPrefix(db);
+        const dto: GithubSettingsDTO = {
+          authenticated: authStatus.authenticated,
+          login: authStatus.login,
+          scopes: authStatus.scopes,
+          projects_root: projectsRoot,
+          repo_prefix: repoPrefix
+        };
+        sendJson(res, 200, dto);
+        return;
+      }
+
       // --- Projects: list registered projects (git repos the bureau works in) ---
       if (req.method === 'GET' && pathname === '/api/projects') {
         const projects = listProjects(db);
@@ -1406,6 +1432,66 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           });
           sendError(res, 400, 'PROJECT_REFUSED', err.message);
         }
+        return;
+      }
+
+      // --- Projects: provision a new project (git repo + GitHub remote) ---
+      if (req.method === 'POST' && pathname === '/api/projects/provision') {
+        let body: ProvisionProjectRequest;
+        try {
+          body = (await parseJsonBody(req)) as ProvisionProjectRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const name = body.name?.trim();
+        if (!name) {
+          sendError(res, 400, 'VALIDATION_ERROR', "'name' is required and cannot be blank");
+          return;
+        }
+
+        const prefix = getRepoPrefix(db);
+        const canonicalName = name.startsWith(prefix) ? name : `${prefix}${name}`;
+        const jobId = projectProvisionJobId(canonicalName);
+
+        enqueueJobIfAbsent(db, {
+          id: jobId,
+          kind: 'project.provision',
+          payload: {
+            name,
+            description: body.description?.trim() || null,
+            visibility: body.visibility ?? 'private',
+            attribution: CONSOLE_HUMAN_ATTR
+          }
+        });
+
+        journal(db, {
+          kind: 'human',
+          attribution: CONSOLE_HUMAN_ATTR,
+          jobId,
+          detail: {
+            action: 'project_provision_enqueued',
+            name,
+            canonicalName,
+            jobId,
+            visibility: body.visibility ?? 'private'
+          }
+        });
+
+        const job = db.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', jobId);
+
+        const result: ProvisionProjectResult = {
+          ok: true,
+          jobId,
+          canonicalName,
+          state: job ? job.state : 'queued'
+        };
+        sendJson(res, 202, result);
         return;
       }
 

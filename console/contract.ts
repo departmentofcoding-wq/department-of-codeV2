@@ -405,6 +405,9 @@ export interface ProjectDTO {
   /** Absolute path on disk to the project's git repository (the "folder"). */
   path_to_repo: string;
   description: string | null;
+  github_url?: string | null;
+  provisioned_by?: string | null;
+  visibility?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -415,6 +418,28 @@ export interface CreateProjectRequest {
   pathToRepo: string;
   description?: string;
 }
+
+export interface ProvisionProjectRequest {
+  name: string;
+  description?: string;
+  visibility?: 'private' | 'public';
+}
+
+export interface ProvisionProjectResult {
+  ok: boolean;
+  jobId: string;
+  canonicalName: string;
+  state: string;
+}
+
+export interface GithubSettingsDTO {
+  authenticated: boolean;
+  login: string | null;
+  scopes: string[];
+  projects_root: string;
+  repo_prefix: string;
+}
+
 
 export type TriggerActionKind = 'watchdog.sweep' | 'backup.push';
 
@@ -447,6 +472,12 @@ export interface ConsoleEndpointDef {
   description: string;
 }
 
+// Frozen at 33 endpoints (contract_d0_c asserts the count). Reconciliation with
+// the task text: docs/plan-phase8-entry.md (Stream B) said 30 -> 32, but that
+// baseline predates the agent task-filing door (POST /api/tasks/file, merged
+// 67eb81f) which took the base 30 -> 31. Stream B adds exactly two — GET
+// /api/settings/github and POST /api/projects/provision — so the reconciled
+// freeze is 31 -> 33, not 32. The stale task number is intentionally superseded.
 export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
   {
     method: 'GET',
@@ -618,6 +649,12 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
   },
   {
     method: 'GET',
+    path: '/api/settings/github',
+    auth: 'token',
+    description: 'Masked GitHub connection status from gh auth status'
+  },
+  {
+    method: 'GET',
     path: '/api/projects',
     auth: 'token',
     description: 'List registered projects (git repositories the bureau can work in)'
@@ -630,9 +667,16 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
   },
   {
     method: 'POST',
+    path: '/api/projects/provision',
+    auth: 'token',
+    description: 'Provision a new git repo + GitHub remote and register project'
+  },
+  {
+    method: 'POST',
     path: '/api/tasks/file',
     auth: 'token',
     description: 'Agent task-filing door: auto-confirm verify + file a task under the autofile opt-in (fail-closed until enabled)'
   }
 ] as const;
+
 

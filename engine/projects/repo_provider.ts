@@ -49,6 +49,50 @@ export class GhCliRepoProvider implements RepoProvider {
       url: `https://github.com/${fullRepo}`
     };
   }
+
+  public async getAuthStatus(): Promise<{ authenticated: boolean; login: string | null; scopes: string[] }> {
+    try {
+      const output = execFileSync('gh', ['auth', 'status'], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      return this.parseAuthStatus(output);
+    } catch (err: any) {
+      const combined = [
+        err?.stdout ? err.stdout.toString() : '',
+        err?.stderr ? err.stderr.toString() : '',
+        err?.message || ''
+      ].join('\n');
+      return this.parseAuthStatus(combined);
+    }
+  }
+
+  private parseAuthStatus(raw: string): { authenticated: boolean; login: string | null; scopes: string[] } {
+    if (!raw || raw.includes('You are not logged into any GitHub hosts')) {
+      return { authenticated: false, login: null, scopes: [] };
+    }
+
+    const accountMatch = raw.match(/account\s+([a-zA-Z0-9_-]+)/i) || raw.match(/Logged in to [^\s]+\s+(?:account|as)\s+([a-zA-Z0-9_-]+)/i);
+    const login = accountMatch ? accountMatch[1] : null;
+
+    const scopesMatch = raw.match(/Token scopes:\s*(.*)/i);
+    let scopes: string[] = [];
+    if (scopesMatch && scopesMatch[1]) {
+      const scopesLine = scopesMatch[1].split('\n')[0].trim();
+      scopes = scopesLine
+        .split(',')
+        .map(s => s.replace(/['"`]/g, '').trim())
+        .filter(Boolean);
+    }
+
+    const authenticated = Boolean(login) && !raw.includes('Authentication failed');
+
+    return {
+      authenticated,
+      login: authenticated ? login : null,
+      scopes: authenticated ? scopes : []
+    };
+  }
 }
 
 let repoProviderOverride: RepoProvider | null = null;

@@ -36,6 +36,7 @@ export interface ProvisionProjectInput {
   projectsRoot?: string;
   repoPrefix?: string;
   githubOwner?: string;
+  jobId?: string;
   attribution: AttributionTuple;
 }
 
@@ -298,6 +299,7 @@ export interface LlmClient {
 export interface TimelineQueryFilters {
   taskId?: string;
   workUuid?: string;
+  jobId?: string;
   kind?: SpanKind;
   actorRole?: string;
   limit?: number;
@@ -553,6 +555,14 @@ export interface CreateRemoteResult {
   url: string;
 }
 
+export interface GithubAuthStatusDTO {
+  authenticated: boolean;
+  login: string | null;
+  scopes: string[];
+}
+
 export interface RepoProvider {
   createRemote(opts: CreateRemoteOptions): Promise<CreateRemoteResult>;
+  getAuthStatus(): Promise<GithubAuthStatusDTO>;
 }
+

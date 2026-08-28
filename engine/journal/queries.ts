@@ -23,6 +23,10 @@ export function timeline(db: DbConnection, filters: TimelineQueryFilters = {}): 
     conditions.push('work_uuid = ?');
     params.push(filters.workUuid);
   }
+  if (filters.jobId) {
+    conditions.push('job_id = ?');
+    params.push(filters.jobId);
+  }
   if (filters.kind) {
     conditions.push('kind = ?');
     params.push(filters.kind);

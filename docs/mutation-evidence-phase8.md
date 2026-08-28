@@ -97,3 +97,95 @@ captured verbatim from `npx vitest run`.
 Executed 2026-08-27 on branch `bureau-wt-e156395d-369f-494c-8237-ea1be5ee1aa8` by the implementing session;
 both mutations reproduced → restored → re-verified in one sitting, failure output
 captured verbatim from `npx vitest run`.
+
+---
+
+## M-PROV-CONSOLE-1 — endpoint manifest freeze for POST /api/projects/provision
+
+- **Guard:** `console/contract.ts` — `ENDPOINTS` manifest includes `{ method: 'POST', path: '/api/projects/provision', auth: 'token', ... }` (33 total endpoints).
+- **Mutation:** `POST /api/projects/provision` removed from `ENDPOINTS` manifest array.
+- **Catcher:** `test/unit/contract_d0_c.test.ts` → `Milestone D0-C — Console Contract Freeze > 2. Endpoint Manifest`:
+  ```
+  FAIL test/unit/contract_d0_c.test.ts > Milestone D0-C — Console Contract Freeze > 2. Endpoint Manifest: every endpoint declares method, path, description, and token auth
+  AssertionError: expected 32 to be 33 // Object.is equality
+  - Expected
+  + Received
+  - 33
+  + 32
+  ```
+- **Restore:** endpoint restored to `ENDPOINTS` in `console/contract.ts`; test green (4/4).
+
+---
+
+## M-PROV-CONSOLE-2 — deterministic job ID generation for project provisioning
+
+- **Guard:** `console/server.ts` — `const jobId = projectProvisionJobId(canonicalName);` computes deterministic job id `project.provision:<canonicalName>` for deduplication / idempotency.
+- **Mutation:** replaced deterministic call with random UUID generation `const jobId = crypto.randomUUID();`.
+- **Catcher:** `test/unit/tc7_projects_api.test.ts` → tests 7 and 8 (job id format and idempotency duplicate calls):
+  ```
+  FAIL test/unit/tc7_projects_api.test.ts > T-C7: Projects API (register + list git repos the bureau works in) > 7. POST /api/projects/provision: enqueues project.provision job with deterministic id, returns 202
+  AssertionError: expected '895eb0a7-e185-4e91-a431-8eb8ab86cf71' to be 'project.provision:dept-my-new-app' // Object.is equality
+
+  FAIL test/unit/tc7_projects_api.test.ts > T-C7: Projects API (register + list git repos the bureau works in) > 8. POST /api/projects/provision: Idempotency — duplicate calls return identical jobId without duplicating rows
+  AssertionError: expected 'a8e1255c-88af-4568-b36a-21a7ac2370da' to be 'fda86904-44a3-43b5-9e94-2b86f3c68d1f' // Object.is equality
+  ```
+- **Restore:** `projectProvisionJobId(canonicalName)` restored; test suite green.
+
+---
+
+## M-PROV-CONSOLE-3 — input validation gate on project name
+
+- **Guard:** `console/server.ts` — `if (!name)` checks for missing or whitespace-only name and returns 400 `VALIDATION_ERROR`.
+- **Mutation:** bypassed validation gate with `const name = body.name?.trim() || 'default-fallback'; if (false)`.
+- **Catcher:** `test/unit/tc7_projects_api.test.ts` → test 9 (Validation gate):
+  ```
+  FAIL test/unit/tc7_projects_api.test.ts > T-C7: Projects API (register + list git repos the bureau works in) > 9. POST /api/projects/provision: Validation — blank name returns 400 VALIDATION_ERROR
+  AssertionError: expected 202 to be 400 // Object.is equality
+  - Expected
+  + Received
+  - 400
+  + 202
+  ```
+- **Restore:** validation gate restored in `console/server.ts`; test suite green.
+
+---
+
+## M-PROV-CONSOLE-4 — masked GitHub connection status via getRepoProvider()
+
+- **Guard:** `console/server.ts` — `GET /api/settings/github` queries `await getRepoProvider().getAuthStatus()`.
+- **Mutation:** replaced live provider status call with hardcoded disconnected empty object `{ authenticated: false, login: null, scopes: [] }`.
+- **Catcher:** `test/unit/tc7_projects_api.test.ts` → test 12:
+  ```
+  FAIL test/unit/tc7_projects_api.test.ts > T-C7: Projects API (register + list git repos the bureau works in) > 12. GET /api/settings/github: returns masked shape composed from fake provider + DB config
+  AssertionError: expected false to be true // Object.is equality
+  - Expected
+  + Received
+  - true
+  + false
+  ```
+- **Restore:** provider call restored in `console/server.ts`; test suite green.
+
+---
+
+## M-PROV-CONSOLE-5 — provisioning status chip CSS state rendering
+
+- **Guard:** `console/public/render.js` — `renderProvisioningChip` assigns state class (`chip-provisioning`, `chip-done`, `chip-failed`).
+- **Mutation:** omitted `statusClass` from returned element `class="provisioning-chip"`.
+- **Catcher:** `test/unit/tCONSOLE_projects_render.test.ts` → test 4:
+  ```
+  FAIL test/unit/tCONSOLE_projects_render.test.ts > T-CONSOLE: Projects Render Core > 4. renderProvisioningChip: renders pending, done, and failed states
+  AssertionError: expected '\n    <div class="provisioning-chip" …' to contain 'chip-provisioning'
+  - Expected
+  + Received
+  - chip-provisioning
+  +
+       <div class="provisioning-chip" data-job-id="job-1">
+         <span class="chip-label">⏳ Provisioning my-app...</span>
+       </div>
+  ```
+- **Restore:** `statusClass` restored in `console/public/render.js`; test suite green.
+
+Executed 2026-08-27 on branch `bureau-wt-1429a7de-1bb0-4daf-8d4a-84850997eb26` by the implementing session;
+all 5 mutations reproduced → restored → re-verified in one sitting, failure output
+captured verbatim from `npx vitest run`.
+
