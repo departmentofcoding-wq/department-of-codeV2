@@ -103,6 +103,25 @@ The dispatch transitions to `completed` and writes an `observation` span with
 - **CDP port.** Default `9333`. If Antigravity is already running *without* a
   debug port, the launcher opens a new instance with one (Electron requires the
   flag at launch).
+- **Stale-runner warning (scar, 2026-08-28).** After merging a harness fix,
+  **relaunch the runner AND the console** for it to take effect — the long-lived
+  runner keeps executing the old code, and the console mints a fresh auth token
+  only on restart, so a restarted runner with a stale console token fails auth
+  against an otherwise-correct harness.
+
+## Wedged-junior recovery (in-flight self-heal)
+
+`ensureJuniorRunning` no-ops when the CDP port answers — correct for a healthy
+instance, useless for a **wedged** one (port live, but no usable window ever
+appears; dead job `8c6f373e`, 2026-08-28). For that shape,
+`junior.dispatch` now heals in flight (`engine/harness/dispatch-job.ts` →
+`runJuniorCommandWithWedgedRecovery`): when the run fails with "no CDP window
+titled … appeared within timeout" or "workbench window did not become
+available", it calls `recoverJuniorRunning` (unconditional kill of the app's
+processes — tray/single-instance lock included — plus a relaunch with the debug
+port) and retries the run **once** inside the same dispatch attempt, instead of
+burning all attempts against the same dead instance. Non-wedged failures
+propagate untouched.
 
 ## Calibration notes (version-specific — 2.8.1)
 

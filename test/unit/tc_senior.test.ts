@@ -147,10 +147,10 @@ describe('Senior harness — verdict parsing (genuinely fail-closed)', () => {
 });
 
 describe('Senior harness — uncaptured-review detection (kills the phantom REVISE loop)', () => {
-  // The ZCode/GLM empty home screen, verbatim-ish from a live capture: permission
-  // toggles + model picker + template suggestion cards. This is exactly what the
-  // harness scraped and fail-closed into a spurious REVISE that re-dispatched the
-  // whole task to the junior AND the senior a second time.
+  // The ZCode/GLM empty home screen, verbatim-ish from a live capture: greeting
+  // hero + project picker + composer chrome + template suggestion cards. This is
+  // exactly what the harness scraped and fail-closed into a spurious REVISE that
+  // re-dispatched the whole task to the junior AND the senior a second time.
   const HOME_SCREEN = [
     'Add context',
     'Full access',
@@ -165,8 +165,33 @@ describe('Senior harness — uncaptured-review detection (kills the phantom REVI
     'CI Failures & Flaky Test Report'
   ].join('\n');
 
+  // The ZCode 3.9.2 empty new-task screen as captured LIVE on 2026-08-28 (tail:
+  // greeting hero, Select project, hero hint, template cards of that day).
+  const LIVE_HOME_SCREEN_3_9_2 = [
+    'Good afternoon! Leave the rest to me.',
+    'Select project',
+    'Ask ZCode anything, @ to add context, / for commands or capabilities',
+    'Add context',
+    'Full access',
+    'GLM-5.3',
+    'High',
+    'Send',
+    'Weekly Summary',
+    'Error Fix',
+    'PPT Creation',
+    'Idle-time task',
+    'Update',
+    '23'
+  ].join('\n');
+
   it('flags a capture of the empty home screen (multiple chrome markers, no VERDICT)', () => {
     const reason = detectUncapturedReview(HOME_SCREEN);
+    expect(reason).toBeTruthy();
+    expect(reason).toMatch(/home screen/i);
+  });
+
+  it('flags the LIVE-captured 3.9.2 empty new-task screen', () => {
+    const reason = detectUncapturedReview(LIVE_HOME_SCREEN_3_9_2);
     expect(reason).toBeTruthy();
     expect(reason).toMatch(/home screen/i);
   });
@@ -192,9 +217,30 @@ describe('Senior harness — uncaptured-review detection (kills the phantom REVI
     expect(detectUncapturedReview('The junior should add context to the log lines before merging.')).toBeNull();
   });
 
-  it('the home-screen markers are a non-empty set of anchored word matchers', () => {
+  // WS4a scar: "Full access" and "Add context" are PERSISTENT composer chrome in
+  // ZCode 3.9.2 (verified live: visible during an active conversation), so a real
+  // review capture that merely lacks a clean VERDICT line must NOT be rejected as
+  // a home screen just because it quotes that chrome (or the permission labels).
+  it('PASSES a genuine verdict-less review that quotes composer chrome (Full access / Add context / permission labels)', () => {
+    const review = [
+      'The junior set the agent to Full access while editing, which is fine, but they should',
+      'Add context to the error handler and pick Ask before changes for destructive steps.',
+      'Edit automatically is acceptable inside the sandbox; Plan mode would have been safer.',
+      'Overall the walkthrough matches the task, though no explicit verdict marker was produced.'
+    ].join('\n');
+    expect(detectUncapturedReview(review)).toBeNull();
+  });
+
+  it('the home-screen markers are a non-empty set of anchored matchers (live 3.9.2 signals)', () => {
     expect(SENIOR_HOME_SCREEN_MARKERS.length).toBeGreaterThanOrEqual(3);
-    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Edit automatically'))).toBe(true);
+    // Empty-screen-only signals (live-verified 3.9.2)...
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Good afternoon! Leave the rest to me.'))).toBe(true);
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Select project'))).toBe(true);
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Ask ZCode anything, @ to add context'))).toBe(true);
+    // ...and the retired persistent-composer labels are gone from the set.
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Edit automatically'))).toBe(false);
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Full access'))).toBe(false);
+    expect(SENIOR_HOME_SCREEN_MARKERS.some(re => re.test('Add context'))).toBe(false);
   });
 
   // Regression: a CONTINUATION round (rounds 2+) — where the phantom-REVISE incident
@@ -208,10 +254,11 @@ describe('Senior harness — uncaptured-review detection (kills the phantom REVI
       'VERDICT: APPROVE',                 // an EARLIER round still in the tail window
       'The round-1 walkthrough looked fine.',
       prompt,                             // the current round's prompt boundary
-      'Add context',                      // ...but the current round captured the
-      'Edit automatically',               // empty home screen, not a review
-      'Plan mode',
-      'GLM-5.3'
+      'Good afternoon! Leave the rest to me.', // ...but the current round captured the
+      'Select project',                   // empty home screen, not a review
+      'Ask ZCode anything, @ to add context, / for commands or capabilities',
+      'Weekly Summary',
+      'PPT Creation'
     ].join('\n');
 
     // The OLD ordering (guard on the full transcript) would be fooled by the stale marker:

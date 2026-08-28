@@ -6,6 +6,9 @@ import path from 'node:path';
 import { HarnessError } from './errors.ts';
 import { sliceAfterPrompt } from './antigravity.ts';
 import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
+import { killProcessesByImageName, processImageName } from './process-control.ts';
+import { makeInactivityGuard } from './inactivity-guard.ts';
+import { acquireZCodeLock, type ZCodeLockOptions } from './zcode-lock.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -119,17 +122,35 @@ export function parseVerdict(raw: string): { verdict: Verdict; feedback: string 
 }
 
 /**
- * Distinctive visible chrome of the CDP senior's EMPTY home screen — the
- * permission-mode controls that exist only before a conversation is started.
- * A real review reply never contains these standalone labels. Used to tell a
- * genuine (if verdict-less) review apart from a capture of the welcome screen.
+ * Distinctive visible chrome of the CDP senior's EMPTY home screen — text that
+ * renders ONLY before a conversation has started. Calibrated live against
+ * ZCode 3.9.2 (2026-08-28): the empty screen (`[data-testid="chat-empty"]`)
+ * shows a time-of-day greeting hero ("Good afternoon! Leave the rest to me."),
+ * a "Select project" picker, the hero hint "Ask ZCode anything, @ to add
+ * context, / for commands or capabilities", and rotating template suggestion
+ * cards (observed: "Weekly Summary", "Error Fix", "PPT Creation", "Idle-time
+ * task"; a 2026-08-28 incident capture: "Summarize the events of the week…",
+ * "CI Failures & Flaky Test Report").
+ *
+ * Scar: the OLD set (Ask before changes / Edit automatically / Plan mode /
+ * Add context / Full access) was verified live to be PERSISTENT COMPOSER CHROME
+ * — the permission-mode dropdown and its Add-context/Full-access controls are
+ * visible during an ACTIVE conversation too, so a genuine review that happened
+ * to lack a clean VERDICT: line was false-posited as a home-screen capture.
+ * Those labels are deliberately gone from this set; a review quoting one of
+ * them is no longer rejected. The template-card markers below rotate, so the
+ * durable signals are the greeting hero, "Select project", and the hero hint.
  */
 export const SENIOR_HOME_SCREEN_MARKERS: RegExp[] = [
-  /\bAsk before changes\b/i,
-  /\bEdit automatically\b/i,
-  /\bPlan mode\b/i,
-  /\bAdd context\b/i,
-  /\bFull access\b/i
+  /^Good (?:morning|afternoon|evening)!/im,
+  /\bAsk ZCode anything\b/i,
+  /\bSelect project\b/i,
+  // Template suggestion cards (observed variants — they rotate daily).
+  /\bSummarize the events of the week\b/i,
+  /\bCI Failures & Flaky Test Report\b/i,
+  /\bWeekly Summary\b/i,
+  /\bPPT Creation\b/i,
+  /\bIdle-time task\b/i
 ];
 
 /**
@@ -283,8 +304,35 @@ export function findSeniorBinary(cfg: SeniorConfig): string {
 // Claude CLI senior (subprocess, headless review)
 // ---------------------------------------------------------------------------
 
+/**
+ * Claude senior timing is ACTIVITY-based, like the GUI agents' waiter: a review
+ * that is streaming output is working and may run arbitrarily long; only a
+ * `CLAUDE_SENIOR_STALL_MS` window of TOTAL silence (default 5 min) stops it,
+ * with `CLAUDE_SENIOR_MAX_MS` (default 1h) as the last-resort absolute cap so a
+ * pathological output loop still terminates. The old single absolute kill timer
+ * (`CLAUDE_SENIOR_TIMEOUT_MS`, 20 min) cut claude off mid-review while it was
+ * actively producing — its env var still works, as the cap's source.
+ */
+export const DEFAULT_CLAUDE_SENIOR_STALL_MS = 300000;
+export const DEFAULT_CLAUDE_SENIOR_MAX_MS = 3600000;
+
+/** @deprecated kept for back-compat: the old absolute timeout now feeds the cap. */
 export const DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS = 1200000;
 
+function positiveMs(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function resolveClaudeSeniorStallMs(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveMs(env['CLAUDE_SENIOR_STALL_MS'], DEFAULT_CLAUDE_SENIOR_STALL_MS);
+}
+
+export function resolveClaudeSeniorMaxMs(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveMs(env['CLAUDE_SENIOR_MAX_MS'] ?? env['CLAUDE_SENIOR_TIMEOUT_MS'], DEFAULT_CLAUDE_SENIOR_MAX_MS);
+}
+
+/** @deprecated use resolveClaudeSeniorMaxMs (the cap) / resolveClaudeSeniorStallMs. */
 export function resolveClaudeSeniorTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   return Number(env['CLAUDE_SENIOR_TIMEOUT_MS'] || DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS);
 }
@@ -309,6 +357,8 @@ export class ClaudeCliSenior implements SeniorDriver {
   }
 
   private spawnClaude(bin: string, args: string[], stdin: string): Promise<string> {
+    const stallMs = resolveClaudeSeniorStallMs();
+    const maxMs = resolveClaudeSeniorMaxMs();
     return new Promise((resolve, reject) => {
       const usesShell = bin.endsWith('.cmd') || bin === 'claude' || bin === 'claude.cmd';
       const child = child_process.spawn(bin, args, {
@@ -327,18 +377,39 @@ export class ClaudeCliSenior implements SeniorDriver {
           child.kill();
         }
       };
-      const timer = setTimeout(() => {
-        killTree();
-        reject(new HarnessError('Claude CLI senior timed out'));
-      }, resolveClaudeSeniorTimeoutMs());
-      child.stdout.on('data', d => (out += d));
-      child.stderr.on('data', d => (err += d));
+      // Activity-based give-up: a stall (no output for stallMs) or the absolute
+      // cap (maxMs) kills the tree and rejects — the PARTIAL output collected
+      // so far is never resolved as if it were a completed review.
+      const guard = makeInactivityGuard({
+        stallMs,
+        maxMs,
+        onGiveUp: reason => {
+          killTree();
+          reject(
+            new HarnessError(
+              reason === 'stall'
+                ? `Claude CLI senior stalled: no output for ${Math.round(stallMs / 1000)}s ` +
+                    `(CLAUDE_SENIOR_STALL_MS). Partial output was NOT recorded as a review.`
+                : `Claude CLI senior hit the absolute cap of ${Math.round(maxMs / 1000)}s ` +
+                    `(CLAUDE_SENIOR_MAX_MS). Partial output was NOT recorded as a review.`
+            )
+          );
+        }
+      });
+      child.stdout.on('data', d => {
+        out += d;
+        guard.touch();
+      });
+      child.stderr.on('data', d => {
+        err += d;
+        guard.touch();
+      });
       child.on('error', e => {
-        clearTimeout(timer);
+        guard.done();
         reject(new HarnessError(`Claude CLI spawn failed: ${e.message}`));
       });
       child.on('close', code => {
-        clearTimeout(timer);
+        guard.done();
         if (code !== 0 && !out.trim()) {
           reject(new HarnessError(`Claude CLI senior exited ${code}: ${err.slice(0, 400)}`));
         } else {
@@ -379,6 +450,128 @@ export async function isSeniorPortLive(port: number): Promise<boolean> {
     return typeof v?.webSocketDebuggerUrl === 'string';
   } catch {
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Senior self-healing: relaunch a downed GUI senior instead of dying fail-closed
+// ---------------------------------------------------------------------------
+
+/** The senior app's process-image name (what taskkill /IM wants). Pure. */
+export function seniorProcessImageName(cfg: SeniorConfig): string {
+  const override = process.env[cfg.envPath];
+  return processImageName(override || cfg.binaryCandidates.find(c => path.isAbsolute(c)) || cfg.binaryCandidates[0] || cfg.id);
+}
+
+/**
+ * Best-effort: kill every running process of the senior GUI app. Scar: ZCode
+ * keeps a persistent tray process holding the single-instance lock — while it
+ * lives, a plain relaunch hands off to it and never re-exposes the debug port,
+ * so recovery must kill ALL ZCode processes first. "Not found" is fine; never
+ * throws.
+ */
+export async function killSeniorProcesses(cfg: SeniorConfig): Promise<void> {
+  await killProcessesByImageName(seniorProcessImageName(cfg));
+}
+
+export interface SeniorEnsureDeps {
+  /** Port liveness probe (injectable for unit tests). */
+  isPortLive?: (port: number) => Promise<boolean>;
+  /** Process kill (injectable for unit tests). */
+  killProcesses?: (cfg: SeniorConfig) => Promise<void>;
+  /** Launcher (injectable for unit tests). */
+  spawn?: (binary: string, args: string[]) => child_process.ChildProcess;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface SeniorEnsureResult {
+  launched: boolean;
+  port: number;
+  child?: child_process.ChildProcess;
+}
+
+/**
+ * "See if the senior GUI is open, or open it" — the senior analogue of the
+ * junior side's `ensureJuniorRunning`. Reuses a live CDP endpoint on the
+ * configured port; else kills any zombie/tray processes of the app (the
+ * single-instance-lock scar above), relaunches it with the debug port, and
+ * polls until CDP answers. Throws only if the endpoint never comes up.
+ */
+export async function ensureSeniorRunning(
+  cfg: SeniorConfig,
+  opts: { timeoutMs?: number; deps?: SeniorEnsureDeps } = {}
+): Promise<SeniorEnsureResult> {
+  const port = cfg.cdpPort;
+  if (!port) throw new HarnessError(`Senior '${cfg.id}' is not a CDP (GUI) senior — nothing to launch.`);
+  const deps = {
+    isPortLive: opts.deps?.isPortLive ?? isSeniorPortLive,
+    killProcesses: opts.deps?.killProcesses ?? killSeniorProcesses,
+    spawn:
+      opts.deps?.spawn ??
+      ((binary: string, args: string[]) => child_process.spawn(binary, args, { detached: true, stdio: 'ignore' })),
+    sleep: opts.deps?.sleep ?? (async (ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  };
+  if (await deps.isPortLive(port)) return { launched: false, port };
+  await deps.killProcesses(cfg);
+  const binary = findSeniorBinary(cfg);
+  const child = deps.spawn(binary, [`--remote-debugging-port=${port}`]);
+  child.unref?.();
+  const timeoutMs = opts.timeoutMs ?? 40000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await deps.isPortLive(port)) return { launched: true, port, child };
+    await deps.sleep(500);
+  }
+  throw new HarnessError(
+    `${cfg.label} was relaunched but no CDP endpoint appeared on port ${port} within ` +
+      `${Math.round(timeoutMs / 1000)}s. Launch it manually with --remote-debugging-port=${port} and retry.`
+  );
+}
+
+/**
+ * Classify a ZCode driver failure as "the app / CDP endpoint died or stopped
+ * answering" — worth one relaunch+retry — versus a capture/calibration problem
+ * (wrong selector, unverified submit, home-screen capture, stall), which
+ * retrying would only reproduce and which must stay fail-closed. Pure.
+ */
+export function isSeniorConnectionError(err: unknown): boolean {
+  const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  return (
+    /ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|abnormal closure|went away/i.test(msg) ||
+    /socket|connection failed|websocket is not open|readystate/i.test(msg) ||
+    /main window not found on port|cdp timeout/i.test(msg)
+  );
+}
+
+export interface SeniorRecoveryDeps {
+  ensure?: (cfg: SeniorConfig) => Promise<unknown>;
+  isRetryable?: (err: unknown) => boolean;
+}
+
+/**
+ * Run one senior review attempt with self-healing: ensure the app is up first,
+ * and if it dies MID-attempt (CDP socket closed / attach failure — NOT a
+ * captured home screen or a calibration miss, which `isSeniorConnectionError`
+ * excludes), relaunch it ONCE and retry the whole sequence. A second failure —
+ * or any non-connection failure — propagates: a partial/aborted review is never
+ * recorded as a verdict. Extracted so the retry policy is unit-testable.
+ */
+export async function runSeniorWithRecovery<T>(
+  cfg: SeniorConfig,
+  op: () => Promise<T>,
+  deps: SeniorRecoveryDeps = {}
+): Promise<T> {
+  const ensure = deps.ensure ?? ((c: SeniorConfig) => ensureSeniorRunning(c));
+  const isRetryable = deps.isRetryable ?? isSeniorConnectionError;
+  await ensure(cfg);
+  try {
+    return await op();
+  } catch (err) {
+    if (!isRetryable(err)) throw err;
+    // The port is dead now, so this ensure force-kills the corpse and relaunches;
+    // a merely-flaked connection with the app still up takes the reuse path.
+    await ensure(cfg);
+    return await op();
   }
 }
 
@@ -710,20 +903,32 @@ export class ZCodeSenior implements SeniorDriver {
   /** Inactivity (stall) window: how long with NO progress before giving up. Not a
    *  cap on total review time — an actively working senior extends indefinitely. */
   private readonly waitMs: number;
-  constructor(cfg: SeniorConfig = SENIORS.zai, waitMs = 120000) {
+  /** Options for the single-instance lock (injectable path for tests). */
+  private readonly lockOpts: ZCodeLockOptions;
+  constructor(cfg: SeniorConfig = SENIORS.zai, waitMs = 120000, lockOpts: ZCodeLockOptions = {}) {
     this.cfg = cfg;
     this.waitMs = waitMs;
+    this.lockOpts = lockOpts;
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    const port = this.cfg.cdpPort!;
-    if (!(await isSeniorPortLive(port))) {
-      throw new HarnessError(
-        `ZCode is not exposing a CDP endpoint on port ${port}. Fully quit ZCode, then relaunch it ` +
-          `with --remote-debugging-port=${port} (Electron requires the flag at launch; login is kept ` +
-          `only on the default profile). See docs/senior-integration.md.`
-      );
+    // Single-instance mutex (scar 2026-08-28): a second driver attaching to the
+    // ONE ZCode instance resets the first's in-flight review with its
+    // newConversation(). Hold the lock for the whole review — including the
+    // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
+    // holder keeps it.
+    const lock = await acquireZCodeLock(this.lockOpts);
+    try {
+      // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
+      // went down), and if it dies MID-review, relaunch once and retry.
+      return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
+    } finally {
+      lock.release();
     }
+  }
+
+  private async reviewOnce(input: SeniorReviewInput): Promise<SeniorVerdict> {
+    const port = this.cfg.cdpPort!;
     const { system, user } = buildReviewPrompt(input);
     const prompt = `${system}\n\n${user}`;
     const session = await ZCodeSession.attach(port);
