@@ -234,12 +234,15 @@ export const SENIORS: Record<string, SeniorConfig> = {
  * both review the same artifact is wasteful. Default splits the load: plans go to
  * the Claude senior, walkthroughs to the ZCode (GLM) senior. Override per-kind
  * with env `SENIOR_PLAN` / `SENIOR_WALKTHROUGH`, or globally with `SENIOR_DEFAULT`.
+ * When running at scale, `SENIOR_SCALE_DEFAULT` sets a concurrency default (e.g.
+ * 'claude') that yields to explicit overrides.
  */
 export function assignSenior(opts: { kind: 'plan' | 'walkthrough' }): string {
   const global = process.env['SENIOR_DEFAULT'];
   const perKind = opts.kind === 'plan' ? process.env['SENIOR_PLAN'] : process.env['SENIOR_WALKTHROUGH'];
+  const scaleDefault = process.env['SENIOR_SCALE_DEFAULT'];
   const fallback = opts.kind === 'plan' ? 'claude' : 'zai';
-  const id = (perKind || global || fallback).toLowerCase();
+  const id = (perKind || global || scaleDefault || fallback).toLowerCase();
   return resolveSenior(id).id; // validates
 }
 
@@ -250,12 +253,13 @@ export function assignSenior(opts: { kind: 'plan' | 'walkthrough' }): string {
  * walkthrough→zai, pulling BOTH seniors onto one task and wasting context/quota).
  * Deterministic by task id, so load still spreads ACROSS tasks (parallelism kept)
  * while each task has a single owner. `SENIOR_DEFAULT` pins all tasks to one
- * senior when set; otherwise a stable hash of the task id picks among the
- * registered seniors. Pairs with the per-round conversation reuse
- * (`freshConversation`): same senior + same conversation across a task's rounds.
+ * senior when set; `SENIOR_SCALE_DEFAULT` sets a scale default; otherwise a stable
+ * hash of the task id picks among the registered seniors. Pairs with the per-round
+ * conversation reuse (`freshConversation`): same senior + same conversation across
+ * a task's rounds.
  */
 export function assignSeniorForTask(taskId: string): string {
-  const override = process.env['SENIOR_DEFAULT'];
+  const override = process.env['SENIOR_DEFAULT'] || process.env['SENIOR_SCALE_DEFAULT'];
   if (override) return resolveSenior(override.toLowerCase()).id;
   const ids = Object.keys(SENIORS).sort();
   let h = 0;

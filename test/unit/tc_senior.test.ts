@@ -48,15 +48,28 @@ describe('Senior harness — registry', () => {
 });
 
 describe('Senior harness — single-reviewer assignment (one senior per review)', () => {
-  const saved = { d: process.env.SENIOR_DEFAULT, p: process.env.SENIOR_PLAN, w: process.env.SENIOR_WALKTHROUGH };
+  const saved = {
+    d: process.env.SENIOR_DEFAULT,
+    p: process.env.SENIOR_PLAN,
+    w: process.env.SENIOR_WALKTHROUGH,
+    s: process.env.SENIOR_SCALE_DEFAULT
+  };
   afterEach(() => {
-    for (const [k, v] of [['SENIOR_DEFAULT', saved.d], ['SENIOR_PLAN', saved.p], ['SENIOR_WALKTHROUGH', saved.w]] as const) {
+    for (const [k, v] of [
+      ['SENIOR_DEFAULT', saved.d],
+      ['SENIOR_PLAN', saved.p],
+      ['SENIOR_WALKTHROUGH', saved.w],
+      ['SENIOR_SCALE_DEFAULT', saved.s]
+    ] as const) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   });
 
   it('defaults split the load: plan → claude, walkthrough → zai (never both)', () => {
-    delete process.env.SENIOR_DEFAULT; delete process.env.SENIOR_PLAN; delete process.env.SENIOR_WALKTHROUGH;
+    delete process.env.SENIOR_DEFAULT;
+    delete process.env.SENIOR_PLAN;
+    delete process.env.SENIOR_WALKTHROUGH;
+    delete process.env.SENIOR_SCALE_DEFAULT;
     expect(assignSenior({ kind: 'plan' })).toBe('claude');
     expect(assignSenior({ kind: 'walkthrough' })).toBe('zai');
   });
@@ -68,13 +81,40 @@ describe('Senior harness — single-reviewer assignment (one senior per review)'
     expect(assignSenior({ kind: 'plan' })).toBe('claude');
   });
 
+  it('SENIOR_SCALE_DEFAULT defaults both plan and walkthrough to chosen senior when no overrides are set', () => {
+    delete process.env.SENIOR_DEFAULT;
+    delete process.env.SENIOR_PLAN;
+    delete process.env.SENIOR_WALKTHROUGH;
+    process.env.SENIOR_SCALE_DEFAULT = 'claude';
+    expect(assignSenior({ kind: 'plan' })).toBe('claude');
+    expect(assignSenior({ kind: 'walkthrough' })).toBe('claude');
+
+    process.env.SENIOR_SCALE_DEFAULT = 'ZAI'; // case-insensitive
+    expect(assignSenior({ kind: 'plan' })).toBe('zai');
+    expect(assignSenior({ kind: 'walkthrough' })).toBe('zai');
+  });
+
+  it('explicit SENIOR_DEFAULT and per-kind overrides win over SENIOR_SCALE_DEFAULT', () => {
+    process.env.SENIOR_SCALE_DEFAULT = 'claude';
+    process.env.SENIOR_DEFAULT = 'zai';
+    expect(assignSenior({ kind: 'plan' })).toBe('zai');
+    expect(assignSenior({ kind: 'walkthrough' })).toBe('zai');
+
+    process.env.SENIOR_PLAN = 'claude';
+    expect(assignSenior({ kind: 'plan' })).toBe('claude');
+    expect(assignSenior({ kind: 'walkthrough' })).toBe('zai');
+  });
+
   it('usageHint distinguishes GUI quota (zai) from CLI (claude)', () => {
     expect(usageHint('zai')).toMatch(/Usage remaining|GUI/i);
     expect(usageHint('claude')).toMatch(/\/usage|console\.anthropic/i);
   });
 
   it('assignSeniorForTask: ONE senior per task — same for plan+walkthrough, deterministic', () => {
-    delete process.env.SENIOR_DEFAULT; delete process.env.SENIOR_PLAN; delete process.env.SENIOR_WALKTHROUGH;
+    delete process.env.SENIOR_DEFAULT;
+    delete process.env.SENIOR_PLAN;
+    delete process.env.SENIOR_WALKTHROUGH;
+    delete process.env.SENIOR_SCALE_DEFAULT;
     const a = assignSeniorForTask('task-abc-123');
     // Stable across calls (the plan review and the walkthrough review of the same
     // task therefore get the SAME senior — never two seniors on one task's code).
@@ -84,6 +124,7 @@ describe('Senior harness — single-reviewer assignment (one senior per review)'
 
   it('assignSeniorForTask: load spreads ACROSS tasks (not all one senior)', () => {
     delete process.env.SENIOR_DEFAULT;
+    delete process.env.SENIOR_SCALE_DEFAULT;
     const picks = new Set(
       Array.from({ length: 24 }, (_, i) => assignSeniorForTask(`task-${i}-xyz`))
     );
@@ -91,6 +132,18 @@ describe('Senior harness — single-reviewer assignment (one senior per review)'
   });
 
   it('assignSeniorForTask: SENIOR_DEFAULT pins every task to one senior', () => {
+    process.env.SENIOR_DEFAULT = 'zai';
+    expect(assignSeniorForTask('task-a')).toBe('zai');
+    expect(assignSeniorForTask('task-b')).toBe('zai');
+  });
+
+  it('assignSeniorForTask: SENIOR_SCALE_DEFAULT sets default senior across all tasks unless SENIOR_DEFAULT overrides', () => {
+    delete process.env.SENIOR_DEFAULT;
+    process.env.SENIOR_SCALE_DEFAULT = 'claude';
+    expect(assignSeniorForTask('task-a')).toBe('claude');
+    expect(assignSeniorForTask('task-b')).toBe('claude');
+
+    // SENIOR_DEFAULT still takes highest precedence
     process.env.SENIOR_DEFAULT = 'zai';
     expect(assignSeniorForTask('task-a')).toBe('zai');
     expect(assignSeniorForTask('task-b')).toBe('zai');
