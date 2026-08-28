@@ -111,6 +111,56 @@ describe('waitForAgentIdle — adaptive, no hard time cap', () => {
   });
 });
 
+describe('waitForAgentIdle — requireActivityStart closes the submit→generation gap race', () => {
+  // The gap: right after a prompt is submitted the composer looks idle (Send
+  // control back, nothing streaming) before the agent shows its Stop/"Thinking"
+  // indicator. Without requireActivityStart the waiter counted that gap as an
+  // instant completion (~5-9s) and captured app chrome before the reply existed —
+  // the ZCode senior "empty home screen" phantom. These lock the fix in.
+  const gapThenWorkThenIdle: AgentActivity[] = [
+    { working: false, canSend: true, len: 100 },  // baseline seed
+    { working: false, canSend: true, len: 100 },  // still in the gap (no start yet)
+    { working: false, canSend: true, len: 100 },  // still in the gap
+    { working: true, canSend: false, len: 120 },  // generation finally starts
+    { working: true, canSend: false, len: 150 },  // streaming
+    { working: false, canSend: true, len: 180 },  // grew (still streaming)
+    { working: false, canSend: true, len: 180 },  // idle stable 1/2
+    { working: false, canSend: true, len: 180 }   // idle stable 2/2 → completed
+  ];
+
+  it('does NOT complete during the gap — waits for the agent to actually start', async () => {
+    const statuses: string[] = [];
+    const res = await waitForAgentIdle(scriptedProbe(gapThenWorkThenIdle), {
+      sleep: noSleep, warmupMs: 0, pollMs: 0, idleConfirmations: 2,
+      requireActivityStart: true,
+      onTick: t => statuses.push(t.status)
+    });
+    expect(res).toBe('completed');
+    // Proof it recognized the pre-generation gap instead of completing in it.
+    expect(statuses).toContain('awaiting-start');
+    // And that completion came only after activity was observed.
+    expect(statuses.indexOf('working')).toBeLessThan(statuses.lastIndexOf('completed'));
+  });
+
+  it('WITHOUT the flag, the same idle gap is (wrongly) completed instantly — the bug it fixes', async () => {
+    // Same steady idle-looking gap that never generates. Old behavior: instant
+    // completion. This is the exact misread that orphaned the GLM verdict.
+    const alwaysIdle: AgentActivity = { working: false, canSend: true, len: 5 };
+    const buggy = await waitForAgentIdle(async () => alwaysIdle, {
+      sleep: noSleep, warmupMs: 0, pollMs: 0, idleConfirmations: 2
+    });
+    expect(buggy).toBe('completed');
+  });
+
+  it('WITH the flag, a prompt that never starts generating stalls loudly (real timers)', async () => {
+    const alwaysIdle: AgentActivity = { working: false, canSend: true, len: 5 };
+    const fixed = await waitForAgentIdle(async () => alwaysIdle, {
+      warmupMs: 0, pollMs: 5, stallMs: 30, requireActivityStart: true
+    });
+    expect(fixed).toBe('stalled');
+  });
+});
+
 describe('ensureCompleted — a non-completed wait is a hard failure, never a silent verdict', () => {
   it('passes completed through untouched', () => {
     expect(() => ensureCompleted('completed', 'anyone')).not.toThrow();

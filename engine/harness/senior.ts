@@ -681,7 +681,14 @@ export class ZCodeSession {
    * waiting while it's active and only stop on genuine completion or a stall.
    */
   async waitForCompletion(opts: WaitOptions = {}): Promise<WaitResult> {
-    return waitForAgentIdle(() => this.probeActivity(), opts);
+    // requireActivityStart: after sendPrompt there is a brief gap before GLM shows
+    // its Stop button / "Thinking…" indicator, during which the composer looks idle
+    // (Send control back, nothing streaming). Without this, the waiter counted that
+    // gap as an instant "completion" (~5-9s) and captured the app chrome before the
+    // VERDICT line existed — the review was abandoned while GLM kept working, so the
+    // verdict was orphaned and the job died on detectUncapturedReview. Requiring an
+    // observed start closes that race; a submit that never starts now stalls loudly.
+    return waitForAgentIdle(() => this.probeActivity(), { requireActivityStart: true, ...opts });
   }
 
   async readTranscript(lastLines = 60): Promise<string> {

@@ -58,6 +58,16 @@ export interface WaitOptions {
   absoluteMaxMs?: number;
   /** Small initial delay so the working indicator can appear. Default 1200ms. */
   warmupMs?: number;
+  /** Require observing the agent actively working (a Stop/Cancel control or a
+   *  "Working/Thinking/…" indicator, or the transcript growing beyond its initial
+   *  baseline) at least once before an idle+stable reading may be treated as
+   *  completion. Closes the race where the brief gap between prompt-submit and
+   *  generation-start looks idle (Send control back, nothing streaming yet) and is
+   *  wrongly reported as an instant empty "completion" — which then captures the
+   *  app chrome instead of the reply. When the agent never starts within the stall
+   *  window, this yields a loud `stalled` (submit didn't land) instead. Default
+   *  false, so juniors and existing callers are unaffected. */
+  requireActivityStart?: boolean;
   /** Cancellation: checked every poll, and before the first. */
   signal?: AbortSignal;
   /** Progress callback (elapsed, current status, activity) for logging. */
@@ -80,12 +90,15 @@ export async function waitForAgentIdle(
   const idleConfirmations = opts.idleConfirmations ?? 2;
   const absoluteMaxMs = opts.absoluteMaxMs ?? 60 * 60 * 1000;
   const warmupMs = opts.warmupMs ?? 1200;
+  const requireActivityStart = opts.requireActivityStart ?? false;
   const sleep = opts.sleep ?? defaultSleep;
 
   const start = Date.now();
   await sleep(warmupMs);
 
   let lastLen = -1;
+  let firstProbe = true;
+  let sawActivity = false;
   let lastActivityAt = Date.now();
   let idleStable = 0;
 
@@ -95,6 +108,14 @@ export async function waitForAgentIdle(
     const a = await probe();
     const grew = a.len !== lastLen;
     if (grew) lastLen = a.len;
+    // The very first probe merely seeds the length baseline; only a working
+    // indicator or growth on a LATER probe proves the agent actually began
+    // generating. This is what tells "still spinning up after submit" apart from
+    // "genuinely done", so an idle reading in the submit→generation gap is not
+    // mistaken for completion.
+    const realGrowth = grew && !firstProbe;
+    if (a.working || realGrowth) sawActivity = true;
+    firstProbe = false;
 
     let status: string;
     if (a.working || grew) {
@@ -102,7 +123,7 @@ export async function waitForAgentIdle(
       lastActivityAt = Date.now();
       idleStable = 0;
       status = 'working';
-    } else if (a.canSend) {
+    } else if (a.canSend && (!requireActivityStart || sawActivity)) {
       // Idle and steady — confirm across a couple of polls, then it's done.
       idleStable++;
       status = `idle(${idleStable}/${idleConfirmations})`;
@@ -111,7 +132,11 @@ export async function waitForAgentIdle(
         return 'completed';
       }
     } else {
-      status = 'inactive';
+      // Genuinely inactive (error/modal/login wall) or, when requireActivityStart
+      // is set, still in the gap before generation has started. Both are bounded by
+      // the stall net below: a prompt that never starts generating stalls loudly
+      // instead of being read as an instant empty completion.
+      status = requireActivityStart && !sawActivity ? 'awaiting-start' : 'inactive';
     }
 
     opts.onTick?.({ elapsedMs: Date.now() - start, status, activity: a });
