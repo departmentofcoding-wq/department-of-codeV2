@@ -8,6 +8,7 @@ import { sliceAfterPrompt } from './antigravity.ts';
 import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 import { killProcessesByImageName, processImageName } from './process-control.ts';
 import { makeInactivityGuard } from './inactivity-guard.ts';
+import { acquireZCodeLock, type ZCodeLockOptions } from './zcode-lock.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -902,15 +903,28 @@ export class ZCodeSenior implements SeniorDriver {
   /** Inactivity (stall) window: how long with NO progress before giving up. Not a
    *  cap on total review time — an actively working senior extends indefinitely. */
   private readonly waitMs: number;
-  constructor(cfg: SeniorConfig = SENIORS.zai, waitMs = 120000) {
+  /** Options for the single-instance lock (injectable path for tests). */
+  private readonly lockOpts: ZCodeLockOptions;
+  constructor(cfg: SeniorConfig = SENIORS.zai, waitMs = 120000, lockOpts: ZCodeLockOptions = {}) {
     this.cfg = cfg;
     this.waitMs = waitMs;
+    this.lockOpts = lockOpts;
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    // Self-heal instead of dying: ensure ZCode is up (relaunching it if it went
-    // down), and if it dies MID-review, relaunch once and retry.
-    return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
+    // Single-instance mutex (scar 2026-08-28): a second driver attaching to the
+    // ONE ZCode instance resets the first's in-flight review with its
+    // newConversation(). Hold the lock for the whole review — including the
+    // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
+    // holder keeps it.
+    const lock = await acquireZCodeLock(this.lockOpts);
+    try {
+      // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
+      // went down), and if it dies MID-review, relaunch once and retry.
+      return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
+    } finally {
+      lock.release();
+    }
   }
 
   private async reviewOnce(input: SeniorReviewInput): Promise<SeniorVerdict> {
