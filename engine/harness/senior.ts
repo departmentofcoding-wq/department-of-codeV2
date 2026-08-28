@@ -7,6 +7,7 @@ import { HarnessError } from './errors.ts';
 import { sliceAfterPrompt } from './antigravity.ts';
 import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 import { killProcessesByImageName, processImageName } from './process-control.ts';
+import { makeInactivityGuard } from './inactivity-guard.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -284,8 +285,35 @@ export function findSeniorBinary(cfg: SeniorConfig): string {
 // Claude CLI senior (subprocess, headless review)
 // ---------------------------------------------------------------------------
 
+/**
+ * Claude senior timing is ACTIVITY-based, like the GUI agents' waiter: a review
+ * that is streaming output is working and may run arbitrarily long; only a
+ * `CLAUDE_SENIOR_STALL_MS` window of TOTAL silence (default 5 min) stops it,
+ * with `CLAUDE_SENIOR_MAX_MS` (default 1h) as the last-resort absolute cap so a
+ * pathological output loop still terminates. The old single absolute kill timer
+ * (`CLAUDE_SENIOR_TIMEOUT_MS`, 20 min) cut claude off mid-review while it was
+ * actively producing — its env var still works, as the cap's source.
+ */
+export const DEFAULT_CLAUDE_SENIOR_STALL_MS = 300000;
+export const DEFAULT_CLAUDE_SENIOR_MAX_MS = 3600000;
+
+/** @deprecated kept for back-compat: the old absolute timeout now feeds the cap. */
 export const DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS = 1200000;
 
+function positiveMs(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function resolveClaudeSeniorStallMs(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveMs(env['CLAUDE_SENIOR_STALL_MS'], DEFAULT_CLAUDE_SENIOR_STALL_MS);
+}
+
+export function resolveClaudeSeniorMaxMs(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveMs(env['CLAUDE_SENIOR_MAX_MS'] ?? env['CLAUDE_SENIOR_TIMEOUT_MS'], DEFAULT_CLAUDE_SENIOR_MAX_MS);
+}
+
+/** @deprecated use resolveClaudeSeniorMaxMs (the cap) / resolveClaudeSeniorStallMs. */
 export function resolveClaudeSeniorTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   return Number(env['CLAUDE_SENIOR_TIMEOUT_MS'] || DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS);
 }
@@ -310,6 +338,8 @@ export class ClaudeCliSenior implements SeniorDriver {
   }
 
   private spawnClaude(bin: string, args: string[], stdin: string): Promise<string> {
+    const stallMs = resolveClaudeSeniorStallMs();
+    const maxMs = resolveClaudeSeniorMaxMs();
     return new Promise((resolve, reject) => {
       const usesShell = bin.endsWith('.cmd') || bin === 'claude' || bin === 'claude.cmd';
       const child = child_process.spawn(bin, args, {
@@ -328,18 +358,39 @@ export class ClaudeCliSenior implements SeniorDriver {
           child.kill();
         }
       };
-      const timer = setTimeout(() => {
-        killTree();
-        reject(new HarnessError('Claude CLI senior timed out'));
-      }, resolveClaudeSeniorTimeoutMs());
-      child.stdout.on('data', d => (out += d));
-      child.stderr.on('data', d => (err += d));
+      // Activity-based give-up: a stall (no output for stallMs) or the absolute
+      // cap (maxMs) kills the tree and rejects — the PARTIAL output collected
+      // so far is never resolved as if it were a completed review.
+      const guard = makeInactivityGuard({
+        stallMs,
+        maxMs,
+        onGiveUp: reason => {
+          killTree();
+          reject(
+            new HarnessError(
+              reason === 'stall'
+                ? `Claude CLI senior stalled: no output for ${Math.round(stallMs / 1000)}s ` +
+                    `(CLAUDE_SENIOR_STALL_MS). Partial output was NOT recorded as a review.`
+                : `Claude CLI senior hit the absolute cap of ${Math.round(maxMs / 1000)}s ` +
+                    `(CLAUDE_SENIOR_MAX_MS). Partial output was NOT recorded as a review.`
+            )
+          );
+        }
+      });
+      child.stdout.on('data', d => {
+        out += d;
+        guard.touch();
+      });
+      child.stderr.on('data', d => {
+        err += d;
+        guard.touch();
+      });
       child.on('error', e => {
-        clearTimeout(timer);
+        guard.done();
         reject(new HarnessError(`Claude CLI spawn failed: ${e.message}`));
       });
       child.on('close', code => {
-        clearTimeout(timer);
+        guard.done();
         if (code !== 0 && !out.trim()) {
           reject(new HarnessError(`Claude CLI senior exited ${code}: ${err.slice(0, 400)}`));
         } else {

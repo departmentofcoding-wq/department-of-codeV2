@@ -5,9 +5,13 @@ import path from 'node:path';
 import type child_process from 'node:child_process';
 import { HarnessError } from '../../engine/harness/errors.ts';
 import {
+  DEFAULT_CLAUDE_SENIOR_MAX_MS,
+  DEFAULT_CLAUDE_SENIOR_STALL_MS,
   ensureSeniorRunning,
   isSeniorConnectionError,
   killSeniorProcesses,
+  resolveClaudeSeniorMaxMs,
+  resolveClaudeSeniorStallMs,
   runSeniorWithRecovery,
   seniorProcessImageName,
   SENIORS
@@ -224,5 +228,31 @@ describe('WS1 — senior process image + kill command (pure)', () => {
       delete process.env['ZCODE_PATH'];
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('WS3 — claude senior timing env (stall + cap, not an absolute kill)', () => {
+  it('defaults: 5-minute stall window, 1-hour absolute cap', () => {
+    expect(DEFAULT_CLAUDE_SENIOR_STALL_MS).toBe(300000);
+    expect(DEFAULT_CLAUDE_SENIOR_MAX_MS).toBe(3600000);
+    expect(resolveClaudeSeniorStallMs({})).toBe(300000);
+    expect(resolveClaudeSeniorMaxMs({})).toBe(3600000);
+  });
+
+  it('CLAUDE_SENIOR_STALL_MS / CLAUDE_SENIOR_MAX_MS override their own knobs', () => {
+    expect(resolveClaudeSeniorStallMs({ CLAUDE_SENIOR_STALL_MS: '45000' })).toBe(45000);
+    expect(resolveClaudeSeniorMaxMs({ CLAUDE_SENIOR_MAX_MS: '7200000' })).toBe(7200000);
+  });
+
+  it('the legacy CLAUDE_SENIOR_TIMEOUT_MS still works as the cap source (back-compat)', () => {
+    expect(resolveClaudeSeniorMaxMs({ CLAUDE_SENIOR_TIMEOUT_MS: '1200000' })).toBe(1200000);
+    // An explicit MAX wins when both are set.
+    expect(resolveClaudeSeniorMaxMs({ CLAUDE_SENIOR_TIMEOUT_MS: '1200000', CLAUDE_SENIOR_MAX_MS: '60000' })).toBe(60000);
+  });
+
+  it('garbage or non-positive values fall back to the defaults', () => {
+    expect(resolveClaudeSeniorStallMs({ CLAUDE_SENIOR_STALL_MS: 'abc' })).toBe(300000);
+    expect(resolveClaudeSeniorStallMs({ CLAUDE_SENIOR_STALL_MS: '0' })).toBe(300000);
+    expect(resolveClaudeSeniorMaxMs({ CLAUDE_SENIOR_MAX_MS: '-5' })).toBe(3600000);
   });
 });
