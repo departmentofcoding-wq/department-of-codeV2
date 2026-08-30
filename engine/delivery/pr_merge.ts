@@ -136,7 +136,29 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
   // 4. Step B-4: Prune strictly POST-COMMIT
   try {
     const workspaceProvider = getWorkspaceProvider();
-    await workspaceProvider.prune(db, taskId);
+    // Bounded retry (the 2026-08-28 EPERM scar: the junior IDE still held the
+    // worktree dir at merge time; one immediate try abandoned it). Injected
+    // delays stay default here — the retry policy itself is unit-tested pure.
+    const { pruneWithRetry } = await import('../worktrees/prune.ts');
+    const result = await pruneWithRetry(() => workspaceProvider.prune(db, taskId));
+    if (!result.ok) {
+      const pruneErrMsg = result.lastError ?? 'unknown error';
+      const warningMsg =
+        `Post-merge prune deferred for task ${taskId} after ${result.attempts} attempts: ${pruneErrMsg} ` +
+        `(the worktree directory remains; the next prepare adopts or re-prunes it — no hand repair needed).`;
+      journal(db, {
+        kind: 'system',
+        attribution: SYSTEM_ATTRIBUTION,
+        taskId,
+        detail: {
+          action: 'prune',
+          status: 'deferred',
+          attempts: result.attempts,
+          error: warningMsg
+        }
+      });
+      notifyOperator(`prune:${taskId}`, warningMsg);
+    }
   } catch (pruneErr: any) {
     const pruneErrMsg = pruneErr?.message || String(pruneErr);
     const warningMsg = `Post-merge prune failed for task ${taskId}: ${pruneErrMsg}`;
