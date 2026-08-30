@@ -70,6 +70,53 @@ describe('WS2 — recoverJuniorRunning (forced clean relaunch)', () => {
     });
   });
 
+  it('waits for the MAIN workbench window (not just the port) before returning, when a finder is injected', async () => {
+    await withFakeJuniorBinary(JUNIORS.A.envPath, async () => {
+      let windowProbes = 0;
+      // Port answers immediately, but the freshly relaunched workbench only
+      // becomes attachable on the 3rd probe — recovery must keep polling.
+      const findWindow = vi.fn(async () => (++windowProbes >= 3 ? 'ws://127.0.0.1:9333/win' : ''));
+      const res = await recoverJuniorRunning(JUNIORS.A, {
+        deps: {
+          isPortLive: async () => true,
+          killProcesses: vi.fn(),
+          spawn: () => fakeChild(),
+          sleep: async () => {},
+          findWindow
+        }
+      });
+      expect(res).toMatchObject({ launched: true, port: 9333 });
+      expect(windowProbes).toBe(3); // polled until the workbench was attachable
+    });
+  });
+
+  it('returns after the window budget even if the workbench never renders (caller gets the last word)', async () => {
+    await withFakeJuniorBinary(JUNIORS.A.envPath, async () => {
+      const findWindow = vi.fn(async () => ''); // never attachable
+      const res = await recoverJuniorRunning(JUNIORS.A, {
+        windowTimeoutMs: 5, // tiny budget so the test doesn't wait
+        deps: {
+          isPortLive: async () => true,
+          killProcesses: vi.fn(),
+          spawn: () => fakeChild(),
+          sleep: async () => {},
+          findWindow
+        }
+      });
+      expect(res).toMatchObject({ launched: true, port: 9333 });
+      expect(findWindow).toHaveBeenCalled();
+    });
+  });
+
+  it('skips the window wait entirely when no finder is injected (pure kill+relaunch+port-wait)', async () => {
+    await withFakeJuniorBinary(JUNIORS.A.envPath, async () => {
+      const res = await recoverJuniorRunning(JUNIORS.A, {
+        deps: { isPortLive: async () => true, killProcesses: vi.fn(), spawn: () => fakeChild(), sleep: async () => {} }
+      });
+      expect(res).toMatchObject({ launched: true, port: 9333 });
+    });
+  });
+
   it('throws a clear error when even the forced relaunch never exposes CDP', async () => {
     await withFakeJuniorBinary(JUNIORS.B.envPath, async () => {
       await expect(

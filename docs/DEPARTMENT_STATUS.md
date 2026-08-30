@@ -12,9 +12,77 @@ phase plan, then git. Nothing important lives only in a chat window.
 |---|---|
 | **Phase** | **Phase 7 close-out DONE + Part-A improvements A1–A5 all merged (2026-08-26). Roadmap `docs/plan-bureau-kernel-roadmap.md` Part A executed: A1 merge-law git hook + delivery-tail lock, A2 attribution/budget/sandbox-remote, A3 staged verification (D0 + impl), A4 test determinism (retired `fileParallelism:false`), A5 real cost accounting. Each senior-reviewed (Claude CLI headless) and merged `--no-ff` to local main. Plans for the next phases now recorded: `docs/phase-8-plan.md` (concurrency), `docs/phase-9-plan.md` (Bureau Kernel extraction + Department Kit), `docs/phase-10-plan.md` (first real new department).** |
 | Main | D0-C (`59acc69`), Stream A (`fc97549`), Stream B (`8944670`), launcher integration fix (`eb39d36`). Prior: Phase 5 at `8974b0f`. All Senior-verified. Latest: console intake `baa5b74`; Stream A google-provider `a74131d`; auto-kickoff flow `64d33cd` (feature `592dc09`, Senior verdict `f8aceeb`); **assets-tab flow `c7f9b37`** (feature tip `05dd8fb`, Senior verdict `0a1100a`); **ntfy flow `1c14534`** (feature tip `f349a13`, Senior verdict `d398b53`); **console task archive + Workers flow view + senior conversation reuse `1710098`** (features `27b85e5` + `60be286`, Senior verdict `docs/reviews/verdict-console-archive-flow.md`). |
-| Suite | **479/479 tests, 101 files, under full file parallelism (A4), `npm run build` clean on merged main.** (was 375/87) **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers` + `GET /api/flow` pipeline stepper, `workerRoster`/`taskFlow`) — department roster with live active/idle status plus per-task stage + stuck flag, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
-| In flight | Nothing. Clean handoff point. |
-| Next action | **Part A (A1–A5) complete and merged.** Next: **Phase 8 — concurrency at scale** (`docs/phase-8-plan.md`; A4 was its precondition). Then Phase 9 (kernel extraction) and Phase 10 (first new department). Loose ends carried forward: the A1 merge-law hooks are **NOT installed in-repo** (`npm run hooks:install` would block the department's own engine-development merges — resolve that policy tension first); the intake `acceptance_tests` drafting needs a `bureau_intake_sessions.acceptance_tests` D0 addendum (the A3 staged verifier already consumes `task.acceptance_tests`); A5 prices are operator-set via `setModelPrice`/meta (unset ⇒ honest "unpriced floor", see `npm run cost:report`). Gemini keys live; ceilings in `bureau_meta`. |
+| Suite | **582/582 tests, 109 files, `npm run build` clean on origin/main `40e4157` (2026-08-28).** (was 479/101) **Two seniors drivable** (claude = Claude CLI subprocess; zai = ZCode/GLM CDP GUI @9335) — review-only, fail-closed verdicts, both verified live; single-reviewer assignment, model selection + quota for each; manual `docs/senior-integration.md`. Console has a **Workers tab** (`GET /api/workers` + `GET /api/flow` pipeline stepper, `workerRoster`/`taskFlow`) — department roster with live active/idle status plus per-task stage + stuck flag, verified against `db/bureau.db`. **Two juniors now drivable** (A = Antigravity IDE @9333, B = Antigravity 2.0 @9334) from code + via `junior.dispatch` (`junior`/`model`/`folder` payload fields); GUI model + folder selection, plan/walkthrough/full-output captured to `docs/junior-artifacts/`. Manual: `docs/antigravity-integration.md`. |
+| In flight | **Two department-filed tasks sit at `needs-review` (delivery-ready), awaiting operator approval → pr.create/pr.merge:** `7ef423f2` (POSIX `pkill -f`→`-x` hardening) and `5d29e47b` (scale-aware senior assignment via new `SENIOR_SCALE_DEFAULT`). Both ran the FULL flow unattended (intake→plan→junior implement→claude review→staged verify exit 0→needs-review), worktrees clean, `reviewed_commit` == branch tip. Historical: **PUSHED to origin/main `1708e3d` (2026-08-27):** the agent task-filing door AND the **Phase 8 entry fix pack F1–F6** (delivery-tail drill scars). Fix pack: round-1 claude senior REVISE (F4/F5 fake tests — tested reimplementations) → amend (real exported `resolveClaudeSeniorTimeoutMs`+`resolveIntakeSession` the tests import; F6 PLAN_MARKERS; **timeout default 180000→1200000 / 20 min, operator-set — durable, so the F4 scar no longer strands tasks**) → **zai (ZCode/GLM-5.3) senior APPROVE** (9m agentic review, re-ran build+suite 519/519 ×2 + re-executed M-TAIL-1/2 and the F4/F5 revert-mutations; verdict `docs/reviews/verdict-phase8-fixpack.md`) → `--no-ff` merge `1708e3d` → 519/519+build clean on main → pushed. Task `e156395d` Completed-tagged (commit `1708e3d`, not forged done). **Remaining pre-Phase-8 dev work = Stream B (provisioning console) FILED through the agent door (`1429a7de`) and RESUMED after two harness stops:** door→auto-kickoff→plan.cycle claim→**junior A (Antigravity) authored the plan**; the F4 timeout no longer bites. Stop #1 (RESOLVED, recalibration `995f6d8`): the zai/ZCode senior harness failed on ZCode 3.9.2 (empty home screen captured; `detectUncapturedReview` correctly refused → plan.cycle died fail-closed). `ZCodeSession` recalibrated for 3.9.2 — composer `[data-testid="v4-composer-input"]` (3.9.2 has no aria-label/placeholder), model picker `chat-model-select-trigger`, new-conversation `conversation-new-task`; send/stop unchanged — proven by a 39s smoke review AND in-flow: 5-round plan review with 4 real zai verdicts (rubric amend, then REVISE ×3, then **APPROVE round 5**, review `365c926f`). Stop #2 (NEW, 2026-08-27 10:41–10:42 UTC): on approval the implementation `junior.dispatch` (dispatch `eb5b0aaa`) died terminally — the Antigravity instance was down/wedged when the worktree window was requested ("opened a window … but no CDP window titled `<taskId> - Antigravity IDE` appeared"), 3 attempts burned → job dead at `claimed`. **Operator resume (11:12 UTC):** clean-relaunched junior A with `--remote-debugging-port=9333` (restored session reopened the worktree window under the EXACT expected title — the title heuristic is NOT the defect; the dead instance was), re-enqueued the identical payload through the engine's own `enqueueJob` (job `af75acf6`, journal #632) → dispatch claimed, junior implementing in the worktree (transcript confirmed growing, tracing `engine/projects/provision.ts`). Scar: a `junior.dispatch` that exhausts attempts is NOT auto-retried (by design) — recovery = ensure the junior GUI is up with its debug port, then re-enqueue the same payload via `enqueueJob`. Known wart: long GUI dispatches always get their 2-minute window lease reaped (`heartbeats: 0`, no renewal path) — harmless while no competing dispatch wants `window-default`; heartbeats are a candidate follow-up. Convergence run (supervised `gh`) still an operator activity. Agent task-filing door MERGED to local main `67eb81f` (`--no-ff`) — 2026-08-27, senior APPROVE (verdict `docs/reviews/verdict-agent-task-door.md`; suite 502/502 ×3 with only the intermittent `t4` parallel-load flake, build clean, M-AGENTFILE-1/2 re-executed live).** One engine helper `fileAgentTask` (`engine/filing/agent_file.ts`) + CLI `npm run task:file` + `POST /api/tasks/file` (ENDPOINTS 30→31); actor allowlist + fail-closed `intake:agent_autofile` meta opt-in + vacuous-verify/field gates + session-layer idempotency; auto-confirm attributed to the agent (`confirmVerify` untouched, human-only); attribution claude=`senior-engineer/anthropic`, glm=`senior-engineer/zai`. Suite 502/502 ×2, build clean; M-AGENTFILE-1/2 recorded (`docs/mutation-evidence-phase8.md`); e2e on temp DB (flag-off refusal, opt-in, HTTP 401/403/201, GLM stdin relay, idempotent retry); walkthrough `docs/walkthrough-agent-task-door.md`, plan `docs/plan-agent-task-door.md` (untracked). DONE for this stream (verdict posted + `--no-ff` merged to local main `67eb81f`, re-verified 502/502 + build clean on merged main). NEXT: opt in with `npm run task:file -- --enable` and file the first real task through the live door — the flag stays OFF until the operator does; push to origin is the operator's call. Prior follow-ups still open from the 2026-08-26 drill: (1) wire `GhCliPrProvider` (+ workspace provider) into runner/console boot — tonight's pr.create/pr.merge were drained by an operator-side process with the seams set because NO runtime path registers a PrProvider; (2) delivery-branch model: the junior committed on `wt/junior-a-project-provisioning` inside the worktree while `bureau-wt-<taskId>` stayed at base (operator fast-forwarded + journaled) — either the worktree manager forces the bureau branch or pr.create uses the worktree's real branch; (3) ✅ RESOLVED by the fix pack: `CLAUDE_SENIOR_TIMEOUT_MS` default is now 1200000 (20 min) on main — relaunch any runner/console to pick it up; (4) plan rubric vs conversational junior replies burned round 3; (5) Stream B (console UX) + the supervised `gh repo create` convergence run for the new provisioning engine. Ledger + plan-doc commits are the operator's call (files deliberately untracked). |
+| Next action | **Phase 8 entry gate CLEARED (2026-08-28)** — origin main green + pushed (`40e4157`), Stream B shipped (PR #2), and the department now runs the full flow unattended (proven twice). Immediate: (1) approve the two `needs-review` tasks in the console to close them; (2) the supervised provisioning convergence run (entry-gate step 3, operator-supervised); (3) begin **Phase 8 proper** — file **≥3 tasks concurrently** and exercise the Secretary, lease contention, and watchdog under load (`docs/plan-pre-phase8-remaining.md` = the P0/P1/P2 punch list). Then Phase 9 (kernel extraction) and Phase 10 (first new department). Loose ends carried forward: the A1 merge-law hooks are **NOT installed in-repo** (`npm run hooks:install` would block the department's own engine-development merges — resolve that policy tension first); the intake `acceptance_tests` drafting needs a `bureau_intake_sessions.acceptance_tests` D0 addendum (the A3 staged verifier already consumes `task.acceptance_tests`); A5 prices are operator-set via `setModelPrice`/meta (unset ⇒ honest "unpriced floor", see `npm run cost:report`). Gemini keys live; ceilings in `bureau_meta`. |
+
+**SELF-DRIVING PROVEN + PHASE-8 ENTRY GATE CLEARED (2026-08-28, origin/main
+`40e4157`, 582/582 + build clean):** the department ran two real tasks the FULL
+flow with zero hand-repairs — filed through the agent door → auto-kickoff →
+junior (Antigravity/**Gemini 3.7 Flash Medium**) authors plan → **claude** senior
+reviews → junior implements in the bureau worktree → claude walkthrough review →
+staged `verify.run` exit 0 → `needs-review`. Both delivery-ready (`reviewed_commit`
+== branch tip), awaiting operator approval. Getting here took three harness fixes,
+all merged + pushed this session: (1) **ZCode capture-race fix** (`be7abc5`,
+`requireActivityStart` in `waitForAgentIdle`) — the zai senior was abandoning
+reviews at ~9s in the submit→generation gap and orphaning verdicts; claude senior
+APPROVE, verdict `docs/reviews/verdict-zcode-senior-capture.md`. (2) **Department
+resilience** (`e4a56e8`), implemented by **zai (ZCode/GLM)** and reviewed by the
+claude senior (APPROVE, `docs/reviews/verdict-dept-resilience.md`): WS1
+`ensureSeniorRunning` + `runSeniorWithRecovery` (auto-relaunch a downed ZCode
+senior, one mid-death retry, fail-closed on home-screen/stall), WS2
+`recoverJuniorRunning` + wedged-window retry in `junior.dispatch` (auto-recover a
+downed/wedged Antigravity junior in-flight — **proven live**: Antigravity was down
+and the flow auto-launched it), WS3 `makeInactivityGuard` (adaptive claude timeout
+— stall window + absolute cap, no more hard 20-min kill), WS4 retightened
+`SENIOR_HOME_SCREEN_MARKERS` + a single-ZCode-instance mutex (`zcode-lock.ts`).
+(3) The Stream B provisioning console (task `1429a7de`) was approved + merged as
+**PR #2** while these landed; local/origin had diverged (local had the harness
+fixes, origin had PR #2) and were **reconciled** (`40e4157`, clean/disjoint files),
+then pushed. Verification of the two self-driven tasks (operator skepticism about
+Gemini): both transcripts confirm genuine **Gemini 3.7 Flash Medium** sessions
+doing real edits + real test runs — smooth because the tasks were tiny + hyper-
+specced and the **claude senior reviewed the real worktree code** (task 1 shipped
+no `walkthrough.md` at all; approval was grounded in the actual diff), NOT because
+Gemini reformed. The honest next test is a genuinely hard task. Roadmap for what
+remains: `docs/plan-pre-phase8-remaining.md` (P0 convergence run, P1 concurrency
+readiness, P2 debt). zai/GLM account hit its 5-hour quota this session → reviews
+pinned to claude via `SENIOR_DEFAULT`.
+
+**FIRST FULLY-TRACKED DELIVERY — project provisioning engine shipped end-to-end
+(2026-08-26, merged PR #1 = `d34baa0`, local main suite 488/488, build
+clean):** task `6490336d` ("Implement self-serve project provisioning with
+job-driven workflow") traveled the ENTIRE tracked path for the first time —
+live Gemini intake officer drafts + human confirm-verify gate → auto-kickoff →
+6 plan-review rounds (junior A authoring in Antigravity, claude senior
+reviewing; ceiling auto-proceeded to implementation) → junior implemented
+Stream A IN a bureau worktree → work-review loop (REVISE round 2 caught the
+junior's dead `if (false as boolean)` actor guard — the fake-guard pattern —
+independently of the operator's review) → junior IDE closed for PC load;
+operator-side session secured the WIP verbatim (`1918ce1`), applied the fix
+round (`7e25e53`: real allowlist, `D:\projects` default, registerProject
+routing), executed mutation evidence M-PROV-1..4 (+ strengthened T-PROV-4 with
+a `repoPrefix:'../evil/'` vector — the only input containment uniquely
+catches) → senior APPROVE round 4/5 (verdict
+`docs/reviews/verdict-project-provisioning.md`, reviewId `f57bc99f`) →
+`verify.run` exit 0 on the worktree branch → `needs-review` → operator
+Approve (console) → `pr.create` + `pr.merge` → **task `done`**, PR
+`https://github.com/departmentofcoding-wq/department-of-codeV2/pull/1`,
+local main fast-forwarded. Delivered: `engine/projects/provision.ts` +
+`repo_provider.ts` (gh-CLI seam) + `config.ts` (meta: projects_root
+`D:\projects` / repo_prefix `dept-` / github_owner), schema columns, span/job
+kinds, deterministic job id, CLI `project create`; 9 T-PROV tests. Plan doc:
+`docs/plan-project-provisioning.md` (untracked, operator-confirmed decisions).
+Live-drill scars, all journaled repairs: `reviewed_commit` left null when the
+cycle runs without the runner's workspace-provider wiring (pr.create refused
+correctly; repaired via the engine's own checkpoint+tip steps); NO runtime
+PrProvider registration anywhere (drained inline by the operator; see
+follow-ups); junior's house-convention branch vs the `bureau-wt-` delivery
+branch diverged (fast-forwarded, linear, no rewrite); two senior reviews died
+at the 180s default claude timeout (two-runner claim lottery); Antigravity
+loses its CDP port on relaunch without the debug flag (kill + clean relaunch
+is the recovery); the intake CLI adopted an old open session instead of a
+fresh one.
 
 **Part-A improvements sprint — A1–A5 all merged to local main (2026-08-26):**
 Executed Part A of `docs/plan-bureau-kernel-roadmap.md` end-to-end. Each stream
