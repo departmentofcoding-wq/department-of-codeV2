@@ -104,6 +104,20 @@ same "engine-development merges bypass the flow" tension as the standing scar. *
 operator decides — ratify these as sanctioned engine-dev merges (and note it), or require
 retroactive verdict docs. Then resolve the standing policy (see P2 §2.1) so it stops recurring.
 
+### N8 — pr.create runs `gh` in the wrong repo for non-dept projects (P0, proven 2026-08-31)
+On approval, `3756ec6e` (Trading project) delivered its branch push fine but **`gh pr create`
+failed 3× → dead**: *"No commits between main and bureau-wt-3756…, Head ref must be a branch."*
+Root cause: [pr_create.ts](../engine/delivery/pr_create.ts) passes the worktree path to
+`pushBranch(refspec, wtRow?.path)` but **not** to `createPr({...})` — so `gh pr create` executes
+in the **dept repo's cwd** and targets `department-of-codeV2`, where `bureau-wt-3756…` doesn't
+exist. b55e2fda (a task *in the dept repo*) delivered fine precisely because its worktree's repo
+IS the dept repo, which masked the bug. **This blocks delivery for every project except the dept
+itself.** **Action:** thread the project repo path (the worktree's git dir / the
+`bureau_projects.path_to_repo`) into `getPrProvider().createPr` and run `gh` there, the same way
+`pushBranch` already does. Operator worked around it this session by fast-forwarding the reviewed
+`86cccba` onto Trading `main` and pushing (task was completed-tagged; its `completion_commit` in
+the DB is still `null` — cosmetic).
+
 ### N7 — housekeeping (P2)
 - **Stale ledger:** `docs/DEPARTMENT_STATUS.md` didn't reflect this session — updated now.
 - **`implementation_plan.md` written into the primary checkout on `main`** (untracked) — the
