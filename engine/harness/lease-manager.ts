@@ -102,7 +102,8 @@ export function acquireLease(
 export function heartbeatLease(
   db: DbConnection,
   leaseId: string,
-  nowMs?: number | string | Date
+  nowMs?: number | string | Date,
+  overrideMs?: number
 ): BureauWindowLeaseRow {
   const currentMs = typeof nowMs === 'number' ? nowMs : (typeof nowMs === 'string' ? Date.parse(nowMs) : (nowMs?.getTime() ?? Date.now()));
   const lease = db.get<BureauWindowLeaseRow>('SELECT * FROM bureau_window_leases WHERE id = ?', leaseId);
@@ -120,7 +121,7 @@ export function heartbeatLease(
     throw new LeaseError(`Heartbeat ceiling reached (${ceiling}) for lease '${leaseId}'.`, lease.window_target, lease.dispatch_id);
   }
 
-  const durationMs = getLeaseMs(db);
+  const durationMs = getLeaseMs(db, overrideMs);
   const nowIso = new Date(currentMs).toISOString();
   const newExpiresAt = new Date(currentMs + durationMs).toISOString();
 
@@ -138,6 +139,55 @@ export function heartbeatLease(
     expires_at: newExpiresAt,
     heartbeats: lease.heartbeats + 1,
     updated_at: nowIso
+  };
+}
+
+export interface WindowLeaseHeartbeatOptions {
+  leaseMs?: number;
+  intervalMs?: number;
+  nowMs?: () => number | string | Date;
+  onError?: (err: Error) => void;
+}
+
+export interface WindowLeaseHeartbeatHandle {
+  intervalMs: number;
+  stop: () => number;
+}
+
+export function startWindowLeaseHeartbeat(
+  db: DbConnection,
+  leaseId: string,
+  options?: WindowLeaseHeartbeatOptions
+): WindowLeaseHeartbeatHandle {
+  const leaseMs = getLeaseMs(db, options?.leaseMs);
+  const intervalMs = options?.intervalMs ?? Math.max(1000, Math.floor(leaseMs / 3));
+
+  let heartbeats = 0;
+  let timer: NodeJS.Timeout | null = setInterval(() => {
+    try {
+      const currentMs = options?.nowMs ? options.nowMs() : Date.now();
+      const updated = heartbeatLease(db, leaseId, currentMs, options?.leaseMs);
+      heartbeats = updated.heartbeats;
+    } catch (err: any) {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (options?.onError) {
+        options.onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  }, intervalMs);
+
+  return {
+    intervalMs,
+    stop: () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      return heartbeats;
+    }
   };
 }
 
