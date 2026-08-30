@@ -3,7 +3,7 @@ import type { AttributionTuple, BureauTaskRow, BureauWorkReviewRow, DbConnection
 import { getPrProvider } from '../contract/pr-seam.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
-import { DeliveryError } from './types.ts';
+import { DeliveryError, PrRefusalError } from './types.ts';
 import { DEFAULT_PR_BASE_BRANCH, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
@@ -91,7 +91,9 @@ export async function handlePrCreate(ctx: JobContext): Promise<void> {
       taskId,
       detail: { action: 'pr.create', status: 'refused', reason: refusalReason }
     });
-    throw new DeliveryError(refusalReason, 'PR_CREATE_REFUSED', taskId);
+    // A precondition refusal is deterministic — dead on first failure, never
+    // retried (the 2026-08-28 zombie retried "task is done" twice).
+    throw new PrRefusalError(refusalReason, 'PR_CREATE_REFUSED', taskId);
   }
 
   if (!task) {

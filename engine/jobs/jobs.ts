@@ -15,6 +15,23 @@ export const FOREMAN_ATTRIBUTION: AttributionTuple = {
   ...DETERMINISTIC_ATTRIBUTION
 };
 
+/**
+ * A deterministic refusal the retry loop can never outwait: invalid input,
+ * a violated precondition, a wrong state. Throwing this (or setting
+ * `nonRetryable = true` on a domain error) makes the job DEAD on its first
+ * failure instead of burning every attempt — the 2026-08-29 scar burned 3
+ * attempts × 2 guardrail spans re-refusing the same invalid slug, and the
+ * 2026-08-28 zombie pr.create retried "task is done" twice after the work
+ * had already shipped.
+ */
+export class NonRetryableError extends Error {
+  public readonly nonRetryable = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'NonRetryableError';
+  }
+}
+
 export interface EnqueueJobInput {
   id?: string;
   kind: string;
@@ -244,7 +261,8 @@ export function failJob(
   db: DbConnection,
   jobId: string,
   error: string,
-  backoffMs: number
+  backoffMs: number,
+  opts?: { forceTerminal?: boolean }
 ): { terminal: boolean; job: BureauJobRow } {
   const now = new Date().toISOString();
   const truncatedError = error.slice(0, 2000);
@@ -256,7 +274,9 @@ export function failJob(
     }
 
     const newAttempts = job.attempts + 1;
-    const terminal = newAttempts >= job.max_attempts;
+    // A forced-terminal failure (NonRetryableError) is dead NOW — re-running
+    // a deterministic refusal can never change the answer.
+    const terminal = opts?.forceTerminal === true || newAttempts >= job.max_attempts;
 
     if (terminal) {
       db.run(
