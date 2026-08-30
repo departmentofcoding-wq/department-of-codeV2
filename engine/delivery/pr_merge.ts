@@ -123,12 +123,15 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
       'done'
     );
 
-    // Enqueue backup.push job after successful merge (Milestone B1) — keyed to merge commit hash for deduplication
+    // Enqueue backup.push job after successful merge (Milestone B1) — keyed to merge commit hash for deduplication.
+    // `commit` threads the tip through so the backup can PROVE the remote
+    // already contains it (pr.merge merges on GitHub; pushing local main
+    // would be rejected fetch-first) and fast-forward local main to match.
     enqueueJobIfAbsent(db, {
       id: `backup.push:${currentTip}`,
       kind: 'backup.push',
       task_id: taskId,
-      payload: { target: 'origin/main' },
+      payload: { target: 'origin/main', commit: currentTip },
       max_attempts: 3
     });
   });

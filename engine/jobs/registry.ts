@@ -308,7 +308,11 @@ defineJob(
 
 // 16. backup.push
 const backupPushSchema = z.object({
-  target: z.string().optional()
+  target: z.string().optional(),
+  // The merge/tip commit this backup guarantees on the remote; when the remote
+  // already contains it (the normal post-PR-merge case) the handler records
+  // containment proof instead of pushing a rejected local main.
+  commit: z.string().optional()
 });
 
 defineJob(
