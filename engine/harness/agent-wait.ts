@@ -114,7 +114,15 @@ export async function waitForAgentIdle(
     // "genuinely done", so an idle reading in the submit→generation gap is not
     // mistaken for completion.
     const realGrowth = grew && !firstProbe;
-    if (a.working || realGrowth) sawActivity = true;
+    // Under requireActivityStart, ONLY an explicit "working" indicator proves the
+    // agent actually began generating — incidental transcript growth (a re-render,
+    // the echoed prompt finishing rendering, a status timer tick) must NOT satisfy
+    // the start gate. That growth-based satisfaction was exactly how the
+    // submit→generation gap got mis-read as an instant empty completion (the
+    // 2026-08-30 zai capture). Without the flag, growth stays a valid start signal
+    // so juniors and existing callers are unaffected.
+    const startedNow = requireActivityStart ? a.working : (a.working || realGrowth);
+    if (startedNow) sawActivity = true;
     firstProbe = false;
 
     let status: string;

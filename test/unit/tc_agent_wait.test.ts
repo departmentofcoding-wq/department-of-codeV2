@@ -159,6 +159,44 @@ describe('waitForAgentIdle — requireActivityStart closes the submit→generati
     });
     expect(fixed).toBe('stalled');
   });
+
+  it('a transcript GROWTH spike without any working indicator does NOT satisfy the start gate — stalls, never completes (2026-08-30 incidental-growth capture)', async () => {
+    // The measured length jumped once — the echoed prompt finished rendering, or
+    // (pre-fix, whole-body length) a session-sidebar clock ticked — but the agent
+    // never actually generated: no Stop/"Thinking" indicator ever appeared. Old
+    // code let that growth satisfy requireActivityStart and then completed against
+    // the app's home-screen chrome (the orphaned-verdict bug). Under the fix, only
+    // an explicit `working` observation starts the gate, so this must be read as
+    // still-awaiting-start and stall loudly instead of completing.
+    const growthSpikeThenIdle: AgentActivity[] = [
+      { working: false, canSend: true, len: 100 },  // baseline seed
+      { working: false, canSend: true, len: 260 },  // incidental growth spike (NOT generation)
+      { working: false, canSend: true, len: 260 },  // idle & stable — the misread window
+      { working: false, canSend: true, len: 260 }   // ...stays idle, never generates
+    ];
+    const res = await waitForAgentIdle(scriptedProbe(growthSpikeThenIdle), {
+      warmupMs: 0, pollMs: 5, stallMs: 30, requireActivityStart: true
+    });
+    expect(res).toBe('stalled');
+  });
+
+  it('growth after a real working observation still completes normally (the fix does not over-tighten)', async () => {
+    // Once the agent has genuinely started (a working indicator), later streaming
+    // growth is trusted as progress as before — the fix only distrusts growth
+    // BEFORE the first working observation.
+    const workThenGrowThenIdle: AgentActivity[] = [
+      { working: false, canSend: true, len: 100 },  // baseline seed
+      { working: true, canSend: false, len: 100 },  // genuine start
+      { working: false, canSend: true, len: 140 },  // streaming (grew) after start
+      { working: false, canSend: true, len: 160 },  // still streaming
+      { working: false, canSend: true, len: 160 },  // idle 1/2
+      { working: false, canSend: true, len: 160 }   // idle 2/2 → completed
+    ];
+    const res = await waitForAgentIdle(scriptedProbe(workThenGrowThenIdle), {
+      sleep: noSleep, warmupMs: 0, pollMs: 0, idleConfirmations: 2, requireActivityStart: true
+    });
+    expect(res).toBe('completed');
+  });
 });
 
 describe('ensureCompleted — a non-completed wait is a hard failure, never a silent verdict', () => {

@@ -57,12 +57,15 @@ describe('async providers keep the lease alive under a slow subprocess', () => {
       getRemoteTip: async () => tip
     });
 
-    // Lease 2000ms with heartbeat 25ms keeps the production 30:1 lease-to-
-    // heartbeat ratio, so the property under test (heartbeats renew while the
-    // handler awaits a subprocess) is exercised without racing wall clocks
-    // against CPU starvation under the parallel suite (the A4 lesson: no
-    // wall-clock-tight assertions under load).
-    runner = new Runner(db, { BUREAU_LEASE_MS: 2000, BUREAU_HEARTBEAT_MS: 25, BUREAU_POLL_MS: 25 });
+    // Lease 2000ms with heartbeat ~67ms keeps the TRUE production 30:1 lease-to-
+    // heartbeat ratio (production is 30000ms / 1000ms = 30:1; 2000 / 67 ≈ 30:1),
+    // so the property under test (heartbeats renew while the handler awaits a
+    // subprocess) is exercised at production proportions — not artificially more
+    // tolerant — without racing wall clocks against CPU starvation under the
+    // parallel suite (the A4 lesson: no wall-clock-tight assertions under load).
+    // (Earlier this used a 25ms heartbeat and mislabelled it 30:1 — actually 80:1;
+    // zai's review caught the false claim, 2026-08-30.)
+    runner = new Runner(db, { BUREAU_LEASE_MS: 2000, BUREAU_HEARTBEAT_MS: 67, BUREAU_POLL_MS: 25 });
     runner.start();
 
     const job = enqueueJob(db, { kind: 'backup.push', payload: { target: 'origin/main' } });

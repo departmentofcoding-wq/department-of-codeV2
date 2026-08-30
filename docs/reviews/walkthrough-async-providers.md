@@ -35,9 +35,10 @@ merged twice) — but every delivery raced duplicate execution.
 - Suite **587/587 ×2** on this branch; `npx tsc --noEmit` clean.
 - New `tc_async_providers.test.ts` (3 tests):
   1. A 600ms async `backup.push` through a REAL `Runner` (lease 2000ms,
-     heartbeat 25ms — production 30:1 ratio) survives a simulated
-     second-runner reaper ticking every 250ms: job `done`, `reaped_count` 0,
-     zero reaps, ≥12 loop ticks during the handler.
+     heartbeat ~67ms — a true production 30:1 ratio; the original 25ms was
+     mislabelled 30:1 but was actually 80:1, corrected 2026-08-30 per zai's
+     review) survives a simulated second-runner reaper ticking every 250ms:
+     job `done`, `reaped_count` 0, zero reaps, ≥12 loop ticks during the handler.
   2. Lease-default pin: `runnerConfigSchema.parse({}).BUREAU_LEASE_MS ===
      30000`.
   3. The REAL `ExecGitBackupProvider` over a REAL temp git repo yields the

@@ -12,7 +12,9 @@ import {
   assignSenior,
   assignSeniorForTask,
   usageHint,
-  SENIORS
+  SENIORS,
+  pickAttachablePage,
+  SENIOR_WINDOW_ATTACH_MS
 } from '../../engine/harness/senior.ts';
 import { getSeniorDriver, setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
 import { writeJuniorArtifacts, readLatestArtifacts } from '../../engine/harness/junior-artifacts.ts';
@@ -387,5 +389,50 @@ describe('Senior harness — seam + artifact reading', () => {
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe('pickAttachablePage — the cold-start attach page selector (Defect A)', () => {
+  // The 2026-08-30 live failure: the FIRST review after ensureSeniorRunning's
+  // kill+relaunch died "ZCode main window not found" because attach read
+  // /json/list ONCE, before the workbench page target had rendered (~30-40s lag).
+  // The selection itself is pure and version-stable; attach now polls it on a
+  // SENIOR_WINDOW_ATTACH_MS budget until a page appears.
+  it('returns null when no page target exists yet (the cold-start gap attach waits out)', () => {
+    expect(pickAttachablePage([])).toBeNull();
+    // A debug port that only exposes worker/other targets is the exact cold gap.
+    expect(pickAttachablePage([{ type: 'worker', webSocketDebuggerUrl: 'ws://x' }])).toBeNull();
+    // A page with no ws url is not attachable.
+    expect(pickAttachablePage([{ type: 'page', url: 'file:///a', webSocketDebuggerUrl: '' }])).toBeNull();
+  });
+
+  it('selects the packaged renderer page served from file:/// (the real 3.9.2 shape)', () => {
+    // Live-observed 2026-08-30: ZCode 3.9.2 serves its workbench from
+    // file:///…/app.asar/out/renderer/index.html — matched by the non-data: fallback.
+    const targets = [
+      { type: 'page', url: 'data:text/html,devtools', webSocketDebuggerUrl: 'ws://d' },
+      { type: 'worker', url: 'file:///w', webSocketDebuggerUrl: 'ws://w' },
+      { type: 'page', url: 'file:///C:/Users/x/AppData/Local/Programs/ZCode/resources/app.asar/out/renderer/index.html', webSocketDebuggerUrl: 'ws://page' }
+    ];
+    expect(pickAttachablePage(targets)?.webSocketDebuggerUrl).toBe('ws://page');
+  });
+
+  it('prefers the loopback dev page, then vscode-file://, over a generic file page', () => {
+    const targets = [
+      { type: 'page', url: 'file:///generic', webSocketDebuggerUrl: 'ws://file' },
+      { type: 'page', url: 'vscode-file://vscode-app/index.html', webSocketDebuggerUrl: 'ws://vscode' },
+      { type: 'page', url: 'https://127.0.0.1:9335/workbench', webSocketDebuggerUrl: 'ws://loopback' }
+    ];
+    expect(pickAttachablePage(targets)?.webSocketDebuggerUrl).toBe('ws://loopback');
+    expect(pickAttachablePage(targets.slice(0, 2))?.webSocketDebuggerUrl).toBe('ws://vscode');
+    expect(pickAttachablePage(targets.slice(0, 1))?.webSocketDebuggerUrl).toBe('ws://file');
+  });
+
+  it('never selects a data: page (DevTools/blank), even if it is the only page', () => {
+    expect(pickAttachablePage([{ type: 'page', url: 'data:text/html,x', webSocketDebuggerUrl: 'ws://d' }])).toBeNull();
+  });
+
+  it('exposes a generous cold-start attach budget', () => {
+    expect(SENIOR_WINDOW_ATTACH_MS).toBeGreaterThanOrEqual(40000);
   });
 });

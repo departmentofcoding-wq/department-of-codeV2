@@ -457,6 +457,36 @@ export async function isSeniorPortLive(port: number): Promise<boolean> {
   }
 }
 
+/**
+ * How long to wait for the ZCode workbench PAGE target to become attachable
+ * after its CDP debug port starts answering. A cold-launched ZCode (an Electron
+ * app) answers `/json/version` within a second or two but does not expose an
+ * attachable workbench `page` target on `/json/list` for another 30-40s. The old
+ * `ZCodeSession.attach` read `/json/list` exactly ONCE and threw "main window not
+ * found" on the empty list — so the FIRST review after any `ensureSeniorRunning`
+ * kill+relaunch always failed on the cold render. Mirrors the junior side's
+ * `MAIN_WINDOW_ATTACH_MS`. Live-verified 2026-08-30: the workbench page
+ * (`file:///…/renderer/index…`) appeared ~30-40s after the port opened.
+ */
+export const SENIOR_WINDOW_ATTACH_MS = 60000;
+
+/**
+ * Pick the attachable ZCode workbench page from a `/json/list` payload. Pure, so
+ * the selection order is unit-tested without a live CDP endpoint. Prefers the
+ * loopback dev page, then a `vscode-file://` shell, then any non-`data:` page
+ * (the packaged app serves its renderer from `file:///…/app.asar/…`). Returns
+ * the target or null when no page target exists yet (the cold-start case the
+ * attach loop waits out).
+ */
+export function pickAttachablePage(targets: any[]): { webSocketDebuggerUrl: string; url: string } | null {
+  const pages = (targets as any[]).filter(t => t && t.type === 'page' && t.webSocketDebuggerUrl);
+  const page =
+    pages.find(t => typeof t.url === 'string' && t.url.startsWith('https://127.0.0.1')) ??
+    pages.find(t => typeof t.url === 'string' && t.url.startsWith('vscode-file://')) ??
+    pages.find(t => typeof t.url === 'string' && !t.url.startsWith('data:'));
+  return page ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Senior self-healing: relaunch a downed GUI senior instead of dying fail-closed
 // ---------------------------------------------------------------------------
@@ -598,14 +628,33 @@ export class ZCodeSession {
     this.wsUrl = wsUrl;
   }
 
-  static async attach(port: number): Promise<ZCodeSession> {
-    const targets = await cdpGet(port, '/json/list');
-    const pages = (targets as any[]).filter(t => t.type === 'page' && t.webSocketDebuggerUrl);
-    const page =
-      pages.find(t => typeof t.url === 'string' && t.url.startsWith('https://127.0.0.1')) ??
-      pages.find(t => typeof t.url === 'string' && t.url.startsWith('vscode-file://')) ??
-      pages.find(t => typeof t.url === 'string' && !t.url.startsWith('data:'));
-    if (!page) throw new HarnessError(`ZCode main window not found on port ${port}`);
+  static async attach(port: number, opts: { attachTimeoutMs?: number } = {}): Promise<ZCodeSession> {
+    // Poll `/json/list` for the workbench page target until it appears. On a cold
+    // relaunch the debug PORT answers within a second or two but the attachable
+    // workbench `page` lags 30-40s; reading the list once (the old behavior) threw
+    // "main window not found" on that empty gap, failing the FIRST review after
+    // every kill+relaunch. Wait out the cold render on a budget instead.
+    const deadline = Date.now() + (opts.attachTimeoutMs ?? SENIOR_WINDOW_ATTACH_MS);
+    let page: { webSocketDebuggerUrl: string; url: string } | null = null;
+    let lastReason = 'no page target yet';
+    for (;;) {
+      try {
+        const targets = await cdpGet(port, '/json/list');
+        page = pickAttachablePage(targets as any[]);
+        if (page) break;
+      } catch (err: any) {
+        lastReason = err?.message ? String(err.message) : String(err);
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    if (!page) {
+      throw new HarnessError(
+        `ZCode main window not found on port ${port} within ` +
+          `${Math.round((opts.attachTimeoutMs ?? SENIOR_WINDOW_ATTACH_MS) / 1000)}s (${lastReason}) — ` +
+          `the workbench never became attachable.`
+      );
+    }
     const s = new ZCodeSession(page.webSocketDebuggerUrl);
     await s.connect();
     return s;
@@ -626,6 +675,32 @@ export class ZCodeSession {
       }
     });
     await this.send('Runtime.enable');
+  }
+
+  /**
+   * Wait until the workbench UI has actually MOUNTED. On a cold relaunch the CDP
+   * page target becomes attachable (and `attach` connects to it) SECONDS before
+   * ZCode's renderer mounts the composer / new-task controls — a
+   * `newConversation()` fired immediately then hit "no New task control" against
+   * a blank shell and failed the whole review at ~4s (2026-08-30 cold relaunch).
+   * Poll for the durable composer input (present on both the home screen and
+   * inside a conversation) on the same cold-start budget the attach loop uses.
+   */
+  async waitForWorkbenchReady(timeoutMs = SENIOR_WINDOW_ATTACH_MS): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const ready = await this.evaluate(
+        `!!(document.querySelector('[data-testid="v4-composer-input"]') || document.querySelector('[data-testid="conversation-new-task"]'))`
+      );
+      if (ready) return;
+      if (Date.now() >= deadline) {
+        throw new HarnessError(
+          `ZCode workbench UI did not mount within ${Math.round(timeoutMs / 1000)}s ` +
+            `(no composer/new-task control) — the app is still loading or the renderer failed.`
+        );
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
 
   send(method: string, params: any = {}, timeoutMs = 20000): Promise<any> {
@@ -868,7 +943,17 @@ export class ZCodeSession {
       // the send landed), so a present-and-not-working Send button here means the
       // reply is finished — not the welcome screen.
       const canSend = !!sendBtn && !working;
-      return { working, canSend, len: document.body.innerText.length };
+      // Length is the CONVERSATION's text, not the whole document body. Body text
+      // includes the session sidebar (relative-time clocks like "21m", task rows)
+      // whose incidental ticks were read as transcript "growth" — which, under
+      // requireActivityStart, wrongly satisfied the generation-start gate in the
+      // submit→generation window and let an idle reading complete against app
+      // chrome (2026-08-30). The conversation container grows only when the reply
+      // actually streams.
+      const conv = document.querySelector('[data-testid="conversation"]')
+        || document.querySelector('[data-testid="conversation-column"]');
+      const len = conv ? conv.innerText.length : document.body.innerText.length;
+      return { working, canSend, len };
     })()`)) as AgentActivity;
   }
 
@@ -937,6 +1022,10 @@ export class ZCodeSenior implements SeniorDriver {
     const prompt = `${system}\n\n${user}`;
     const session = await ZCodeSession.attach(port);
     try {
+      // The page target can be attachable seconds before the renderer mounts its
+      // controls — wait for the workbench UI before driving it, or newConversation
+      // fails against a blank shell on a cold relaunch.
+      await session.waitForWorkbenchReady();
       // First round starts a fresh conversation; a continuation round (round 2+
       // of the SAME task's review cycle) REUSES the existing conversation so the
       // GLM senior keeps the prior artifact + its own feedback in context — no
