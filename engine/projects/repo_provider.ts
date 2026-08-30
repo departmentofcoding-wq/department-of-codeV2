@@ -1,5 +1,15 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { CreateRemoteOptions, CreateRemoteResult, RepoProvider } from '../contract/types.ts';
+
+/**
+ * Commands run ASYNC deliberately: `gh repo create --push` and `git push`
+ * inside it are network-bound and take seconds — a synchronous execFileSync
+ * would freeze the runner's event loop past the job-lease window and let a
+ * second runner re-claim the job mid-flight (the duplicate-execution class
+ * fixed with this conversion; see GhCliPrProvider for the incident record).
+ */
+const execFileAsync = promisify(execFile);
 
 export class ProvisionError extends Error {
   public readonly code: string;
@@ -11,15 +21,15 @@ export class ProvisionError extends Error {
 }
 
 export class GhCliRepoProvider implements RepoProvider {
-  private runCommand(cmd: string, args: string[], cwd?: string): string {
+  private async runCommand(cmd: string, args: string[], cwd?: string): Promise<string> {
     try {
-      return execFileSync(cmd, args, {
+      const { stdout } = await execFileAsync(cmd, args, {
         cwd,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe']
-      }).trim();
+        encoding: 'utf8'
+      });
+      return stdout.trim();
     } catch (err: any) {
-      const stderr = err.stderr ? err.stderr.toString() : err.message;
+      const stderr = err?.stderr ? String(err.stderr) : err.message;
       throw new ProvisionError(
         `Command '${cmd} ${args.join(' ')}' failed: ${stderr}. Ensure '${cmd}' is installed and authenticated.`,
         'REPO_PROVIDER_EXEC_ERROR'
@@ -43,7 +53,7 @@ export class GhCliRepoProvider implements RepoProvider {
       args.push('--description', opts.description);
     }
 
-    this.runCommand('gh', args, opts.sourcePath);
+    await this.runCommand('gh', args, opts.sourcePath);
 
     return {
       url: `https://github.com/${fullRepo}`
@@ -52,15 +62,12 @@ export class GhCliRepoProvider implements RepoProvider {
 
   public async getAuthStatus(): Promise<{ authenticated: boolean; login: string | null; scopes: string[] }> {
     try {
-      const output = execFileSync('gh', ['auth', 'status'], {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-      return this.parseAuthStatus(output);
+      const { stdout } = await execFileAsync('gh', ['auth', 'status'], { encoding: 'utf8' });
+      return this.parseAuthStatus(stdout);
     } catch (err: any) {
       const combined = [
-        err?.stdout ? err.stdout.toString() : '',
-        err?.stderr ? err.stderr.toString() : '',
+        err?.stdout ? String(err.stdout) : '',
+        err?.stderr ? String(err.stderr) : '',
         err?.message || ''
       ].join('\n');
       return this.parseAuthStatus(combined);
