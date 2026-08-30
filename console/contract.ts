@@ -228,6 +228,20 @@ export interface CompleteTaskResult {
   completion_note: string | null;
 }
 
+export interface RekickTaskRequest {
+  /** Who is re-kicking (attribution; defaults to 'operator'). */
+  rekickedBy?: string;
+}
+
+export interface RekickTaskResult {
+  ok: boolean;
+  task_id: string;
+  /** What was revived: 'plan-cycle-reset' | 'plan-cycle-enqueued' | 'dispatch-reenqueued'. */
+  action: string;
+  /** The job id that is now pending (deterministic plan.cycle id, or the new dispatch uuid). */
+  job_id: string;
+}
+
 // --- Conversational Intake DTOs (task creation front door) ---
 
 /** One turn in the intake conversation, flattened for display. */
@@ -472,12 +486,14 @@ export interface ConsoleEndpointDef {
   description: string;
 }
 
-// Frozen at 33 endpoints (contract_d0_c asserts the count). Reconciliation with
+// Frozen at 34 endpoints (contract_d0_c asserts the count). Reconciliation with
 // the task text: docs/plan-phase8-entry.md (Stream B) said 30 -> 32, but that
 // baseline predates the agent task-filing door (POST /api/tasks/file, merged
 // 67eb81f) which took the base 30 -> 31. Stream B adds exactly two — GET
 // /api/settings/github and POST /api/projects/provision — so the reconciled
-// freeze is 31 -> 33, not 32. The stale task number is intentionally superseded.
+// freeze was 31 -> 33. The flow-resilience fix pack adds one more —
+// POST /api/tasks/:id/rekick (dead plan.cycle / dispatch recovery door) —
+// 33 -> 34. The stale task number is intentionally superseded.
 export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
   {
     method: 'GET',
@@ -586,6 +602,12 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     path: '/api/tasks/:id/reopen',
     auth: 'token',
     description: 'Clear a task\'s completed tag and return it to the live list (human-operator door)'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/rekick',
+    auth: 'token',
+    description: 'Re-kick a dead plan.cycle (queued task) or dead junior.dispatch (claimed task) — operator recovery door'
   },
   {
     method: 'POST',

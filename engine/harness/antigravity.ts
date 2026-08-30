@@ -168,6 +168,16 @@ export function findJuniorBinary(cfg: JuniorConfig): string {
 }
 
 /**
+ * How long `ensureJuniorRunning` waits for the debug PORT after launching a
+ * cold junior. The old 30s default lost the race live (2026-08-29, task
+ * 3756ec6e): under PC load a cold-launched Antigravity took >30s just to open
+ * its CDP port — the plan cycle died with "no CDP endpoint within timeout" on
+ * a launch that was healthy, merely slow. 90s covers the observed cold start
+ * with the same margin MAIN_WINDOW_ATTACH_MS gives the attach phase.
+ */
+export const JUNIOR_PORT_WAIT_MS = 90000;
+
+/**
  * "See if this junior is open, or open it" — the per-junior analogue of
  * ensureAntigravityRunning. Reuses a live CDP endpoint on the junior's port,
  * else launches its binary with the debug port and waits for CDP.
@@ -184,7 +194,7 @@ export async function ensureJuniorRunning(
     stdio: 'ignore'
   });
   child.unref();
-  const deadline = Date.now() + (opts.timeoutMs ?? 30000);
+  const deadline = Date.now() + (opts.timeoutMs ?? JUNIOR_PORT_WAIT_MS);
   while (Date.now() < deadline) {
     if (await isDebugPortLive(port)) return { launched: true, port, child };
     await new Promise(r => setTimeout(r, 500));

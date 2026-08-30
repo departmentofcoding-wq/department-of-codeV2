@@ -24,9 +24,11 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
     // 30 -> 32, but that baseline predates the agent task-filing door (POST
     // /api/tasks/file, merged 67eb81f) which moved the base 30 -> 31. Stream B adds
     // exactly two endpoints — GET /api/settings/github and POST /api/projects/provision
-    // (both asserted below) — so the reconciled freeze is 31 -> 33, NOT 32. The stale
-    // task number is superseded here on purpose rather than silently frozen.
-    expect(ENDPOINTS.length).toBe(33);
+    // (both asserted below) — so the reconciled freeze was 31 -> 33, NOT 32. The
+    // flow-resilience fix pack adds one more — POST /api/tasks/:id/rekick (dead
+    // plan.cycle / dispatch recovery door) — 33 -> 34. Stale task numbers are
+    // superseded here on purpose rather than silently frozen.
+    expect(ENDPOINTS.length).toBe(34);
 
     const paths = ENDPOINTS.map(e => `${e.method} ${e.path}`);
     expect(paths).toContain('GET /api/health');
@@ -39,6 +41,7 @@ describe('Milestone D0-C — Console Contract Freeze', () => {
     expect(paths).toContain('POST /api/tasks/:id/unarchive');
     expect(paths).toContain('POST /api/tasks/:id/complete');
     expect(paths).toContain('POST /api/tasks/:id/reopen');
+    expect(paths).toContain('POST /api/tasks/:id/rekick');
     expect(paths).toContain('GET /api/findings');
     expect(paths).toContain('GET /api/journal');
     expect(paths).toContain('GET /api/workers');

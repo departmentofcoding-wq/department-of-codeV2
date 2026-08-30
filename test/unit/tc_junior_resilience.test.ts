@@ -8,12 +8,30 @@ import {
   isJuniorWedgedWindowError,
   JUNIORS,
   juniorProcessImageName,
+  JUNIOR_PORT_WAIT_MS,
   killJuniorProcesses,
+  MAIN_WINDOW_ATTACH_MS,
   recoverJuniorRunning,
   resolveJunior
 } from '../../engine/harness/antigravity.ts';
 import { runJuniorCommandWithWedgedRecovery } from '../../engine/harness/dispatch-job.ts';
 import type { AntigravityDriver, AntigravityRunResult } from '../../engine/harness/antigravity-seam.ts';
+
+/**
+ * Cold-start budgets (the 2026-08-29 scar, task 3756ec6e): a healthy-but-slow
+ * cold launch must outlive both waits — the port wait and the attach wait.
+ * These pins exist so nobody quietly re-tightens them to the values that
+ * stranded a real task.
+ */
+describe('cold-start budgets', () => {
+  it('the port wait (JUNIOR_PORT_WAIT_MS) exceeds the observed >30s cold port-open under load', () => {
+    expect(JUNIOR_PORT_WAIT_MS).toBeGreaterThanOrEqual(90000);
+  });
+
+  it('the attach wait (MAIN_WINDOW_ATTACH_MS) exceeds the observed 30-40s cold workbench render', () => {
+    expect(MAIN_WINDOW_ATTACH_MS).toBeGreaterThanOrEqual(60000);
+  });
+});
 
 /**
  * WS2 — recovering a downed/WEDGED junior. The real failure (dead job 8c6f373e)
