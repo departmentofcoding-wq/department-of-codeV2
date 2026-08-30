@@ -1,7 +1,7 @@
 import { getIdeDriver } from '../contract/ide-driver-seam.ts';
 import type { AttributionTuple, BureauDispatchRow, JobContext, JobDefinition } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
-import { acquireLease, releaseLease } from './lease-manager.ts';
+import { acquireLease, releaseLease, startWindowLeaseHeartbeat } from './lease-manager.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
@@ -85,7 +85,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
     throw new Error(`Dispatch '${payload.dispatchId}' not found in bureau_dispatches`);
   }
 
-  const windowTarget = payload.windowTarget || 'window-default';
+  const windowTarget = payload.windowTarget || (payload.junior ? `window-${payload.junior}` : 'window-default');
   const nowIso = new Date().toISOString();
 
   // Transactionally update dispatch status to running and increment attempts
@@ -119,6 +119,46 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
 
   // Acquire window lease
   const lease = acquireLease(ctx.db, windowTarget, dispatch.id, attribution);
+
+  const internalAbortController = new AbortController();
+  const combinedSignal = ctx.signal
+    ? AbortSignal.any([ctx.signal, internalAbortController.signal])
+    : internalAbortController.signal;
+
+  const heartbeatHandle = startWindowLeaseHeartbeat(ctx.db, lease.id, {
+    onError: (err) => {
+      journal(ctx.db, {
+        kind: 'guardrail',
+        attribution,
+        taskId: dispatch.task_id,
+        workUuid: dispatch.work_uuid,
+        jobId: ctx.job.id,
+        detail: {
+          reason: 'window_lease_heartbeat_failed',
+          leaseId: lease.id,
+          windowTarget,
+          dispatchId: dispatch.id,
+          error: err.message
+        }
+      });
+      internalAbortController.abort(err);
+    }
+  });
+
+  journal(ctx.db, {
+    kind: 'system',
+    attribution,
+    taskId: dispatch.task_id,
+    workUuid: dispatch.work_uuid,
+    jobId: ctx.job.id,
+    detail: {
+      action: 'window_lease_heartbeat_started',
+      leaseId: lease.id,
+      windowTarget,
+      dispatchId: dispatch.id,
+      intervalMs: heartbeatHandle.intervalMs
+    }
+  });
 
   try {
     if (payload.prompt) {
@@ -176,7 +216,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           folder: workFolder,
           requireFolder,
           freshConversation: payload.freshConversation,
-          signal: ctx.signal
+          signal: combinedSignal
         }
       );
 
@@ -249,7 +289,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       let done = false;
 
       while (!done && step < maxSteps) {
-        if (ctx.signal.aborted) {
+        if (combinedSignal.aborted) {
           throw new Error(`Dispatch '${dispatch.id}' aborted.`);
         }
         step++;
@@ -276,7 +316,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
               taskId: dispatch.task_id,
               workUuid: dispatch.work_uuid,
               jobId: ctx.job.id,
-              signal: ctx.signal
+              signal: combinedSignal
             }
           );
           responseText = llmRes.text ?? '';
@@ -376,6 +416,21 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
     });
     throw err;
   } finally {
+    const totalHeartbeats = heartbeatHandle.stop();
+    journal(ctx.db, {
+      kind: 'system',
+      attribution,
+      taskId: dispatch.task_id,
+      workUuid: dispatch.work_uuid,
+      jobId: ctx.job.id,
+      detail: {
+        action: 'window_lease_heartbeat_stopped',
+        leaseId: lease.id,
+        windowTarget,
+        dispatchId: dispatch.id,
+        heartbeats: totalHeartbeats
+      }
+    });
     // Always release lease on exit (clean or error)
     releaseLease(ctx.db, lease.id);
   }
