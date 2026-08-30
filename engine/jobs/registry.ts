@@ -431,7 +431,20 @@ defineJob(
   async (ctx) => {
     const payload = projectProvisionSchema.parse(ctx.payload ?? {});
     const { provisionProject } = await import('../projects/provision.ts');
-    await provisionProject(ctx.db, payload as any);
+    const { ProvisionError } = await import('../projects/repo_provider.ts');
+    const { NonRetryableError } = await import('./jobs.ts');
+    try {
+      await provisionProject(ctx.db, payload as any);
+    } catch (err: any) {
+      // Every ProvisionError is a deterministic guardrail refusal (invalid
+      // slug, reserved name, visibility rule, collision) — retrying re-refuses
+      // the same input. Dead on first failure (the 2026-08-29 'trading
+      // analysis' scar burned 3 attempts on the same invalid slug).
+      if (err instanceof ProvisionError) {
+        throw new NonRetryableError(`${err.message} [${err.code}]`);
+      }
+      throw err;
+    }
   },
   { maxAttempts: 3, timeoutMs: 60000 }
 );

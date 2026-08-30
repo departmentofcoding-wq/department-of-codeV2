@@ -19,6 +19,8 @@ import { fileTask } from '../engine/filing/file_task.ts';
 import { fileAgentTask, AgentFileError, AGENT_IDENTITIES } from '../engine/filing/agent_file.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
 import { listProjects, registerProject } from '../engine/projects/index.ts';
+import { slugifyProjectName } from '../engine/projects/provision.ts';
+import { projectPathWarnings } from '../engine/projects/manager.ts';
 import { getProjectsRoot, getRepoPrefix } from '../engine/projects/config.ts';
 import { getRepoProvider } from '../engine/projects/repo_provider.ts';
 import { projectProvisionJobId } from '../engine/jobs/ids.ts';
@@ -226,6 +228,7 @@ function toProjectDTO(p: BureauProjectRow): ProjectDTO {
     github_url: p.github_url ? redactOutput(p.github_url) : null,
     provisioned_by: p.provisioned_by ? redactOutput(p.provisioned_by) : null,
     visibility: p.visibility ? redactOutput(p.visibility) : null,
+    warnings: projectPathWarnings(p.path_to_repo),
     created_at: p.created_at,
     updated_at: p.updated_at
   };
@@ -1455,15 +1458,31 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           return;
         }
 
+        // Slugify at the DOOR (the 2026-08-29 'trading analysis' scar: the raw
+        // name was enqueued verbatim — a space in the job id — and the slug
+        // guard fired inside the job, burning 3 attempts into a dead letter).
+        // The job payload carries the slug so the engine guard passes; the
+        // human span records BOTH the raw input and the derived slug.
+        const slug = slugifyProjectName(name);
+        if (!slug) {
+          sendError(
+            res,
+            400,
+            'VALIDATION_ERROR',
+            `Project name '${name}' has no valid slug form (need at least one letter or digit). Try a dashed name like 'trading-analysis'.`
+          );
+          return;
+        }
+
         const prefix = getRepoPrefix(db);
-        const canonicalName = name.startsWith(prefix) ? name : `${prefix}${name}`;
+        const canonicalName = slug.startsWith(prefix) ? slug : `${prefix}${slug}`;
         const jobId = projectProvisionJobId(canonicalName);
 
         enqueueJobIfAbsent(db, {
           id: jobId,
           kind: 'project.provision',
           payload: {
-            name,
+            name: slug,
             description: body.description?.trim() || null,
             visibility: body.visibility ?? 'private',
             attribution: CONSOLE_HUMAN_ATTR
@@ -1477,6 +1496,7 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           detail: {
             action: 'project_provision_enqueued',
             name,
+            slug,
             canonicalName,
             jobId,
             visibility: body.visibility ?? 'private'

@@ -11,6 +11,7 @@ import {
   failJob,
   heartbeatJob,
   reapExpiredJobs,
+  NonRetryableError,
   FOREMAN_ATTRIBUTION
 } from '../engine/jobs/jobs.ts';
 import { reconcileQueuedTasks } from '../engine/flow/reconcile.ts';
@@ -310,11 +311,12 @@ export class Runner {
       log('INFO', 'job_completed', { jobId: job.id });
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      log('WARN', 'job_failed', { jobId: job.id, error: errMsg, attempts: job.attempts + 1 });
+      const nonRetryable = err instanceof NonRetryableError || err?.nonRetryable === true;
+      log('WARN', 'job_failed', { jobId: job.id, error: errMsg, attempts: job.attempts + 1, nonRetryable });
 
       // Calculate exponential backoff: 100 * 2^(attempts)
       const backoffMs = 100 * Math.pow(2, job.attempts);
-      const { terminal } = failJob(this.db, job.id, errMsg, backoffMs);
+      const { terminal } = failJob(this.db, job.id, errMsg, backoffMs, { forceTerminal: nonRetryable });
 
       if (terminal) {
         this.notifier.notifyOperator(job.id, `Terminal failure: ${errMsg}`);

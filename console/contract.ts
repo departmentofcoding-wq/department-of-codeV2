@@ -408,6 +408,8 @@ export interface ProjectDTO {
   github_url?: string | null;
   provisioned_by?: string | null;
   visibility?: string | null;
+  /** Path-hazard warnings (e.g. spaces in the repo path) — advisory, never blocking. */
+  warnings?: string[];
   created_at: string;
   updated_at: string;
 }

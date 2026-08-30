@@ -106,7 +106,8 @@ export function registerProject(
         description: row.description,
         githubUrl: row.github_url,
         provisionedBy: row.provisioned_by,
-        visibility: row.visibility
+        visibility: row.visibility,
+        warnings: projectPathWarnings(resolvedPath)
       }
     });
 
@@ -117,6 +118,24 @@ export function registerProject(
     }
     throw err;
   }
+}
+
+/**
+ * Hazards of a repo path, as the registration UI/span should surface them.
+ * Spaces are the observed one (2026-08-29: the workaround registration created
+ * 'D:\projects\Trading data analysis'): every composed-command seam downstream
+ * — verify_cmd execution, worktree/git operations in that repo — has to quote
+ * them correctly forever. Warned, not refused: the department's own repo path
+ * ('D:\Dept of code v2') has spaces and works, so refusal would be overreach.
+ */
+export function projectPathWarnings(resolvedPath: string): string[] {
+  const warnings: string[] = [];
+  if (/\s/.test(resolvedPath)) {
+    warnings.push(
+      `Repo path contains spaces ('${resolvedPath}'). Prefer a dashed path (e.g. 'trading-data-analysis'); space-bearing paths must be quoted correctly by every shell seam that touches this project.`
+    );
+  }
+  return warnings;
 }
 
 export function getProject(db: DbConnection, idOrName: string): BureauProjectRow | null {

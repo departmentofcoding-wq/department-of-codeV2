@@ -12,6 +12,27 @@ import { projectProvisionJobId } from '../jobs/ids.ts';
 const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 const SLUG_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/**
+ * Normalize a human-typed project name into the slug the provisioner accepts.
+ * The 2026-08-29 scar: the console enqueued 'dept-trading analysis' verbatim
+ * (a space in the job id) and the slug guard fired INSIDE the job, burning
+ * three attempts into a dead letter. Doors that take human input slugify
+ * BEFORE enqueuing; this is the one derivation so no door drifts from the
+ * guard's own grammar.
+ */
+export function slugifyProjectName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[._-]+/, '')
+    .replace(/[._-]+$/, '')
+    .slice(0, 64)
+    .replace(/[._-]+$/, '');
+}
+
 function resolveJobId(db: DbConnection, canonicalName?: string, explicitJobId?: string): string | undefined {
   if (explicitJobId) {
     const row = db.get<{ id: string }>('SELECT id FROM bureau_jobs WHERE id = ?', explicitJobId);
