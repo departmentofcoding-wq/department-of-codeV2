@@ -6,8 +6,7 @@ import type { BackupProvider } from '../contract/backup-seam.ts';
  * Commands run ASYNC deliberately: `git push` is network-bound and takes
  * seconds. The synchronous version froze the runner's event loop past the
  * job-lease window, so a co-running runner reaped + re-claimed the backup job
- * mid-push (duplicate execution; incident record in GhCliPrProvider). While
- * the loop is free the runner's heartbeat keeps the lease alive.
+ * mid-push (duplicate execution; incident record in GhCliPrProvider).
  */
 const execFileAsync = promisify(execFile);
 
@@ -27,7 +26,13 @@ export class ExecGitBackupProvider implements BackupProvider {
       return stdout.trim();
     } catch (err: any) {
       const stderr = err?.stderr ? String(err.stderr) : err.message;
-      throw new Error(`Git backup command '${cmd} ${args.join(' ')}' failed: ${stderr}`);
+      const wrapped: Error & { code?: number | string } = new Error(
+        `Git backup command '${cmd} ${args.join(' ')}' failed: ${stderr}`
+      );
+      // Preserve the subprocess exit code — callers distinguish "negative
+      // answer" (e.g. merge-base --is-ancestor exits 1) from real failure.
+      wrapped.code = err?.code;
+      throw wrapped;
     }
   }
 
@@ -47,5 +52,25 @@ export class ExecGitBackupProvider implements BackupProvider {
       throw new Error(`Could not parse remote tip for ${remote}/${branch} from output: '${raw}'`);
     }
     return firstToken;
+  }
+
+  public async fetch(remote: string = 'origin'): Promise<void> {
+    await this.runCommand('git', ['fetch', remote]);
+  }
+
+  public async remoteContains(remote: string, branch: string, commit: string): Promise<boolean> {
+    try {
+      // merge-base --is-ancestor is exit-code proof: 0 = contained, 1 = not.
+      await this.runCommand('git', ['merge-base', '--is-ancestor', commit, `${remote}/${branch}`]);
+      return true;
+    } catch (err: any) {
+      // Exit 1 is the NEGATIVE answer, not a failure.
+      if (err?.code === 1) return false;
+      throw err;
+    }
+  }
+
+  public async fastForwardLocal(remote: string, branch: string): Promise<void> {
+    await this.runCommand('git', ['merge', '--ff-only', `${remote}/${branch}`]);
   }
 }
