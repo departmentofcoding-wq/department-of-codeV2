@@ -117,10 +117,9 @@ describe('Unit: Lease Manager Heartbeat (Phase 8 P1.2)', () => {
 
   it('T3: Ceiling enforcement: When bureau_meta lease heartbeats ceiling is exceeded, heartbeat throws and triggers onError', async () => {
     db.run(
-      `INSERT OR REPLACE INTO bureau_meta (key, value, updated_at) VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO bureau_meta (key, value) VALUES (?, ?)`,
       HARNESS_META_KEYS.LEASE_HEARTBEATS_CEILING,
-      '2',
-      new Date().toISOString()
+      '2'
     );
 
     const attr: AttributionTuple = { actor_role: 'junior-engineer', ...DETERMINISTIC_ATTRIBUTION };

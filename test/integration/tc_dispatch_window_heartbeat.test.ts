@@ -51,10 +51,9 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
 
   it('T4: Long dispatch renewal: lease is heartbeated during long run and not reaped', async () => {
     db.run(
-      `INSERT OR REPLACE INTO bureau_meta (key, value, updated_at) VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO bureau_meta (key, value) VALUES (?, ?)`,
       HARNESS_META_KEYS.LEASE_MS,
-      '3000',
-      new Date().toISOString()
+      '3000'
     );
 
     let runFinished = false;
@@ -131,10 +130,9 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
 
   it('T5: Per-junior concurrency & exclusivity: distinct juniors run concurrently without conflict; same junior conflicts', async () => {
     db.run(
-      `INSERT OR REPLACE INTO bureau_meta (key, value, updated_at) VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO bureau_meta (key, value) VALUES (?, ?)`,
       HARNESS_META_KEYS.LEASE_MS,
-      '3000',
-      new Date().toISOString()
+      '3000'
     );
 
     const fakeDriver: AntigravityDriver = {
@@ -240,10 +238,9 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
 
   it('T7: Fail-closed lease loss during dispatch: manual reap triggers error callback and aborts dispatch', async () => {
     db.run(
-      `INSERT OR REPLACE INTO bureau_meta (key, value, updated_at) VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO bureau_meta (key, value) VALUES (?, ?)`,
       HARNESS_META_KEYS.LEASE_MS,
-      '3000',
-      new Date().toISOString()
+      '3000'
     );
 
     const fakeDriver: AntigravityDriver = {
@@ -265,6 +262,7 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
     };
 
     const dispatchPromise = handleJuniorDispatch(ctx);
+    const rejectionAssertion = expect(dispatchPromise).rejects.toThrow();
 
     // Manually mark lease as reaped in the DB behind dispatch's back
     db.run(
@@ -275,7 +273,7 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
     await vi.advanceTimersByTimeAsync(1000);
 
     // The dispatch should reject due to abort
-    await expect(dispatchPromise).rejects.toThrow();
+    await rejectionAssertion;
 
     // Dispatch status should be failed in journal
     const failedSpan = db.get<BureauJournalRow>(
