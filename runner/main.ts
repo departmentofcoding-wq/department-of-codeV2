@@ -21,10 +21,16 @@ import { notifyOperator as engineNotifyOperator } from '../engine/state/notifica
 
 // 1. Zod Environment Variable Config. BUREAU_DB_PATH has no default here on
 // purpose: the engine's boot door owns the one default, stated once.
+// BUREAU_LEASE_MS default is 30s (was 5s): the heartbeat renews every 1s, so a
+// live job's lease should never come near expiry — but any handler that blocks
+// the event loop longer than the lease (a sync subprocess, a long GC pause)
+// gets reaped and DUPLICATED by a co-running runner before this stream made
+// every provider async. 30s is headroom for the remaining sync islands, not a
+// target; the reaper still recovers a genuinely dead runner within 30s + poll.
 export const runnerConfigSchema = z.object({
   BUREAU_DB_PATH: z.string().optional(),
   BUREAU_POLL_MS: z.coerce.number().default(100),
-  BUREAU_LEASE_MS: z.coerce.number().default(5000),
+  BUREAU_LEASE_MS: z.coerce.number().default(30000),
   BUREAU_HEARTBEAT_MS: z.coerce.number().default(1000)
 });
 
