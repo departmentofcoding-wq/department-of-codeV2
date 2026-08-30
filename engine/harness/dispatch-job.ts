@@ -7,7 +7,7 @@ import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 import { getAntigravityDriver, type AntigravityDriver, type AntigravityRunOptions, type AntigravityRunResult } from './antigravity-seam.ts';
-import { isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
+import { findMainWindowWs, isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 
@@ -56,7 +56,10 @@ export async function runJuniorCommandWithWedgedRecovery(
   driver: AntigravityDriver,
   prompt: string,
   opts: AntigravityRunOptions,
-  recover: (cfg: JuniorConfig) => Promise<unknown> = cfg => recoverJuniorRunning(cfg)
+  recover: (cfg: JuniorConfig) => Promise<unknown> = cfg =>
+    // Wait for the relaunched workbench to be attachable (not just the port) before
+    // the retry, so the re-attempt doesn't race the cold render and burn the attempt.
+    recoverJuniorRunning(cfg, { deps: { findWindow: findMainWindowWs } })
 ): Promise<AntigravityRunResult> {
   try {
     return await driver.runCommand(prompt, opts);

@@ -22,6 +22,16 @@ import { killProcessesByImageName, processImageName } from './process-control.ts
  */
 
 export const ANTIGRAVITY_DEFAULT_PORT = 9333;
+/**
+ * How long to wait for the MAIN workbench window to become attachable after its
+ * CDP debug port starts answering. A cold-launched Antigravity (a VS Code fork)
+ * answers `/json/version` within a second or two but does not expose an
+ * attachable workbench `page` target on `/json/list` for another 30-40s. The old
+ * fixed 20×1s (=20s) loop expired inside that gap on a cold start and reported
+ * the instance as wedged — killing a healthy-but-slow IDE and re-racing its even
+ * slower relaunch. 60s comfortably covers the observed cold-start render.
+ */
+export const MAIN_WINDOW_ATTACH_MS = 60000;
 /** aria-label / placeholder of the agent chat input (calibrated against 2.8.1). */
 export const ANTIGRAVITY_INPUT_LABEL = 'Message input';
 /**
@@ -158,6 +168,16 @@ export function findJuniorBinary(cfg: JuniorConfig): string {
 }
 
 /**
+ * How long `ensureJuniorRunning` waits for the debug PORT after launching a
+ * cold junior. The old 30s default lost the race live (2026-08-29, task
+ * 3756ec6e): under PC load a cold-launched Antigravity took >30s just to open
+ * its CDP port — the plan cycle died with "no CDP endpoint within timeout" on
+ * a launch that was healthy, merely slow. 90s covers the observed cold start
+ * with the same margin MAIN_WINDOW_ATTACH_MS gives the attach phase.
+ */
+export const JUNIOR_PORT_WAIT_MS = 90000;
+
+/**
  * "See if this junior is open, or open it" — the per-junior analogue of
  * ensureAntigravityRunning. Reuses a live CDP endpoint on the junior's port,
  * else launches its binary with the debug port and waits for CDP.
@@ -174,7 +194,7 @@ export async function ensureJuniorRunning(
     stdio: 'ignore'
   });
   child.unref();
-  const deadline = Date.now() + (opts.timeoutMs ?? 30000);
+  const deadline = Date.now() + (opts.timeoutMs ?? JUNIOR_PORT_WAIT_MS);
   while (Date.now() < deadline) {
     if (await isDebugPortLive(port)) return { launched: true, port, child };
     await new Promise(r => setTimeout(r, 500));
@@ -206,6 +226,11 @@ export interface JuniorRecoveryDeps {
   killProcesses?: (cfg: JuniorConfig) => Promise<void>;
   spawn?: (binary: string, args: string[]) => child_process.ChildProcess;
   sleep?: (ms: number) => Promise<void>;
+  /** Optional: once the port answers, wait for the MAIN workbench window to
+   *  become attachable before returning. Injected in production with
+   *  `findMainWindowWs`; left undefined in unit tests so recovery stays a pure
+   *  kill+relaunch+port-wait there. Returns the window ws URL, or '' if not up. */
+  findWindow?: (port: number) => Promise<string>;
 }
 
 /**
@@ -220,7 +245,7 @@ export interface JuniorRecoveryDeps {
  */
 export async function recoverJuniorRunning(
   cfg: JuniorConfig,
-  opts: { timeoutMs?: number; deps?: JuniorRecoveryDeps } = {}
+  opts: { timeoutMs?: number; windowTimeoutMs?: number; deps?: JuniorRecoveryDeps } = {}
 ): Promise<EnsureResult> {
   const port = cfg.cdpPort;
   const deps = {
@@ -229,7 +254,8 @@ export async function recoverJuniorRunning(
     spawn:
       opts.deps?.spawn ??
       ((binary: string, args: string[]) => child_process.spawn(binary, args, { detached: true, stdio: 'ignore' })),
-    sleep: opts.deps?.sleep ?? (async (ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+    sleep: opts.deps?.sleep ?? (async (ms: number) => new Promise<void>(r => setTimeout(r, ms))),
+    findWindow: opts.deps?.findWindow
   };
   // Unconditional: a wedged instance has a LIVE port, so reuse is exactly wrong.
   await deps.killProcesses(cfg);
@@ -238,14 +264,40 @@ export async function recoverJuniorRunning(
   child.unref?.();
   const timeoutMs = opts.timeoutMs ?? 30000;
   const deadline = Date.now() + timeoutMs;
+  let portLive = false;
   while (Date.now() < deadline) {
-    if (await deps.isPortLive(port)) return { launched: true, port, child };
+    if (await deps.isPortLive(port)) {
+      portLive = true;
+      break;
+    }
     await deps.sleep(500);
   }
-  throw new HarnessError(
-    `${cfg.label}: forced relaunch did not bring up a CDP endpoint on port ${port} within ` +
-      `${Math.round(timeoutMs / 1000)}s — the installation may be broken or the port blocked.`
-  );
+  if (!portLive) {
+    throw new HarnessError(
+      `${cfg.label}: forced relaunch did not bring up a CDP endpoint on port ${port} within ` +
+        `${Math.round(timeoutMs / 1000)}s — the installation may be broken or the port blocked.`
+    );
+  }
+  // The port answers within a second or two, but a freshly relaunched workbench
+  // (a VS Code fork) is not attachable for another 20-40s. When a window finder
+  // is provided, wait for the MAIN workbench to actually appear before returning,
+  // so the caller's immediate re-attempt attaches instead of racing the cold
+  // render — the exact loop that burned both attempts on the wedge this recovery
+  // exists to cure. Best-effort: if the window never renders inside the budget we
+  // still return, and the caller's own (now generous) attach loop gets the last word.
+  if (deps.findWindow) {
+    const windowDeadline = Date.now() + (opts.windowTimeoutMs ?? MAIN_WINDOW_ATTACH_MS);
+    while (Date.now() < windowDeadline) {
+      try {
+        const ws = await deps.findWindow(port);
+        if (ws) break;
+      } catch {
+        // workbench not attachable yet — keep polling until the budget runs out
+      }
+      await deps.sleep(1000);
+    }
+  }
+  return { launched: true, port, child };
 }
 
 /**

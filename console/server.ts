@@ -17,6 +17,7 @@ import { createSession, appendIntakeMessage, getSession, getSessionWithMessages 
 import { confirmVerify } from '../engine/intake/confirm.ts';
 import { fileTask } from '../engine/filing/file_task.ts';
 import { fileAgentTask, AgentFileError, AGENT_IDENTITIES } from '../engine/filing/agent_file.ts';
+import { rekickTaskFlow } from '../engine/flow/rekick.ts';
 import { saveGoogleKeys, googleKeyStatus } from '../engine/llm/google_keys.ts';
 import { listProjects, registerProject } from '../engine/projects/index.ts';
 import { getProjectsRoot, getRepoPrefix } from '../engine/projects/config.ts';
@@ -44,6 +45,8 @@ import {
   type ArchiveTaskResult,
   type CompleteTaskRequest,
   type CompleteTaskResult,
+  type RekickTaskRequest,
+  type RekickTaskResult,
   type AssetDTO,
   type CreateAssetRequest,
   type UpdateAssetRequest,
@@ -866,6 +869,49 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             detail: { action: 'unarchive_refused', taskId, reason: err.message }
           });
           sendError(res, 400, 'UNARCHIVE_REFUSED', err.message);
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/rekick')) {
+        const taskId = pathname.split('/')[3];
+        if (!taskId) {
+          sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
+          return;
+        }
+
+        let body: RekickTaskRequest = {};
+        try {
+          body = (await parseJsonBody(req)) as RekickTaskRequest;
+        } catch (err: any) {
+          if (err.message === 'PAYLOAD_TOO_LARGE') {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'JSON payload exceeds 1MB cap');
+            return;
+          }
+          sendError(res, 400, 'BAD_REQUEST', 'Invalid JSON body');
+          return;
+        }
+
+        const attribution: AttributionTuple = { ...CONSOLE_HUMAN_ATTR, account: body.rekickedBy || 'operator' };
+        const result = rekickTaskFlow(db, taskId, attribution);
+        if (result.ok) {
+          const payload: RekickTaskResult = {
+            ok: true,
+            task_id: taskId,
+            action: result.action,
+            job_id: result.jobId
+          };
+          sendJson(res, 200, payload);
+        } else {
+          // Refusals are guardrails too: a live target job or a wrong task
+          // state is the double-prompt guard doing its job. No taskId on the
+          // span when the task itself is unknown (journal FK).
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            detail: { action: 'rekick_refused', taskId, reason: result.reason }
+          });
+          sendError(res, 400, 'REKICK_REFUSED', result.reason);
         }
         return;
       }

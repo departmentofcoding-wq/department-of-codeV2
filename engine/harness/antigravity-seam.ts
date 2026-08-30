@@ -2,6 +2,7 @@ import { ensureCompleted } from './agent-wait.ts';
 import {
   ANTIGRAVITY_DEFAULT_PORT,
   ANTIGRAVITY_INPUT_LABEL,
+  MAIN_WINDOW_ATTACH_MS,
   AntigravitySession,
   ensureAntigravityRunning,
   ensureJuniorRunning,
@@ -92,15 +93,22 @@ class RealAntigravityDriver implements AntigravityDriver {
       wsUrl = await ensureFolderWindowWs(cfg, opts.folder, port, { signal: opts.signal });
       openedFolderWindow = true;
     } else {
-      // The workbench window can lag the CDP endpoint by a few seconds.
-      for (let i = 0; i < 20; i++) {
+      // The workbench window can lag the CDP endpoint SUBSTANTIALLY on a cold
+      // launch — this Antigravity build (a VS Code fork) answers its debug port
+      // within a second or two but does not expose an attachable workbench target
+      // for another 30-40s. Poll on a generous time budget (not a fixed 20
+      // iterations) so a slow cold start attaches instead of being misread as a
+      // wedge. Honors the signal (job timeout / shutdown) every poll.
+      const attachDeadline = Date.now() + MAIN_WINDOW_ATTACH_MS;
+      while (Date.now() < attachDeadline) {
         if (opts.signal?.aborted) throw new HarnessError(`${cfg.label} dispatch aborted before attach`);
         try {
           wsUrl = await findMainWindowWs(port);
-          break;
+          if (wsUrl) break;
         } catch {
-          await new Promise(r => setTimeout(r, 1000));
+          // workbench not up yet — keep polling until the budget runs out
         }
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
     if (!wsUrl) throw new Error(`${cfg.label} workbench window did not become available in time.`);

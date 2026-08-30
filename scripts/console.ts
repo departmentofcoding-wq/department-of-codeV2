@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
+import net from 'node:net';
 import {
   CONSOLE_BIND_HOST,
   CONSOLE_DEFAULT_PORT,
@@ -72,6 +73,133 @@ export function openBrowser(url: string): Promise<void> {
   });
 }
 
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Probe whether a TCP port is bindable on the given host.
+ * @param {number} port
+ * @param {string} host
+ * @returns {Promise<boolean>}
+ */
+export function isPortFree(port: number, host: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const tester = net
+      .createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => tester.close(() => resolve(true)))
+      .listen(port, host);
+  });
+}
+
+/**
+ * Find PIDs currently LISTENING on a TCP port. Windows parses `netstat -ano`;
+ * POSIX uses `lsof`. Returns [] if none found or the probe tool is unavailable.
+ * @param {number} port
+ * @returns {Promise<number[]>}
+ */
+export function findPidsOnPort(port: number): Promise<number[]> {
+  return new Promise(resolve => {
+    if (process.platform === 'win32') {
+      exec('netstat -ano -p tcp', { windowsHide: true }, (err, stdout) => {
+        if (err || !stdout) return resolve([]);
+        const pids = new Set<number>();
+        for (const line of stdout.split(/\r?\n/)) {
+          if (!/LISTENING/i.test(line)) continue;
+          const m = line.match(/^\s*TCP\s+\S+?:(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
+          if (m && Number(m[1]) === port) pids.add(Number(m[2]));
+        }
+        resolve([...pids]);
+      });
+    } else {
+      exec(`lsof -ti tcp:${port} -sTCP:LISTEN`, (err, stdout) => {
+        if (err || !stdout) return resolve([]);
+        resolve(
+          stdout
+            .split(/\s+/)
+            .map(s => Number(s))
+            .filter(n => Number.isInteger(n) && n > 0)
+        );
+      });
+    }
+  });
+}
+
+/**
+ * Best-effort image name for a PID, used to avoid terminating an unrelated
+ * process that happens to hold the port. Returns '' when it cannot be resolved.
+ * @param {number} pid
+ * @returns {Promise<string>}
+ */
+export function processImageName(pid: number): Promise<string> {
+  return new Promise(resolve => {
+    if (process.platform === 'win32') {
+      execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true }, (err, stdout) => {
+        if (err || !stdout) return resolve('');
+        const m = stdout.match(/^"([^"]+)"/);
+        resolve(m ? m[1] : '');
+      });
+    } else {
+      execFile('ps', ['-p', String(pid), '-o', 'comm='], (err, stdout) => {
+        resolve(err || !stdout ? '' : stdout.trim());
+      });
+    }
+  });
+}
+
+/**
+ * Terminate a single PID. On Windows uses `taskkill /F` WITHOUT `/T`, so the
+ * console's child processes (spawned junior/senior/claude workers) are left
+ * running — only the stale console itself is reclaimed. On POSIX sends SIGTERM
+ * so the previous console's graceful shutdown (runner.stop + close) can run.
+ * @param {number} pid
+ */
+export function killPid(pid: number): Promise<void> {
+  return new Promise(resolve => {
+    if (process.platform === 'win32') {
+      execFile('taskkill', ['/PID', String(pid), '/F'], { windowsHide: true }, () => resolve());
+    } else {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      resolve();
+    }
+  });
+}
+
+/**
+ * Ensure the console port is bindable by reclaiming it from a previously
+ * running console instance. This makes every launch a clean restart: the old
+ * console process is stopped and this one takes over. In-flight department work
+ * survives — the task/job state lives in the DB, the workers run in their own
+ * processes, and the fresh console's Runner + reconciler resume the flow.
+ * @param {number} port
+ * @param {string} host
+ */
+export async function reclaimPort(port: number, host: string): Promise<void> {
+  const pids = await findPidsOnPort(port);
+  const targets = pids.filter(pid => pid !== process.pid);
+  if (targets.length === 0) return; // Port free, or nothing we can identify to reclaim.
+
+  for (const pid of targets) {
+    const name = await processImageName(pid);
+    if (name && !/node/i.test(name)) {
+      console.warn(`[CONSOLE] Port ${port} is held by "${name}" (PID ${pid}), not a console — leaving it alone.`);
+      continue;
+    }
+    console.log(`[CONSOLE] Reclaiming port ${port} from previous console (PID ${pid})...`);
+    await killPid(pid);
+  }
+
+  // Wait for the OS to release the socket (up to ~6s) before we bind.
+  for (let i = 0; i < 30; i++) {
+    if (await isPortFree(port, host)) return;
+    await delay(200);
+  }
+  console.warn(`[CONSOLE] Port ${port} still busy after reclaim attempt — bind may fail.`);
+}
+
 /**
  * Main launcher entry point.
  * @param {string[]} [cliArgs=process.argv.slice(2)]
@@ -91,6 +219,13 @@ export async function main(
     // process.env before opening the DB, so the roster seed sees them.
     const { loadGoogleKeysFromDisk } = await import('../engine/llm/google_keys.ts');
     loadGoogleKeysFromDisk();
+
+    // Reclaim the port from any previously running console so a fresh launch is
+    // a clean restart instead of an EADDRINUSE crash (which closed the window
+    // instantly on double-click). Only the stale console process is stopped —
+    // in-flight workers and DB state survive and the new Runner resumes them.
+    await reclaimPort(port, CONSOLE_BIND_HOST);
+
     const db = openDbConnection(process.env.BUREAU_DB_PATH);
     const handle = await createConsoleServer({ port, token, db });
 
