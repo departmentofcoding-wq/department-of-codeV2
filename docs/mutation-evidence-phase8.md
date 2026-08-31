@@ -216,3 +216,50 @@ captured verbatim from `npx vitest run`.
 
 Executed 2026-08-31 on branch `wt/n8-pr-gh-project-cwd`; mutation reproduced →
 restored → re-verified, failure output captured verbatim from `npx vitest run`.
+
+---
+
+## M-N1 — verify success delivers on a stale standing approval
+
+- **Guard:** `engine/verify/loop.ts` `handleVerifyOutcome` success path — before
+  transitioning to `needs-review`, if the latest approved `bureau_work_reviews`
+  row has a non-null `reviewed_commit != tip` (a `verify-failure-sendback`
+  checkpoint moved the branch tip past the approved commit), it re-enters senior
+  review instead: transition `verifying -> claimed`, enqueue `work.cycle`
+  (idempotent), journal a `verify_passed_stale_approval` guardrail, notify the
+  operator. `tip` is read in `engine/verify/job.ts` before the finalization txn
+  (best-effort; undefined disables the guard, preserving fake-provider tests).
+- **Mutation:** disabled the guard predicate (`if (approval && … !== opts.tip)`
+  → `if (false && …)`), reproducing the pre-fix behaviour where a passing verify
+  lands at `needs-review` while the standing approval points at the old commit
+  (the b55e2fda scar: `pr.create` then refuses on `reviewed_commit != tip` and
+  the task strands looking delivery-ready).
+- **Catcher:** `test/unit/tc_verify_stale_approval.test.ts`:
+  ```
+  FAIL test/unit/tc_verify_stale_approval.test.ts > N1: … > stale approval …
+  AssertionError: expected 'needs-review' to be 'claimed' // Object.is equality
+  ```
+  (2 of 5 tests fail: the stale-approval re-entry and the idempotency case.)
+
+### M-N1b — self-match: the re-review is never enqueued (senior-caught)
+The claude senior REVISE round caught that the idempotency guard first checked
+`kind IN ('work.cycle','worktree.prepare','verify.run')` — but it runs INSIDE the
+current verify.run job's transaction (before `completeJob`), so that job self-
+matched and `work.cycle` was NEVER enqueued: the task parked at `claimed` with no
+live job, silently stranded. Fixed by narrowing the check to `kind = 'work.cycle'`
+only (the sole thing being enqueued), removing the self-match entirely.
+- **Mutation:** re-widen the check to include `'verify.run'`.
+- **Catcher:** `test/integration/tc_verify_stale_approval_flow.test.ts` (drives the
+  REAL job-table state through `executeVerifyRunJob`):
+  ```
+  FAIL … > lands at claimed and enqueues work.cycle despite the running verify.run job
+  AssertionError: expected +0 to be 1 // Object.is equality  (workCycle.length)
+  ```
+- **Restore:** narrowed check restored; full suite 652/652 across 119 files, `tsc
+  --noEmit` clean. Preserved: t25/t29 exit-sentence loops (no work review → no
+  trigger), t45 delivery tail (reviewed_commit == tip → needs-review).
+
+Executed 2026-08-31 on branch `wt/n1-verify-sendback`; both mutations reproduced →
+restored → re-verified, failure output captured verbatim from `npx vitest run`.
+The self-match bug (M-N1b) was found by the claude senior review, not the initial
+unit test — the reason the delivery flow keeps a senior in the loop.
