@@ -41,7 +41,13 @@ export class GhCliPrProvider implements PrProvider {
     await this.runCommand('git', ['push', 'origin', branch], cwd);
   }
 
-  public async createPr(input: CreatePrInput): Promise<CreatePrResult> {
+  public async createPr(input: CreatePrInput, cwd?: string): Promise<CreatePrResult> {
+    // `gh` infers the target repo from the cwd's git remote. For tasks in a
+    // non-dept project the worktree lives in that project's repo, so `gh pr
+    // create` MUST run there — otherwise it targets the dept repo, where the
+    // `bureau-wt-<taskId>` branch does not exist (the 2026-08-31 N8 scar: every
+    // non-dept delivery died "No commits between main and bureau-wt-…"). Falls
+    // back to `this.repoRoot` (the dept repo) when no worktree path is given.
     const output = await this.runCommand('gh', [
       'pr',
       'create',
@@ -49,7 +55,7 @@ export class GhCliPrProvider implements PrProvider {
       '--base', input.base,
       '--title', input.title,
       '--body', input.body
-    ]);
+    ], cwd);
 
     // gh pr create returns the PR URL (e.g., https://github.com/owner/repo/pull/123)
     const url = output.trim();
@@ -62,7 +68,9 @@ export class GhCliPrProvider implements PrProvider {
     };
   }
 
-  public async mergePr(number: number): Promise<void> {
-    await this.runCommand('gh', ['pr', 'merge', number.toString(), '--merge']);
+  public async mergePr(number: number, cwd?: string): Promise<void> {
+    // Same repo-inference rule as createPr: `gh pr merge <n>` resolves the PR
+    // against the cwd's remote, so a non-dept task must merge in its own repo.
+    await this.runCommand('gh', ['pr', 'merge', number.toString(), '--merge'], cwd);
   }
 }

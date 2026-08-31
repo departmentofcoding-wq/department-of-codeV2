@@ -419,8 +419,8 @@ export interface CreatePrResult {
 
 export interface PrProvider {
   pushBranch(branch: string, cwd?: string): Promise<void>;
-  createPr(input: CreatePrInput): Promise<CreatePrResult>;
-  mergePr(number: number): Promise<void>;
+  createPr(input: CreatePrInput, cwd?: string): Promise<CreatePrResult>;
+  mergePr(number: number, cwd?: string): Promise<void>;
 }
 
 export interface BureauSelectorRow {
