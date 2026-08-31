@@ -189,3 +189,30 @@ Executed 2026-08-27 on branch `bureau-wt-1429a7de-1bb0-4daf-8d4a-84850997eb26` b
 all 5 mutations reproduced → restored → re-verified in one sitting, failure output
 captured verbatim from `npx vitest run`.
 
+
+---
+
+## M-N8 — pr.create/pr.merge run `gh` in the dept repo for non-dept projects
+
+- **Guard:** `engine/delivery/pr_create.ts` threads the task worktree path into
+  `prProvider.createPr(input, wtRow?.path)` (and `pr_merge.ts` into
+  `mergePr(prNumber, wtRow?.path)`), so `gh` runs in the task's own project repo
+  — mirroring what `pushBranch` already did. The `PrProvider` seam gained the
+  optional `cwd` param on both methods; `GhCliPrProvider` forwards it to
+  `runCommand`.
+- **Mutation:** dropped the `cwd` argument from the `createPr` call site
+  (`}, wtRow?.path);` → `});`), reproducing the pre-fix behaviour where `gh pr
+  create` executed in the dept repo's cwd (the 2026-08-31 N8 delivery failure:
+  *"No commits between main and bureau-wt-…"* for every non-dept project).
+- **Catcher:** `test/integration/t43_pr_create.test.ts` → happy path:
+  ```
+  FAIL test/integration/t43_pr_create.test.ts > T43: pr.create Job Integration Test > happy path: …
+  AssertionError: expected undefined to be 'C:\Users\adith\AppData\Local\Temp\bur…' // Object.is equality
+    115|     expect(fakePrProvider.createCwds[0]).toBe(handle.path);
+  ```
+  `t44_pr_merge.test.ts` happy path asserts the symmetric `mergeCwds[0]`.
+- **Restore:** call site restored; full suite 646/646 across 117 files, `tsc
+  --noEmit` clean.
+
+Executed 2026-08-31 on branch `wt/n8-pr-gh-project-cwd`; mutation reproduced →
+restored → re-verified, failure output captured verbatim from `npx vitest run`.

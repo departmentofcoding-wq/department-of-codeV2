@@ -93,8 +93,15 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
 
   // 2. Call PR provider merge operation (async seam call outside DB transaction)
   const prProvider = getPrProvider();
+  // Merge in the task's own worktree/repo so `gh pr merge` resolves the PR
+  // against the right remote (N8) — the worktree still exists here (prune is
+  // strictly post-merge in step 4).
+  const wtRow = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    taskId
+  );
   try {
-    await prProvider.mergePr(prNumber);
+    await prProvider.mergePr(prNumber, wtRow?.path);
   } catch (err: any) {
     const refusalMsg = err?.message || String(err);
     journal(db, {

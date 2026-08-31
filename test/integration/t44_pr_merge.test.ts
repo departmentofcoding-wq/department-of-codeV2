@@ -113,6 +113,11 @@ describe('T44: pr.merge Job Integration Test & Real Prune Path (B-7)', () => {
     // Verify PR merged in fake provider
     expect(fakePrProvider.mergedPrs).toContain(101);
 
+    // N8: `gh pr merge` must run in the task's worktree so it resolves the PR
+    // against the task's own project repo, not the dept repo. Captured at call
+    // time (before the post-merge prune removed the directory).
+    expect(fakePrProvider.mergeCwds[0]).toBe(handle.path);
+
     // Verify task state transitioned to 'done' and merged_at/merged_by populated
     const updatedTask = db.get<any>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
     expect(updatedTask.state).toBe('done');

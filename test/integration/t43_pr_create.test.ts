@@ -92,7 +92,7 @@ describe('T43: pr.create Job Integration Test', () => {
     const taskId = 'task-43-happy';
 
     seedTaskRow(db, taskId, { approved: true, exitCode: 0 });
-    const { tipHash } = await seedTaskWithWorktree(db, taskId);
+    const { handle, tipHash } = await seedTaskWithWorktree(db, taskId);
     seedWorkReview(db, taskId, 'approved', tipHash);
 
     const mockCtx: any = {
@@ -107,6 +107,12 @@ describe('T43: pr.create Job Integration Test', () => {
     expect(fakePrProvider.pushedBranches).toContain(`HEAD:refs/heads/bureau-wt-${taskId}`);
     expect(fakePrProvider.createdPrs).toHaveLength(1);
     expect(fakePrProvider.createdPrs[0].body).toContain(`Reviewed commit: ${tipHash}`);
+
+    // N8: both push AND create must run in the task's worktree so `gh` targets
+    // the task's own project repo, not the dept repo. Before the fix, createPr
+    // received no cwd (undefined) and `gh pr create` ran in the dept repo.
+    expect(fakePrProvider.pushCwds[0]).toBe(handle.path);
+    expect(fakePrProvider.createCwds[0]).toBe(handle.path);
 
     // Verify task table updated with PR URL
     const task = db.get<any>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);

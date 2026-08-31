@@ -115,12 +115,15 @@ export async function handlePrCreate(ctx: JobContext): Promise<void> {
   const title = `feat(${taskId}): ${task.title}`;
   const body = `Automated PR for task ${taskId}\n\nReviewed commit: ${currentTip}\n\nIntent: ${task.intent || 'N/A'}`;
 
+  // Run `gh pr create` in the task's worktree so it targets the task's own
+  // project repo, not the dept repo (N8). `pushBranch` already threads this
+  // path; `createPr` must too, or non-dept deliveries die (see provider note).
   const prResult = await prProvider.createPr({
     branch: branchName,
     title,
     body,
     base: baseBranch
-  });
+  }, wtRow?.path);
 
   // Synchronous DB update for PR URL, journal span, and next job enqueue
   db.execTransaction(() => {
