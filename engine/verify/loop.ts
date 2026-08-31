@@ -77,12 +77,15 @@ export function handleVerifyOutcome(
           reviewed_commit: approval.reviewed_commit,
           tip: opts.tip
         });
-        // Self-heal via the live review path. Idempotent: skip if a review or
-        // verify job for this task is already in flight (mirrors the
-        // work-review cycle's own re-entry guard).
+        // Self-heal via the live review path. Idempotent: only skip if another
+        // re-review (work.cycle) is ALREADY queued for this task. The check is
+        // deliberately narrow — it must NOT include verify.run, because this
+        // runs inside the current verify.run job's own transaction (before
+        // completeJob), so that job is still live and would self-match, suppress
+        // the enqueue, and strand the task at `claimed` with no work.cycle.
         const inFlight = db.get<{ n: number }>(
           `SELECT COUNT(*) n FROM bureau_jobs
-           WHERE task_id = ? AND kind IN ('work.cycle','worktree.prepare','verify.run')
+           WHERE task_id = ? AND kind = 'work.cycle'
            AND state IN ('pending','running')`,
           taskId
         );
