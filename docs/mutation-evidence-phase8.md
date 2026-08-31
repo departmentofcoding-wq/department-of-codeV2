@@ -263,3 +263,33 @@ Executed 2026-08-31 on branch `wt/n1-verify-sendback`; both mutations reproduced
 restored → re-verified, failure output captured verbatim from `npx vitest run`.
 The self-match bug (M-N1b) was found by the claude senior review, not the initial
 unit test — the reason the delivery flow keeps a senior in the loop.
+
+---
+
+## M-N9 — backup.push runs git in the dept repo for non-dept tasks
+
+- **Guard:** `engine/durability/backup_push.ts` resolves the task's project repo
+  (`bureau_projects.path_to_repo` via `task.project_id`) and passes it to
+  `getBackupProvider(repoRoot)`; `engine/contract/backup-seam.ts`
+  `getBackupProvider(repoRoot?)` roots the `ExecGitBackupProvider` there (default:
+  the dept source tree). So a non-dept task's fetch / ff-only / containment-check /
+  push run against THAT project's repo + remote, not the dept repo (N8's class,
+  one layer down — `pr.merge` enqueues a backup.push after every merge).
+- **Mutations (both safe — the test spies `getBackupProvider` and always returns a
+  provider rooted at a TEMP repo, so a regression can never run `git push` against
+  the live dept repo):**
+  - MUT1 (resolution): `getBackupProvider(repoRoot)` → `getBackupProvider()`.
+    Catcher `test/unit/tc_backup_project_repo.test.ts` (resolution): `expected
+    undefined to be 'C:\…\bureau-n9-…\project'` (the resolved repoRoot).
+  - MUT2 (seam): drop `repoRoot ??` so the seam ignores the argument. Catcher
+    (seam): `expected 'D:\Dept of code v2' to be '/some/project/repo'`.
+- **Restore:** both restored; full suite 654/654 across 120 files, `tsc --noEmit`
+  clean.
+
+Executed 2026-08-31 on branch `wt/n9-backup-project-repo`. **Scar:** an earlier
+draft of the integration test used the real no-override path; mutation-testing it
+ran `handleBackupPush`'s fallthrough `git push origin main` against the LIVE dept
+repo (it fast-forwarded origin/main to the local N8+N1 tip early — benign, that
+work was approved and slated to push, but unintended). The test was redesigned to
+spy the seam so no mutation can ever touch the dept repo. Rule: never let a backup
+test reach the real `ExecGitBackupProvider` rooted at the dept repo.

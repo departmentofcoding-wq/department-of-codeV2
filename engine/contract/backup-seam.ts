@@ -34,13 +34,17 @@ export function getBackupProviderOverride(): BackupProvider | null {
   return backupProviderOverride;
 }
 
-export function getBackupProvider(): BackupProvider {
+export function getBackupProvider(repoRoot?: string): BackupProvider {
   if (backupProviderOverride) {
     return backupProviderOverride;
   }
-  // Explicit repo root: the engine source tree's own root (this file lives at
-  // <repoRoot>/engine/contract/), NOT process.cwd() — the runner/console can
-  // be launched from anywhere, and a stray cwd made every git command in the
-  // default backup provider target the wrong repository.
-  return new ExecGitBackupProvider(path.resolve(import.meta.dirname, '../..'));
+  // `repoRoot` targets the git commands at a specific repository. The backup
+  // for a task in a non-dept project must fetch/reconcile/verify against THAT
+  // project's repo, not the dept repo (N9) — the caller resolves it from
+  // `bureau_projects.path_to_repo`. When omitted, default to the engine source
+  // tree's own root (this file lives at <repoRoot>/engine/contract/), NOT
+  // process.cwd() — the runner/console can be launched from anywhere, and a
+  // stray cwd made every git command in the default backup provider target the
+  // wrong repository.
+  return new ExecGitBackupProvider(repoRoot ?? path.resolve(import.meta.dirname, '../..'));
 }

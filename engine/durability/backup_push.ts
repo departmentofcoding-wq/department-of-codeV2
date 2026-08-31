@@ -34,7 +34,29 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
     }
   }
 
-  const provider = getBackupProvider();
+  // N9: a task in a non-dept project must be backed up against THAT project's
+  // repo. Resolve it from the task's project (bureau_projects.path_to_repo) and
+  // root the provider there; a dept task (project_id null) or a project with no
+  // recorded path falls back to the default dept repo root — unchanged.
+  let repoRoot: string | undefined;
+  const backupTaskId = ctx.job.task_id;
+  if (backupTaskId) {
+    const task = db.get<{ project_id: string | null }>(
+      'SELECT project_id FROM bureau_tasks WHERE id = ?',
+      backupTaskId
+    );
+    if (task?.project_id) {
+      const proj = db.get<{ path_to_repo: string }>(
+        'SELECT path_to_repo FROM bureau_projects WHERE id = ?',
+        task.project_id
+      );
+      if (proj?.path_to_repo) {
+        repoRoot = proj.path_to_repo;
+      }
+    }
+  }
+
+  const provider = getBackupProvider(repoRoot);
 
   // The commit this backup exists to guarantee on the remote (the merge/tip
   // commit pr.merge threads through the payload). When present and the remote
