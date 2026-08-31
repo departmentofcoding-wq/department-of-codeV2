@@ -216,3 +216,33 @@ captured verbatim from `npx vitest run`.
 
 Executed 2026-08-31 on branch `wt/n8-pr-gh-project-cwd`; mutation reproduced →
 restored → re-verified, failure output captured verbatim from `npx vitest run`.
+
+---
+
+## M-N1 — verify success delivers on a stale standing approval
+
+- **Guard:** `engine/verify/loop.ts` `handleVerifyOutcome` success path — before
+  transitioning to `needs-review`, if the latest approved `bureau_work_reviews`
+  row has a non-null `reviewed_commit != tip` (a `verify-failure-sendback`
+  checkpoint moved the branch tip past the approved commit), it re-enters senior
+  review instead: transition `verifying -> claimed`, enqueue `work.cycle`
+  (idempotent), journal a `verify_passed_stale_approval` guardrail, notify the
+  operator. `tip` is read in `engine/verify/job.ts` before the finalization txn
+  (best-effort; undefined disables the guard, preserving fake-provider tests).
+- **Mutation:** disabled the guard predicate (`if (approval && … !== opts.tip)`
+  → `if (false && …)`), reproducing the pre-fix behaviour where a passing verify
+  lands at `needs-review` while the standing approval points at the old commit
+  (the b55e2fda scar: `pr.create` then refuses on `reviewed_commit != tip` and
+  the task strands looking delivery-ready).
+- **Catcher:** `test/unit/tc_verify_stale_approval.test.ts`:
+  ```
+  FAIL test/unit/tc_verify_stale_approval.test.ts > N1: … > stale approval …
+  AssertionError: expected 'needs-review' to be 'claimed' // Object.is equality
+  ```
+  (2 of 5 tests fail: the stale-approval re-entry and the idempotency case.)
+- **Restore:** guard restored; full suite 651/651 across 118 files, `tsc
+  --noEmit` clean. Preserved: t25/t29 exit-sentence loops (no work review → no
+  trigger), t45 delivery tail (reviewed_commit == tip → needs-review).
+
+Executed 2026-08-31 on branch `wt/n1-verify-sendback`; mutation reproduced →
+restored → re-verified, failure output captured verbatim from `npx vitest run`.

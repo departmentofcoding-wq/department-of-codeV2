@@ -6,6 +6,7 @@ import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { handleVerifyOutcome, type VerifyOutcomeResult } from './loop.ts';
 import { runStagedVerifier } from './verifier.ts';
+import { getBranchTipCommit } from '../delivery/pr_create.ts';
 
 export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   const taskId = ctx.payload.taskId ?? ctx.job.task_id;
@@ -47,6 +48,18 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   //    contract handleVerifyOutcome consumes.
   const outcome = await runStagedVerifier(ctx.db, taskId, workspaceHandle.path);
   const finishedTime = new Date().toISOString();
+
+  // Read the worktree tip BEFORE the finalization transaction (a git subprocess
+  // must not run inside execTransaction). Passed to handleVerifyOutcome so its
+  // success path can detect a stale standing approval (N1). Best-effort: a fake
+  // workspace provider (unit tests) or a missing worktree leaves it undefined,
+  // which cleanly disables the stale-approval guard.
+  let tip: string | undefined;
+  try {
+    tip = getBranchTipCommit(ctx.db, taskId);
+  } catch {
+    tip = undefined;
+  }
 
   // 4. Atomic Finalization Transaction (DB logic, run row, state transitions, job completion)
   const runId = crypto.randomUUID();
@@ -100,7 +113,7 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
     });
 
     // Execute synchronous DB state transitions & loop logic
-    outcomeResult = handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION);
+    outcomeResult = handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION, { tip });
 
     // Atomically mark the job done inside finalization transaction
     completeJob(ctx.db, ctx.job.id);
