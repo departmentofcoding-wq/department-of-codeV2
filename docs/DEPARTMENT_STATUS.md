@@ -31,6 +31,35 @@ needs a phase-taxonomy decision (`phase` col unstandardized). **N1 option (a)**
 (real junior verify-fix dispatch) is deferred behind N0. Small follow-up the senior
 noted: `backup_push.ts` could reuse `getTaskRepoRoot` instead of its inline lookup.
 
+**➜ NEXT INSTANCE — START HERE (as of 2026-08-31, origin/main `271f086`+):** the
+tree is green (654/654, tsc clean, origin == local at push time) and non-dept
+delivery is unblocked end-to-end. The pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`)
+in priority order: **(1) N3** — find why junior B was bypassed so both tasks shared
+junior A (likely a runner env default like `JUNIOR_DEFAULT=A`, or a pinned rekick
+payload; confirm `assignJunior` drives selection, not an env). Investigative, no live
+GUI needed to start. **(2) N0** — the junior "completion" race (fires ~38s before the
+agent is actually done); this NEEDS a live run to verify, so pair it with an operator
+session. N0+N3 are the two P0s gating any ≥3-task concurrent run. **(3) N2** — the
+delivery-gate reads the latest work review regardless of `phase`; before filtering to
+`phase='phase4'`, DECIDE the phase taxonomy (real code emits `phase4`+`walkthrough`,
+delivery tests seed `phase='work'` — a filter breaks t43/t44/t42 fixtures until the
+column is standardized). **(4) N1 option (a)** — real junior verify-fix dispatch, only
+after N0. **(5)** N9 tidy: reuse `getTaskRepoRoot` in `backup_push.ts`. Operator-only:
+approve `3756ec6e`+`b55e2fda` in the console, the supervised provisioning convergence
+run (entry-gate step 3), decide N6 (ratify-or-retro the earlier no-verdict merges),
+archive orphan `live-mt0xgoxz`. Watch the N9 scar: never let a backup test reach the
+real `ExecGitBackupProvider` rooted at the dept repo (it can `git push` origin/main).
+
+**CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
+a "Record of Hands" creators page was built — every persona (Claude Code, the Claude
+senior, GLM/zai, Gemini/Junior A, Antigravity 2.0/Junior B) was reached live over its
+debug port and wrote a genuine signed message; nothing fabricated. Published as a
+private Artifact (`The Record of Hands`). It was driven with a throwaway script
+(since removed) that reused the existing junior/senior harnesses (`ensureJuniorRunning`
++ `AntigravitySession`, `ensureSeniorRunning` + `ZCodeSession`) to send each agent a
+prompt and capture its reply — a reminder that the harness can drive the agents for
+free-form chat, not only tasks. Not part of the engine — noted only so it's on record.
+
 **PRE-PHASE-8 N8 FIXED + N9 FILED (2026-08-31, merged local main `4e1bbdd`):** the
 first pre-Phase-8 code fix landed. **N8** — `pr.create`/`pr.merge` ran `gh` in the
 dept repo for non-dept projects (proven 2026-08-31: every non-dept delivery died
