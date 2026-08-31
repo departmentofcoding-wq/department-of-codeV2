@@ -61,6 +61,30 @@ mechanism.** Two defects:
   the tip, the flow must re-enter senior review (auto-enqueue `senior.review-work`) rather
   than land at `needs-review` with a stale verdict.
 
+### N1 — status (2026-08-31): (b) DONE, (a) deferred behind N0
+**Option (b) — stale-verdict hole — DONE** (branch `wt/n1-verify-sendback`, merged
+local main). `handleVerifyOutcome`'s success path now refuses to reach `needs-review`
+when the latest approved review's `reviewed_commit != tip` (a `verify-failure-sendback`
+moved the tip past the approval): it transitions `verifying -> claimed`, enqueues
+`work.cycle` to re-review at the new tip (idempotent), journals a
+`verify_passed_stale_approval` guardrail, and notifies the operator. `tip` is read in
+`verify/job.ts` before the finalization txn (best-effort; undefined disables the guard).
+Mutation **M-N1**; suite 651/651 across 118 files. The retry/block budget (t25/t29
+exit-sentence loop) is deliberately untouched — that bounded-retry-then-block-then-
+operator-rearm is the honest fail-closed behaviour, not a defect.
+
+**Option (a) — real verify-fix DISPATCH — DEFERRED behind N0 (still open, P0).** Today
+the verify failure path re-enqueues `verify.run` with no junior fix dispatch, so
+`verify_fixes` is a bounded RETRY budget, not a fix loop: an unattended real failure
+retries identically to the ceiling then `blocked` (operator re-arm is the recovery). A
+genuine auto-fix requires an explicit junior `junior.dispatch` fix round whose result is
+re-reviewed before the tip moves — which is entangled with **N0** (the junior-completion
+race is what currently makes the worktree dirty during verify at all). Sequence (a) AFTER
+N0 lands: with N0 fixed, the worktree is clean at verify time, so the only way the tip
+moves is a deliberate fix dispatch — at which point (a) can move the tip and re-review
+safely, and the M-N1 guard already forces that re-review. Until then, verify failures
+correctly escalate to the operator.
+
 ### N2 — the delivery gate can be a plan review, not a code-diff review (P1)
 `pr.create` reads the **latest** `bureau_work_reviews` row `ORDER BY created_at DESC` **regardless
 of `phase`**. `b55e2fda`'s gate was a `phase='walkthrough'` review of `implementation_plan.md`
@@ -104,7 +128,42 @@ same "engine-development merges bypass the flow" tension as the standing scar. *
 operator decides — ratify these as sanctioned engine-dev merges (and note it), or require
 retroactive verdict docs. Then resolve the standing policy (see P2 §2.1) so it stops recurring.
 
-### N8 — pr.create runs `gh` in the wrong repo for non-dept projects (P0, proven 2026-08-31)
+### N8 — pr.create runs `gh` in the wrong repo for non-dept projects (P0, proven 2026-08-31) — ✅ DONE (2026-08-31, merged local main `4e1bbdd`)
+**Fixed.** `PrProvider.createPr`/`mergePr` gained an optional `cwd`; `GhCliPrProvider`
+forwards it (defaulting `cwd ?? this.repoRoot`); `pr_create.ts` threads `wtRow?.path` into
+`createPr` and `pr_merge.ts` looks up the worktree (present pre-prune) and threads it into
+`mergePr`. `FakePrProvider` records the cwds; t43/t44 assert the worktree path flows through
+create AND merge. Mutation **M-N8** recorded (`docs/mutation-evidence-phase8.md`). Suite
+646/646 across 117 files (green on the branch and on merged main; one intermittent
+parallel-load flake on unrelated t41 seen once, cleared on re-run). claude senior **APPROVE**
+(`docs/reviews/verdict-n8-pr-gh-cwd.md`), merged `--no-ff` to local main `4e1bbdd` (not
+pushed — origin push is the operator's call). The senior surfaced the adjacent **N9** below.
+
+### N9 — backup.push runs in the dept repo for non-dept tasks (P0, senior-found 2026-08-31) — ✅ DONE (2026-08-31, merged local main)
+**Fixed.** `getBackupProvider(repoRoot?)` now roots the `ExecGitBackupProvider` at a
+caller-supplied repo (default: dept tree); `backup_push.ts` resolves the task's
+`bureau_projects.path_to_repo` (via `task.project_id`) and passes it, so a non-dept
+task's fetch/ff-only/containment/push run against that project's repo + remote.
+Mutation **M-N9** (both resolution + seam, proven safely via a `getBackupProvider`
+spy so no test can run `git push` on the live dept repo). Suite 654/654 across 120
+files. **Scar recorded:** an earlier draft's integration mutation ran the real
+fallthrough `git push origin main` against the live dept repo (fast-forwarded
+origin/main to the N8+N1 tip early — benign but unintended); the test was redesigned
+to spy the seam. Original diagnosis below.
+
+
+Same class as N8, one layer down. `engine/durability/git_backup_provider.ts` /
+`backup_push.ts` always run in `this.repoRoot` (the dept repo) with **no cwd threading**,
+and `pr_merge.ts` unconditionally enqueues a `backup.push` after **every** merge (non-dept
+tasks included). So for a non-dept task the backup's containment-check (`git` fetch/rev-parse
+to prove the remote already contains the merge commit) and any fast-forward push run against
+the **dept** repo's `origin/main`, not the task's project repo — the check reads the wrong
+remote. Pre-existing, untouched by N8, surfaced by the claude senior during the N8 review.
+**Action:** thread the task's worktree/project repo path into the backup provider the same
+way N8 did for the PR seam (or make `backup.push` project-aware from `bureau_projects`), and
+decide whether a non-dept merge should even target the dept's `origin/main` at all. Add
+regression coverage mirroring M-N8. Blocks honest delivery-tail draining for non-dept
+projects (N8 unblocks `gh`; N9 unblocks the backup that runs right after).
 On approval, `3756ec6e` (Trading project) delivered its branch push fine but **`gh pr create`
 failed 3× → dead**: *"No commits between main and bureau-wt-3756…, Head ref must be a branch."*
 Root cause: [pr_create.ts](../engine/delivery/pr_create.ts) passes the worktree path to
