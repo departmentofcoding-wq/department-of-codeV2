@@ -361,8 +361,20 @@ output captured verbatim from `npx vitest run` per mutation.
   - M-N0b (instruction dropped from `buildImplementationPrompt`): 1 failure in
     `test/integration/tc_plan_cycle.test.ts` — `expected '…' to contain
     'BUREAU-JUNIOR-COMPLETE'`.
-- **Restore:** both restored; full suite **663/663 across 121 files green ×2
-  consecutively** (with both junior GUIs + ZCode resident), `tsc --noEmit` clean.
+- **M-N0c (round 2, senior-caught):** the first wiring read evidence through
+  `extractAgentReply`, whose whole-prompt needle can never match a single
+  transcript line for multi-line prompts — it fell back to the page tail (the
+  ECHOED prompt), whose instruction block contains the marker: the gate could
+  false-OPEN with zero agent output. Fixed with the line-aware pure helper
+  `juniorCompletionEvidence` (`sliceAfterPrompt` keys off the prompt's LAST
+  line). Mutation (helper checks `fullText` directly, no slice): 2 failures in
+  `test/unit/tc_antigravity.test.ts` — `expected true to be false` on BOTH the
+  just-echoed-multi-line-prompt case and the subprocess-gap (no marker) case.
+- **Restore:** all restored; full suite green ×2 (see the round-2 walkthrough
+  for counts), `tsc --noEmit` clean. Live round-2 validation
+  (`docs/junior-artifacts/n0-observation-run5-gate.log`): the SHIPPED gate held
+  ~80s of `awaiting-evidence` through the real subprocess gap on a multi-line
+  department-shaped prompt and completed only at the agent's true marker (t=126s).
 
 Executed 2026-09-01 on branch `wt/junior-a-n0-junior-completion`; failure output
 captured verbatim from `npx vitest run` per mutation.

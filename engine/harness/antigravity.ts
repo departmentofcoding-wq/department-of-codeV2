@@ -652,6 +652,7 @@ function extractMarkedBlock(fullText: string, markers: RegExp[]): string {
     const t = lines[i].trim();
     if (i > start && isTimestamp(t)) continue; // mid-block stamp: skip, keep going
     if (i > start && isChrome(t)) break;
+    if (t === JUNIOR_COMPLETION_MARKER) continue; // N0 sentinel: harness signal, never artifact content
     if (t) block.push(t);
   }
   return block.join('\n').trim();
@@ -684,6 +685,20 @@ export function sliceAfterPrompt(fullText: string, prompt: string): string {
     }
   }
   return fullText;
+}
+
+/**
+ * N0 completion evidence: is the completion sentinel present in the REPLY REGION
+ * (after the echoed prompt)? Line-aware by construction — `sliceAfterPrompt`
+ * keys off the prompt's LAST line, which survives multi-line prompts. The
+ * first wiring used `extractAgentReply`, whose needle is the whole (multi-line)
+ * prompt — structurally unmatchable against single transcript lines, so it fell
+ * back to the page tail, which right after send is the ECHOED PROMPT: the
+ * marker inside the echoed instruction could open the gate with zero agent
+ * output (senior REVISE 2026-09-01, the exact false-completion N0 closes).
+ */
+export function juniorCompletionEvidence(fullText: string, prompt: string): boolean {
+  return sliceAfterPrompt(fullText, prompt).includes(JUNIOR_COMPLETION_MARKER);
 }
 
 /** Everything the junior produced, plus the isolated reply/plan/walkthrough. */

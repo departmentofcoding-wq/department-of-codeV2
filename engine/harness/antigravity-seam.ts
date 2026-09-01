@@ -3,6 +3,7 @@ import {
   ANTIGRAVITY_DEFAULT_PORT,
   ANTIGRAVITY_INPUT_LABEL,
   JUNIOR_COMPLETION_MARKER,
+  juniorCompletionEvidence,
   MAIN_WINDOW_ATTACH_MS,
   AntigravitySession,
   ensureAntigravityRunning,
@@ -160,10 +161,15 @@ class RealAntigravityDriver implements AntigravityDriver {
       // stable AND the marker in the reply region — an agent that ends its turn
       // while its own subprocess runs is idle+stable but NOT done. Prompts
       // without the sentinel (arbitrary CLI commands) keep the old behavior.
+      // Evidence is LINE-AWARE (`sliceAfterPrompt`-keyed, via
+      // juniorCompletionEvidence): a whole-prompt needle match can never hit a
+      // single transcript line and would fall back to the page tail — the
+      // echoed prompt — whose instruction block contains the marker (senior
+      // REVISE round 1).
       const markerGate = prompt.includes(JUNIOR_COMPLETION_MARKER)
         ? {
             completionEvidence: async () =>
-              (await session.readAgentReply(prompt)).includes(JUNIOR_COMPLETION_MARKER)
+              juniorCompletionEvidence(await session.readTranscript(250), prompt)
           }
         : {};
       // Wait adaptively: keep extending while the junior is working; no hard cap.

@@ -15,7 +15,10 @@ import {
   pickFolderWindow,
   pickMainWindow,
   JUNIORS,
-  ANTIGRAVITY_DEFAULT_PORT
+  ANTIGRAVITY_DEFAULT_PORT,
+  JUNIOR_COMPLETION_INSTRUCTION,
+  JUNIOR_COMPLETION_MARKER,
+  juniorCompletionEvidence
 } from '../../engine/harness/antigravity.ts';
 import { writeJuniorArtifacts } from '../../engine/harness/junior-artifacts.ts';
 
@@ -205,6 +208,71 @@ describe('Plan / walkthrough artifact extraction', () => {
   it('returns empty string when no marker is present', () => {
     expect(extractPlan('just a chat reply\nView Usage')).toBe('');
     expect(extractWalkthrough('just a chat reply\nView Usage')).toBe('');
+  });
+
+  it('the N0 sentinel line is filtered out of extracted artifacts (harness signal, not content)', () => {
+    const full = ['Walkthrough', 'Added add() and a passing test.', JUNIOR_COMPLETION_MARKER, 'Ask anything'].join('\n');
+    const walkthrough = extractWalkthrough(full);
+    expect(walkthrough).toContain('Added add()');
+    expect(walkthrough).not.toContain(JUNIOR_COMPLETION_MARKER);
+  });
+});
+
+// ---------------------------------------------------------------------------------
+// N0 completion evidence — the reply region must be isolated LINE-AWARE. The senior's
+// REVISE round 1 caught the original wiring (`extractAgentReply`) false-positiveing on
+// the echoed prompt: its needle is the whole multi-line prompt, which can never equal
+// or be contained in a single transcript line, so it fell back to the page tail —
+// which right after send IS the echoed prompt, instruction block and its marker line.
+// These tests use the realistic multi-line department prompt shape.
+// ---------------------------------------------------------------------------------
+describe('N0 completion evidence — multi-line prompts, echoed prompts, real replies', () => {
+  const departmentPrompt = [
+    'Your implementation plan was reviewed and APPROVED by a senior. Implement it now, exactly as planned.',
+    '',
+    '===== TASK =====',
+    'TITLE: Build a clicker',
+    'INTENT: one button increments a number',
+    'SPEC: single HTML page',
+    'ACCEPTANCE: clicking raises the count',
+    '',
+    '===== APPROVED PLAN =====',
+    'Branch: wt/x; index.html only; add t_clicker.test.ts.',
+    '',
+    JUNIOR_COMPLETION_INSTRUCTION
+  ].join('\n');
+
+  it('a JUST-ECHOED multi-line prompt (no agent output yet) is NOT completion evidence', () => {
+    // The shape of the DOM right after sendPrompt: the echoed prompt followed by
+    // composer chrome, before the first token streams.
+    const justEchoed = [...departmentPrompt.split('\n'), 'Send message'].join('\n');
+    expect(juniorCompletionEvidence(justEchoed, departmentPrompt)).toBe(false);
+  });
+
+  it('the agent printing the sentinel as its final line IS completion evidence', () => {
+    const replied = [
+      ...departmentPrompt.split('\n'),
+      'Implemented the button and counter; tests pass (2/2).',
+      JUNIOR_COMPLETION_MARKER,
+      'Send message'
+    ].join('\n');
+    expect(juniorCompletionEvidence(replied, departmentPrompt)).toBe(true);
+  });
+
+  it('a reply WITHOUT the sentinel is not evidence (the subprocess-gap shape)', () => {
+    const turnEndedNoMarker = [
+      ...departmentPrompt.split('\n'),
+      'I have launched the initial vitest run to verify the baseline. I will monitor it.',
+      'Send message'
+    ].join('\n');
+    expect(juniorCompletionEvidence(turnEndedNoMarker, departmentPrompt)).toBe(false);
+  });
+
+  it('prompt scrolled out of the capture window: the marker in the reply still counts', () => {
+    // readTranscript windows the tail; if the echoed prompt is gone, the fallback
+    // is the whole text — a marker there can only be the agent's own.
+    const windowed = ['(long reply scrolled past the prompt…) implementation done', JUNIOR_COMPLETION_MARKER, 'Send message'].join('\n');
+    expect(juniorCompletionEvidence(windowed, departmentPrompt)).toBe(true);
   });
 });
 
