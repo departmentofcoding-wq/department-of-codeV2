@@ -63,6 +63,9 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     const p2 = buildJuniorPlanPrompt(task, 'name the branch and add tests');
     expect(p2).toContain('PREVIOUS plan');
     expect(p2).toContain('name the branch and add tests');
+    // N0: the completion sentinel instruction rides every department junior prompt.
+    expect(p).toContain('BUREAU-JUNIOR-COMPLETE');
+    expect(p).toMatch(/only when/i);
   });
 
   it('buildImplementationPrompt carries the task verbatim AND the approved plan', () => {
@@ -71,6 +74,9 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(p).toContain('Build a clicker');
     expect(p).toContain('Branch: wt/x');
     expect(p).toMatch(/walkthrough/i);
+    // N0: the completion sentinel rides the implementation prompt too (and its
+    // presence in the prompt is what arms the driver's completion gate).
+    expect(p).toContain('BUREAU-JUNIOR-COMPLETE');
   });
 
   it('buildImplementationPrompt is HONEST on the ceiling path — never claims approval, and threads the outstanding feedback', () => {

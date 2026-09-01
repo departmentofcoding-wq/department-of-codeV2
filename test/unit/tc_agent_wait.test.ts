@@ -213,3 +213,81 @@ describe('ensureCompleted — a non-completed wait is a hard failure, never a si
     expect(() => ensureCompleted('stalled', 'x')).toThrow(/NOT recorded/i);
   });
 });
+
+// ---------------------------------------------------------------------------------
+// N0 — the completion gate. Live-verified 2026-09-01 (docs/plan-n0-junior-completion.md
+// §Step 1 results): an agent that ends its TURN while its own terminal subprocess runs
+// renders NO Stop/Cancel/spinner in the DOM — idle+stable alone cannot distinguish
+// "waiting on my test run" from "done" (the b55e2fda ~38s false completion). The gate
+// holds completion open until the sentinel marker appears (completionEvidence), fails
+// LOUD on a markerless state past evidenceTimeoutMs, and re-arms on real activity.
+// ---------------------------------------------------------------------------------
+describe('waitForAgentIdle — N0 completion gate (sentinel evidence)', () => {
+  const gapFrame: AgentActivity = { working: false, canSend: true, len: 30 };
+
+  it('does NOT complete during the subprocess gap; completes only once evidence passes (the b55e2fda shape)', async () => {
+    // Turn 1 works → ends its turn with a subprocess running → idle+stable (would
+    // COMPLETE pre-fix) ×2 → agent resumes → final reply → evidence true.
+    const frames: AgentActivity[] = [
+      { working: true, canSend: false, len: 10 },
+      { working: true, canSend: false, len: 20 },
+      { working: false, canSend: true, len: 30 }, // gap begins
+      gapFrame, gapFrame, // idle 2/2 → evidence check #1 → false
+      gapFrame, gapFrame, // idle 2/2 again → evidence check #2 → false
+      { working: true, canSend: false, len: 40 }, // spontaneous resume
+      { working: false, canSend: true, len: 50 }, // final reply lands
+      { working: false, canSend: true, len: 50 },
+      { working: false, canSend: true, len: 50 } // idle 2/2 → evidence #3 → true
+    ];
+    let evidenceCalls = 0;
+    const res = await waitForAgentIdle(scriptedProbe(frames), {
+      sleep: noSleep, warmupMs: 0, pollMs: 0, idleConfirmations: 2,
+      completionEvidence: async () => ++evidenceCalls >= 3
+    });
+    expect(res).toBe('completed');
+    // Exactly the three would-complete moments were gated; the first two (inside
+    // the gap, ~85s of pending subprocess in the live run) did NOT complete it.
+    expect(evidenceCalls).toBe(3);
+  });
+
+  it('fails LOUD (stalled via the evidence timeout) when the marker never appears', async () => {
+    // Work once, then idle forever with no marker. The regular stall net is held
+    // disarmed while evidence is pending, so the dedicated timeout must fire.
+    const frames: AgentActivity[] = [
+      { working: true, canSend: false, len: 10 },
+      { ...gapFrame, len: 30 }
+    ];
+    const statuses: string[] = [];
+    const res = await waitForAgentIdle(scriptedProbe(frames), {
+      warmupMs: 0, pollMs: 5, stallMs: 30, idleConfirmations: 2,
+      evidenceTimeoutMs: 80,
+      completionEvidence: async () => false,
+      onTick: i => statuses.push(i.status)
+    });
+    expect(res).toBe('stalled');
+    // It was the EVIDENCE timeout, not the regular stall net, and the waiter said so.
+    expect(statuses).toContain('stalled-awaiting-evidence');
+    expect(statuses).toContain('awaiting-evidence');
+  });
+
+  it('real activity re-arms the evidence clock — two sub-timeout gaps do not add up to a stall', async () => {
+    // Gap A (~15 polls) → working burst → gap B (~25 polls) → marker. Each gap is
+    // under evidenceTimeoutMs, but their SUM exceeds it: only a per-span clock
+    // (reset by the working burst) completes instead of stalling.
+    const work: AgentActivity = { working: true, canSend: false, len: 99 };
+    const frames: AgentActivity[] = [
+      work,
+      ...Array(15).fill(gapFrame),
+      { working: true, canSend: false, len: 40 },
+      ...Array(25).fill({ ...gapFrame, len: 40 })
+    ];
+    let evidenceCalls = 0;
+    const res = await waitForAgentIdle(scriptedProbe(frames), {
+      warmupMs: 0, pollMs: 5, stallMs: 10_000, idleConfirmations: 2,
+      evidenceTimeoutMs: 200,
+      completionEvidence: async () => ++evidenceCalls >= 4
+    });
+    expect(res).toBe('completed');
+    expect(evidenceCalls).toBe(4);
+  });
+});

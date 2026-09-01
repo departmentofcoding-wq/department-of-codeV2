@@ -59,15 +59,32 @@ export interface WaitOptions {
   /** Small initial delay so the working indicator can appear. Default 1200ms. */
   warmupMs?: number;
   /** Require observing the agent actively working (a Stop/Cancel control or a
-   *  "Working/Thinking/…" indicator, or the transcript growing beyond its initial
-   *  baseline) at least once before an idle+stable reading may be treated as
-   *  completion. Closes the race where the brief gap between prompt-submit and
-   *  generation-start looks idle (Send control back, nothing streaming yet) and is
-   *  wrongly reported as an instant empty "completion" — which then captures the
-   *  app chrome instead of the reply. When the agent never starts within the stall
-   *  window, this yields a loud `stalled` (submit didn't land) instead. Default
-   *  false, so juniors and existing callers are unaffected. */
+   * "Working/Thinking/…" indicator, or the transcript growing beyond its initial
+   * baseline) at least once before an idle+stable reading may be treated as
+   * completion. Closes the race where the brief gap between prompt-submit and
+   * generation-start looks idle (Send control back, nothing streaming yet) and is
+   * wrongly reported as an instant empty "completion" — which then captures the
+   * app chrome instead of the reply. When the agent never starts within the stall
+   * window, this yields a loud `stalled` (submit didn't land) instead. Default
+   * false, so juniors and existing callers are unaffected. */
   requireActivityStart?: boolean;
+  /** N0 completion gate: when idle+stable would be declared "completed", call
+   * this and only complete if it returns true. Built for the sentinel marker:
+   * an agent that ends its TURN while its own terminal subprocess is still
+   * running ("I have launched the test run, I will monitor it") is idle+stable
+   * in the chat pane but NOT done — the IDE renders no Stop/Cancel/spinner
+   * during that gap (live-verified 2026-09-01, docs/plan-n0-junior-completion.md
+   * §Step 1 results), so chat-idleness alone cannot distinguish it. While the
+   * gate holds the wait open, the regular stall net stays disarmed (the agent
+   * has invisible work in flight); instead a dedicated `evidenceTimeoutMs`
+   * bounds the markerless state so a genuinely finished agent that never
+   * prints the marker fails LOUD (`stalled`), never silently. */
+  completionEvidence?: () => Promise<boolean>;
+  /** How long the completion gate may hold the wait open with NO real activity
+   * (no working indicator, no transcript growth) before declaring `stalled`.
+   * Default 5 minutes — a long test run inside the gap is legitimate; an agent
+   * that finished but disobeyed the marker instruction surfaces here. */
+  evidenceTimeoutMs?: number;
   /** Cancellation: checked every poll, and before the first. */
   signal?: AbortSignal;
   /** Progress callback (elapsed, current status, activity) for logging. */
@@ -91,6 +108,7 @@ export async function waitForAgentIdle(
   const absoluteMaxMs = opts.absoluteMaxMs ?? 60 * 60 * 1000;
   const warmupMs = opts.warmupMs ?? 1200;
   const requireActivityStart = opts.requireActivityStart ?? false;
+  const evidenceTimeoutMs = opts.evidenceTimeoutMs ?? 5 * 60 * 1000;
   const sleep = opts.sleep ?? defaultSleep;
 
   const start = Date.now();
@@ -101,6 +119,10 @@ export async function waitForAgentIdle(
   let sawActivity = false;
   let lastActivityAt = Date.now();
   let idleStable = 0;
+  // N0: when the completion gate is holding the wait open (idle+stable but the
+  // sentinel marker is absent), this is when that markerless state began. Real
+  // activity (working/growth) clears it; exceeding evidenceTimeoutMs stalls loud.
+  let awaitingEvidenceSince: number | null = null;
 
   for (;;) {
     if (opts.signal?.aborted) return 'aborted';
@@ -130,14 +152,41 @@ export async function waitForAgentIdle(
       // Actively working or output still streaming — keep waiting, no time cap.
       lastActivityAt = Date.now();
       idleStable = 0;
+      awaitingEvidenceSince = null; // real activity re-arms the evidence clock
       status = 'working';
     } else if (a.canSend && (!requireActivityStart || sawActivity)) {
-      // Idle and steady — confirm across a couple of polls, then it's done.
+      // Idle and steady — confirm across a couple of polls, then check the N0
+      // completion gate before calling it done.
       idleStable++;
       status = `idle(${idleStable}/${idleConfirmations})`;
       if (idleStable >= idleConfirmations) {
-        opts.onTick?.({ elapsedMs: Date.now() - start, status: 'completed', activity: a });
-        return 'completed';
+        if (opts.completionEvidence) {
+          const evidenced = await opts.completionEvidence();
+          if (!evidenced) {
+            if (awaitingEvidenceSince === null) awaitingEvidenceSince = Date.now();
+            if (Date.now() - awaitingEvidenceSince > evidenceTimeoutMs) {
+              // The marker never came. Loud stall — a partial transcript must
+              // never be recorded as a completed answer.
+              opts.onTick?.({
+                elapsedMs: Date.now() - start,
+                status: 'stalled-awaiting-evidence',
+                activity: a
+              });
+              return 'stalled';
+            }
+            // The agent has invisible work in flight (its own subprocess): keep
+            // waiting, and keep the regular stall net disarmed for now.
+            idleStable = 0;
+            lastActivityAt = Date.now();
+            status = 'awaiting-evidence';
+          } else {
+            opts.onTick?.({ elapsedMs: Date.now() - start, status: 'completed', activity: a });
+            return 'completed';
+          }
+        } else {
+          opts.onTick?.({ elapsedMs: Date.now() - start, status: 'completed', activity: a });
+          return 'completed';
+        }
       }
     } else {
       // Genuinely inactive (error/modal/login wall) or, when requireActivityStart
