@@ -223,6 +223,66 @@ reject captures whose verdict marker sits inside echoed prompt text. Same class 
 existing phantom-verdict guard. Until fixed, only drive the zai senior from a known-dedicated
 ZCode instance that is not doing the work.
 
+## 2026-09-01 — first autonomous multi-task run (N9/N10/N1a) findings (N11–N13)
+
+Three engine-dev tasks were filed through the door and run under one resident runner with
+N0 + N3 live: **N9** ("N9 tidy: getTaskRepoRoot"→junior B), **N10** ("N10 zai window
+guard"→junior A), **N1a** ("N1(a) verify-fix dispatch"→junior A). **Outcome:** N1a ran the
+**full pipeline end-to-end to `needs-review`** (plan → implement → claude walkthrough APPROVE
+→ verify.run exit 0), producing a real 684-insertion diff (`engine/verify/loop.ts`+`job.ts` +
+two new test files + mutation evidence) — the first fully autonomous task completion. N9 and
+N10 both **died during plan authoring**. The run validated a lot (N0 completion gate held live;
+the `window-${junior}` dispatch lease + heartbeat worked; a *serial* rekick of two same-junior
+tasks succeeded) and exposed the gaps below. What worked is as important as what didn't: the
+defects are in *plan authoring* and *cold-start under concurrency*, not the core flow.
+
+### N11 — plan authoring bypasses the per-junior window lease → same-junior tasks don't serialize (P0 for concurrency)
+`junior.dispatch` acquires the `window-${junior}` lease (with the b55e2fda heartbeat — proven
+live: N1a logged `window_lease_heartbeat_started`), but the **plan-authoring** step in
+`runPlanReviewCycle` calls `getAntigravityDriver().runCommand(...)` **directly, with no lease**.
+So when two tasks map to the same junior (guaranteed at ≥3 tasks / 2 juniors — here N10 and N1a
+both → A), their `plan.cycle`s do not serialize: each cold-launches the IDE, producing **two
+windows for one junior** (the RAM waste the operator flagged) and a cold-start attach collision
+in which one or both lose the "workbench window did not become available" race. **Action:** route
+plan authoring through the same per-junior window-lease acquisition `junior.dispatch` uses (or
+wrap the authoring `runCommand` in an acquire/heartbeat/release of `window-${juniorId}`), so
+same-junior plan cycles serialize on one window instead of double-launching. This is the concrete
+concurrency fix, distinct from N3 (which junior) — N3 picks the junior; N11 serializes access to it.
+
+### N12 — plan.cycle is single-attempt; a cold-start attach miss dies terminally with no auto-retry (P1)
+`plan.cycle` is `max_attempts:1`, so a "workbench window did not become available in time" miss
+(caused by N11's collision, or simply a cold IDE exceeding the attach budget) is **terminal** and
+needs an operator rekick — exactly what happened here (both A-tasks died on first launch; a
+staggered manual rekick recovered them). This is the N4 cold-start scar recurring under
+concurrency. **Action, in priority:** (a) fix **N11** (serialized same-junior launches remove the
+collision cause); (b) pre-warm both juniors before a concurrent run (a cold IDE 1.107 start is the
+known slow path — see `antigravity-coldstart-attach-fix`); (c) consider a **bounded auto-retry
+scoped to the infra class only** — a "workbench did not become available" is an infrastructure miss,
+not an agent verdict, so retrying it does not violate the "failed *agent* cycles are operator
+action" rule the way re-driving a real agent failure would. Keep genuine agent failures terminal.
+
+### N13 — plan-authoring stall pattern: 2 of 3 authoring runs died on the 120s stall window (P1, investigate)
+Both N9 (junior B) and N10 (junior A, after rekick) died with *"…junior did not complete: no
+progress for the stall window (error, modal, or login wall?)"* — the `waitForAgentIdle` stall net
+(`stallMs` default 120000) firing during plan authoring. N1a's junior-A authoring **succeeded** on
+the same machine, so it is not universal — variance, IDE warmth, or task shape matters. **This is
+the stall net working as designed (fail-closed, no partial plan recorded), but the underlying stall
+needs a root cause.** Candidates: the 120s window is too tight for engine-dev planning (the agent
+reads many files / thinks silently with no DOM growth > 120s); a modal/consent/login wall; or a
+genuine wedge. **Action:** reproduce with the DOM/transcript captured at stall time (as N0's live
+observation did); if it's silent-long-read, raise the plan-authoring stall window
+(`runPlanReviewCycle` already passes `stallMs: opts.juniorStallMs ?? 120000` — make the default
+larger for authoring, or add a progress signal that survives long silent reads); if it's a wall,
+surface it. Do NOT loosen the stall net globally — it is what prevented a partial/echoed plan from
+being recorded as real.
+
+### Also reconfirmed this run
+- **N2 is real and unfixed:** N1a's delivery gate was a `phase='walkthrough'` review, not a
+  `phase4` code-diff review — so N1a is "flow-complete," not "diff-verified." It needs a real diff
+  review before it merges. Reinforces N2's priority.
+- **Positive baselines proven live:** N0 completion gate (dispatch completed only when genuinely
+  done), the window-lease heartbeat, and serial same-junior rekick recovery all worked.
+
 ### Suggested order for tomorrow
 1. Approve `3756ec6e` and `b55e2fda` in the console (both are ready). Merging b55e2fda buys the
    **per-junior window** half of the concurrency fix.

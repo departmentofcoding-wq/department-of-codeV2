@@ -82,18 +82,44 @@ department-shaped multi-line prompt and completed only at the true marker (t=126
 three-GUI load, next run fully green), `tsc --noEmit` clean. **N0+N3 both landed: the ≥3-task
 concurrent run that opens Phase 8 is unblocked.**
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, main `ed553c3`):** the tree is green
-(668/668, tsc clean) and **both concurrency P0s (N0 + N3) are DONE + merged**. Remaining
-pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`): **(1) N2** — delivery-gate reads
-the latest work review regardless of `phase`; needs the phase-taxonomy DECISION before
-filtering. **(2) N1 option (a)** — real junior verify-fix dispatch (now unblocked by N0).
-**(3) N9 tidy** — reuse `getTaskRepoRoot` in `backup_push.ts`. **(4) N10** — guard
-`run_senior --senior zai` against attaching to a non-senior 9335 window. Then the supervised
-provisioning convergence run and the **≥3-task concurrent run = Phase 8 proper** (with the N0
-gate live, watch that markerless juniors surface as loud `stalled-awaiting-evidence` failures,
-not silent early completions). Operator-only: approve `3756ec6e`+`b55e2fda` in the console,
-decide N6, archive orphan `live-mt0xgoxz`. Watch the N9 scar: never let a backup test reach
-the real `ExecGitBackupProvider` rooted at the dept repo (it can `git push` origin/main).
+**FIRST AUTONOMOUS MULTI-TASK RUN (2026-09-01) — N9/N10/N1a filed through the door, run under
+one resident runner with N0+N3 live.** The three remaining pre-Phase-8 fix items were filed as
+engine-dev tasks and run concurrently: **N9** (getTaskRepoRoot tidy→junior B), **N10** (zai
+window guard→junior A), **N1a** (verify-fix dispatch→junior A). **N1a ran the FULL pipeline
+end-to-end to `needs-review`** — plan → junior.dispatch implement → **claude walkthrough
+APPROVE** → verify.run **exit 0** (50s) — producing a real **684-insertion** diff
+(`engine/verify/loop.ts`+`job.ts` + `tc_verify_fix_dispatch{,_flow}.test.ts` + mutation evidence)
+in its worktree. **This is the first fully autonomous end-to-end task completion, and it proved
+N0 live** (the dispatch completed only when the agent was genuinely done, not at a ~38s false
+idle). It sits at `needs-review` awaiting operator approval — and per **N2** its gate was a
+`walkthrough` review, NOT a `phase4` diff review, so it is flow-complete, not diff-verified;
+give it a real diff review before merge. **N9 and N10 both died during PLAN AUTHORING** ("no
+progress for the stall window"; N10 also died first on a cold-start collision). Three new
+findings catalogued in `docs/plan-pre-phase8-remaining.md` **§2026-09-01**: **N11** (plan
+authoring bypasses the `window-${junior}` lease → same-junior tasks double-launch the IDE and
+collide — the operator-observed RAM waste; the real concurrency fix, distinct from N3), **N12**
+(`plan.cycle` is `max_attempts:1` → a cold-start attach miss dies terminally, needs operator
+rekick — N4 recurring under concurrency), **N13** (2 of 3 authoring runs hit the 120s stall net
+— investigate whether that window is too tight for engine-dev planning). Process notes: a resident
+runner (`5ecfb91d`) was already draining — a second runner was mistakenly started on top of it
+(competing-runner double-launch) and then stopped; and a **serial rekick** of the two dead
+same-junior tasks succeeded (hold the second until the first frees the junior). N9+N10 were
+**rekicked again** (different juniors B/A, safe concurrent) at run's end.
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, main `ed553c3`; N1a at `needs-review`):** the
+tree is green (668/668, tsc clean) and **both concurrency P0s (N0 + N3) are DONE + merged**. But
+the first real multi-task run showed **concurrency is still not smooth** — the NEW gating item is
+**N11** (plan authoring bypasses the per-junior window lease, so same-junior tasks double-launch
+and collide). Punch list (`docs/plan-pre-phase8-remaining.md`): **(1) N11** (P0 concurrency — the
+real double-launch fix) → **(2) N12** (bounded cold-start retry / pre-warm juniors) + **(3) N13**
+(plan-authoring stall root cause). Then the pre-existing: **(4) N2** delivery-gate phase filter
+(needs the phase-taxonomy DECISION — and it just bit N1a's approval), **(5) N1 option (a)** real
+verify-fix dispatch (N1a IMPLEMENTED this — review its diff), **(6) N9 tidy** getTaskRepoRoot,
+**(7) N10** zai window guard. Then the supervised provisioning convergence run and the **≥3-task
+concurrent run = Phase 8 proper**. Operator-only: **approve/diff-review `N1a` (05a02b9a)**, approve
+`3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. Runtime note: one resident
+runner (`5ecfb91d`) is draining — do NOT start a second (competing runners double-launch juniors);
+juniors are cold-start-fragile, pre-warm A@9333/B@9334 before a concurrent run.
 
 **CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
 a "Record of Hands" creators page was built — every persona (Claude Code, the Claude
