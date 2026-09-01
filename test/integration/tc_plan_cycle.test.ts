@@ -63,9 +63,14 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     const p2 = buildJuniorPlanPrompt(task, 'name the branch and add tests');
     expect(p2).toContain('PREVIOUS plan');
     expect(p2).toContain('name the branch and add tests');
-    // N0: the completion sentinel instruction rides every department junior prompt.
-    expect(p).toContain('BUREAU-JUNIOR-COMPLETE');
-    expect(p).toMatch(/only when/i);
+    // N13: plan AUTHORING must NOT carry the completion sentinel — its presence in
+    // the prompt is what arms the driver's N0 evidence gate, and gating authoring on
+    // the marker caused intermittent stalls that discarded the authored plan when the
+    // agent finished without echoing the exact marker line. Authoring completes on
+    // idle+stable (the "Working…" indicator clearing); the sentinel stays on the
+    // implementation prompt (asserted below) where the subprocess race is real.
+    expect(p).not.toContain('BUREAU-JUNIOR-COMPLETE');
+    expect(p2).not.toContain('BUREAU-JUNIOR-COMPLETE');
   });
 
   it('buildImplementationPrompt carries the task verbatim AND the approved plan', () => {
