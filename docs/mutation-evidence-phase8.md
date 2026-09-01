@@ -378,3 +378,61 @@ output captured verbatim from `npx vitest run` per mutation.
 
 Executed 2026-09-01 on branch `wt/junior-a-n0-junior-completion`; failure output
 captured verbatim from `npx vitest run` per mutation.
+
+---
+
+## M-N1a — real junior verify-fix dispatch on verify failure
+
+- **Guard:** `engine/verify/loop.ts` & `engine/verify/job.ts`:
+  - `handleVerifyOutcome` on verify failure under ceiling (`verify_fixes < ceiling`)
+    enqueues an explicit `junior.dispatch` fix round (not bare `verify.run`), creates
+    a `bureau_dispatches` row, sets `chainWorkReview: true`, builds a rich fix prompt
+    via `buildVerifyFixPrompt`, and pins the junior deterministically via
+    `assignJunior({ taskId })` (policy matching N3).
+  - `executeVerifyRunJob` executes the `verify-failure-sendback` checkpoint
+    pre-transaction (before `execTransaction` commits), guaranteeing the dirty
+    worktree is cleanly committed before the fix dispatch becomes claimable.
+  - The retry/block ceiling backstop (`blocked` state + operator notification) is
+    preserved.
+- **Mutations (all three reproduced → restored):**
+  - **M-N1a1 (Job Kind):** Mutated `handleVerifyOutcome` to enqueue `verify.run` instead
+    of `junior.dispatch` on failure sendback.
+    - Catcher: `test/unit/tc_verify_fix_dispatch.test.ts`
+    - Failure output:
+      ```
+      FAIL test/unit/tc_verify_fix_dispatch.test.ts > tc_verify_fix_dispatch: N1(a) Real Junior Verify-Fix Dispatch on Verify Failure > handleVerifyOutcome on failure enqueues junior.dispatch with chainWorkReview, dispatches row, and increments fixes
+      AssertionError: expected 'verify.run' to be 'junior.dispatch' // Object.is equality
+
+      Expected: "junior.dispatch"
+      Received: "verify.run"
+      ```
+  - **M-N1a2 (Junior Assignment Policy):** Mutated `handleVerifyOutcome` to hardcode
+    `junior = 'A'` instead of `assignJunior({ taskId })`.
+    - Catcher: `test/unit/tc_verify_fix_dispatch.test.ts`
+    - Failure output:
+      ```
+      FAIL test/unit/tc_verify_fix_dispatch.test.ts > tc_verify_fix_dispatch: N1(a) Real Junior Verify-Fix Dispatch on Verify Failure > determines junior assignment deterministically per task id policy (matching N3)
+      AssertionError: expected 'A' to be 'B' // Object.is equality
+
+      Expected: "B"
+      Received: "A"
+      ```
+  - **M-N1a3 (Chain Work Review Flag):** Mutated `handleVerifyOutcome` to set
+    `chainWorkReview: false` in the dispatch payload.
+    - Catcher: `test/integration/tc_verify_fix_dispatch_flow.test.ts`
+    - Failure output:
+      ```
+      FAIL test/integration/tc_verify_fix_dispatch_flow.test.ts > tc_verify_fix_dispatch_flow: End-to-End Verify Fix Dispatch & Re-Review Flow > runs complete lifecycle: verify fails -> pre-tx checkpoint -> junior.dispatch (chainWorkReview) -> work.cycle -> worktree.prepare/verify -> pass -> needs-review
+      AssertionError: expected false to be true // Object.is equality
+
+      - Expected
+      + Received
+
+      - true
+      + false
+      ```
+- **Restore:** All mutations restored; full test suite passes cleanly, `tsc --noEmit` clean.
+
+Executed 2026-09-01 on branch `bureau-wt-05a02b9a-82c5-406d-a58d-5b6bda29cc4c`; failure output
+captured verbatim from `npx vitest run` per mutation.
+

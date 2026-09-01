@@ -73,7 +73,7 @@ mechanism.** Two defects:
   the tip, the flow must re-enter senior review (auto-enqueue `senior.review-work`) rather
   than land at `needs-review` with a stale verdict.
 
-### N1 — status (2026-08-31): (b) DONE, (a) deferred behind N0
+### N1 — status (2026-09-01): (a) & (b) BOTH DONE (Option a landed)
 **Option (b) — stale-verdict hole — DONE** (branch `wt/n1-verify-sendback`, merged
 local main). `handleVerifyOutcome`'s success path now refuses to reach `needs-review`
 when the latest approved review's `reviewed_commit != tip` (a `verify-failure-sendback`
@@ -85,17 +85,17 @@ Mutation **M-N1**; suite 651/651 across 118 files. The retry/block budget (t25/t
 exit-sentence loop) is deliberately untouched — that bounded-retry-then-block-then-
 operator-rearm is the honest fail-closed behaviour, not a defect.
 
-**Option (a) — real verify-fix DISPATCH — DEFERRED behind N0 (still open, P0).** Today
-the verify failure path re-enqueues `verify.run` with no junior fix dispatch, so
-`verify_fixes` is a bounded RETRY budget, not a fix loop: an unattended real failure
-retries identically to the ceiling then `blocked` (operator re-arm is the recovery). A
-genuine auto-fix requires an explicit junior `junior.dispatch` fix round whose result is
-re-reviewed before the tip moves — which is entangled with **N0** (the junior-completion
-race is what currently makes the worktree dirty during verify at all). Sequence (a) AFTER
-N0 lands: with N0 fixed, the worktree is clean at verify time, so the only way the tip
-moves is a deliberate fix dispatch — at which point (a) can move the tip and re-review
-safely, and the M-N1 guard already forces that re-review. Until then, verify failures
-correctly escalate to the operator.
+**Option (a) — real verify-fix DISPATCH — ✅ DONE (2026-09-01).** On verify failure
+within the `verify:fixes:ceiling` budget, `handleVerifyOutcome` now enqueues a real
+junior fix round (`junior.dispatch`) with a failure prompt (`buildVerifyFixPrompt` containing
+exit code, failed stages, stdout/stderr tails, full task spec, and completion marker), pinned
+to the assigned junior via deterministic `assignJunior({ taskId })` (policy matching N3).
+The dispatch payload specifies `chainWorkReview: true`, which points the junior at the existing
+worktree and chains completion into `work.cycle` so the fixed code/walkthrough is re-reviewed by
+a senior before re-verification. Checkpoint is moved pre-transaction (`verify-failure-sendback`)
+so the worktree is committed before the fix dispatch is claimed. Ceiling exhaustion backstop is
+preserved (`blocked` + operator notification). Mutation evidence M-N1a1/M-N1a2/M-N1a3. Tests in
+`test/unit/tc_verify_fix_dispatch.test.ts` and `test/integration/tc_verify_fix_dispatch_flow.test.ts`.
 
 ### N2 — the delivery gate can be a plan review, not a code-diff review (P1)
 `pr.create` reads the **latest** `bureau_work_reviews` row `ORDER BY created_at DESC` **regardless

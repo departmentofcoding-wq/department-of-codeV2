@@ -1,10 +1,11 @@
-import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/index.ts';
+import crypto from 'node:crypto';
+import type { AttributionTuple, BureauTaskRow, DbConnection, VerifyStageResult } from '../contract/index.ts';
 import { VERIFIER_ATTRIBUTION } from '../contract/constants.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
-import { assignJunior } from '../harness/antigravity.ts';
+import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
 import type { VerifyRunResult } from './verifier.ts';
 
 export interface VerifyOutcomeResult {
@@ -22,6 +23,77 @@ export interface VerifyOutcomeOptions {
    * behaviour is identical to before this fix.
    */
   tip?: string;
+  ceiling?: number;
+  isSendback?: boolean;
+  junior?: string;
+  juniorModel?: string;
+  folder?: string;
+  seniorId?: string;
+  seniorModel?: string;
+}
+
+/**
+ * Reads the verify fixes ceiling from bureau_meta with default fallback of 2.
+ */
+export function readVerifyCeiling(db: DbConnection): number {
+  const ceilingRow = db.get<{ value: string }>(
+    'SELECT value FROM bureau_meta WHERE key = ?',
+    'verify:fixes:ceiling'
+  );
+  const rawCeiling = ceilingRow ? parseInt(ceilingRow.value, 10) : 2;
+  return Number.isFinite(rawCeiling) && rawCeiling > 0 ? rawCeiling : 2;
+}
+
+/**
+ * Predicate determining whether a verifier failure triggers a fix sendback round.
+ * True iff outcome is not successful (non-zero exit or timed out) and fixes budget < ceiling.
+ */
+export function isVerifyFixSendback(
+  task: Pick<BureauTaskRow, 'verify_fixes'>,
+  outcome: VerifyRunResult,
+  ceiling: number
+): boolean {
+  const isSuccess = outcome.exitCode === 0 && !outcome.timedOut;
+  return !isSuccess && task.verify_fixes < ceiling;
+}
+
+/**
+ * Builds the fix prompt given to the junior on a verifier failure:
+ * verifier failure summary + full task specification + completion instruction.
+ */
+export function buildVerifyFixPrompt(
+  task: BureauTaskRow,
+  outcome: VerifyRunResult & { stages?: VerifyStageResult[] },
+  round: number,
+  ceiling: number,
+  projectInfo?: { name: string; path: string }
+): string {
+  const failedStages = (outcome.stages || []).filter((s) => s.exit_code !== 0 && !s.skipped);
+  const stageSummary =
+    failedStages.length > 0
+      ? failedStages.map((s) => `Stage '${s.stage}' failed (exit code ${s.exit_code})`).join('\n')
+      : `Verifier failed (exit code ${outcome.exitCode}${outcome.timedOut ? ', timed out' : ''})`;
+
+
+  return (
+    `The verifier failed on your worktree (verify-fix round ` +
+    `${round} of at most ${ceiling}). Fix EVERY issue reported by the verifier below, ` +
+    `then finish with an updated walkthrough summarizing what you changed, the test ` +
+    `results, and the verification you ran — the senior will re-review your changes before re-verifying.\n\n` +
+    `===== VERIFIER FAILURE SUMMARY =====\n` +
+    `Exit Code: ${outcome.exitCode}${outcome.timedOut ? ' (timed out)' : ''}\n` +
+    `Failed Stages:\n${stageSummary}\n` +
+    (outcome.stdoutTail ? `\nStdout Tail:\n${outcome.stdoutTail.trim()}\n` : '') +
+    (outcome.stderrTail ? `\nStderr Tail:\n${outcome.stderrTail.trim()}\n` : '') +
+    `\n===== TASK =====\n` +
+    `TITLE: ${task.title}\n` +
+    (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
+    (task.intent ? `INTENT: ${task.intent}\n` : '') +
+    (task.spec ? `SPEC: ${task.spec}\n` : '') +
+    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
+    (task.verify_cmd ? `VERIFY_CMD: ${task.verify_cmd}\n` : '') +
+    `\n${JUNIOR_COMPLETION_INSTRUCTION}`
+  );
 }
 
 /**
@@ -31,7 +103,7 @@ export interface VerifyOutcomeOptions {
 export function handleVerifyOutcome(
   db: DbConnection,
   taskId: string,
-  outcome: VerifyRunResult,
+  outcome: VerifyRunResult & { stages?: VerifyStageResult[] },
   attribution: AttributionTuple = VERIFIER_ATTRIBUTION,
   opts: VerifyOutcomeOptions = {}
 ): VerifyOutcomeResult {
@@ -40,14 +112,8 @@ export function handleVerifyOutcome(
     throw new Error(`Task ${taskId} not found for verification outcome handling`);
   }
 
-  // Ceiling read with fallback 2
-  const ceilingRow = db.get<{ value: string }>(
-    'SELECT value FROM bureau_meta WHERE key = ?',
-    'verify:fixes:ceiling'
-  );
-  const rawCeiling = ceilingRow ? parseInt(ceilingRow.value, 10) : 2;
-  const ceiling = Number.isFinite(rawCeiling) ? rawCeiling : 2;
-
+  const ceiling = opts.ceiling ?? readVerifyCeiling(db);
+  const isSendback = opts.isSendback ?? isVerifyFixSendback(task, outcome, ceiling);
   const isSuccess = outcome.exitCode === 0 && !outcome.timedOut;
 
   if (isSuccess) {
@@ -128,8 +194,8 @@ export function handleVerifyOutcome(
   }
 
   // Failure path: check verify_fixes budget ceiling
-  if (task.verify_fixes < ceiling) {
-    // Send-back loop: atomic increment, transition to claimed, and re-enqueue verify.run
+  if (isSendback) {
+    // Send-back loop: atomic increment, transition to claimed, and enqueue junior.dispatch fix round
     const newFixes = task.verify_fixes + 1;
     db.run('UPDATE bureau_tasks SET verify_fixes = ? WHERE id = ?', newFixes, taskId);
     transition(db, taskId, 'claimed', attribution, {
@@ -139,11 +205,55 @@ export function handleVerifyOutcome(
       exit_code: outcome.exitCode,
       timed_out: outcome.timedOut
     });
+
+    let folder = opts.folder;
+    let projectInfo: { name: string; path: string } | undefined;
+    if (task.project_id) {
+      const proj = db.get<{ name: string; path_to_repo: string }>(
+        'SELECT name, path_to_repo FROM bureau_projects WHERE id = ?',
+        task.project_id
+      );
+      if (proj) {
+        projectInfo = { name: proj.name, path: proj.path_to_repo };
+        if (!folder) {
+          folder = proj.path_to_repo;
+        }
+      }
+    }
+
+    const fixPrompt = buildVerifyFixPrompt(task, outcome, newFixes, ceiling, projectInfo);
+    const junior = (opts.junior || assignJunior({ taskId })).toUpperCase();
+    const juniorModel = opts.juniorModel ?? 'unspecified';
+    const dispatchId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+
+    db.run(
+      `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+       VALUES (?, ?, ?, 'junior-engineer', 'antigravity', ?, NULL, 'pending', ?)`,
+      dispatchId,
+      task.id,
+      task.work_uuid,
+      juniorModel,
+      nowIso
+    );
+
     enqueueJob(db, {
-      kind: 'verify.run',
+      kind: 'junior.dispatch',
       task_id: taskId,
-      payload: { taskId }
+      payload: {
+        dispatchId,
+        prompt: fixPrompt,
+        junior,
+        freshConversation: false,
+        chainWorkReview: true,
+        ...(juniorModel !== 'unspecified' ? { model: juniorModel } : {}),
+        ...(folder ? { folder } : {}),
+        ...(opts.seniorId ? { workSeniorId: opts.seniorId } : {}) as any,
+        ...(opts.seniorModel ? { workSeniorModel: opts.seniorModel } : {}) as any
+      },
+      max_attempts: 1
     });
+
     return { isSuccess: false, isSendback: true };
   } else {
     // Budget ceiling reached: block task and notify operator
@@ -170,3 +280,4 @@ export function handleVerifyOutcome(
     return { isSuccess: false, isSendback: false };
   }
 }
+

@@ -58,27 +58,27 @@ describe('T25: Exit Sentence Send-Back Loop & Re-arm Integration Test', () => {
       expect(taskAfter1?.state).toBe('claimed');
       expect(taskAfter1?.verify_fixes).toBe(1);
 
-      // Verify re-enqueue created job 2
-      const queuedJobs1 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
+      // Verify failure enqueued junior.dispatch fix round (N1a)
+      const queuedJobs1 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'junior.dispatch' AND state = 'pending'", taskId);
       expect(queuedJobs1.length).toBeGreaterThanOrEqual(1);
 
       // --- Run 2: Failure 2 ---
-      const job2 = queuedJobs1[0];
+      const job2 = enqueueJob(db, { kind: 'verify.run', task_id: taskId, payload: { taskId } });
       await executeVerifyRunJob({ db, job: job2, payload: { taskId }, signal: new AbortController().signal });
 
       let taskAfter2 = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
       expect(taskAfter2?.state).toBe('claimed');
       expect(taskAfter2?.verify_fixes).toBe(2);
 
-      const queuedJobs2 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
-      expect(queuedJobs2.length).toBeGreaterThanOrEqual(1);
+      const queuedJobs2 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'junior.dispatch' AND state = 'pending'", taskId);
+      expect(queuedJobs2.length).toBeGreaterThanOrEqual(2);
 
       // Assert send-back seam checkpoints were recorded on provider
       const sendbackCheckpoints = provider.checkpoints.filter((c) => c.note === 'verify-failure-sendback');
       expect(sendbackCheckpoints.length).toBe(2);
 
       // --- Run 3: Failure 3 (Ceiling reached: verify_fixes=2 >= ceiling=2) ---
-      const job3 = queuedJobs2[0];
+      const job3 = enqueueJob(db, { kind: 'verify.run', task_id: taskId, payload: { taskId } });
       await executeVerifyRunJob({ db, job: job3, payload: { taskId }, signal: new AbortController().signal });
 
       let taskAfter3 = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
