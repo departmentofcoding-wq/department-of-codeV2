@@ -4,6 +4,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
+import { assignJunior } from '../harness/antigravity.ts';
 import type { VerifyRunResult } from './verifier.ts';
 
 export interface VerifyOutcomeResult {
@@ -90,7 +91,14 @@ export function handleVerifyOutcome(
           taskId
         );
         if (!inFlight || inFlight.n === 0) {
-          enqueueJob(db, { kind: 'work.cycle', task_id: taskId, payload: { taskId } });
+          // Junior pinned explicitly (deterministic policy — same junior every
+          // phase of this task) so the re-review's fix dispatch can't flip to
+          // another task's junior under concurrency (N3).
+          enqueueJob(db, {
+            kind: 'work.cycle',
+            task_id: taskId,
+            payload: { taskId, junior: assignJunior({ taskId }) }
+          });
         }
         journal(db, {
           kind: 'guardrail',

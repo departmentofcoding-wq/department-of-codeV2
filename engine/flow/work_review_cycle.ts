@@ -8,6 +8,7 @@ import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
+import { assignJunior } from '../harness/antigravity.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
 
@@ -389,7 +390,10 @@ export async function runWorkReviewCycle(
   const fixPrompt = buildFixPrompt(task, review.feedback, roundsUsed + 1, ceiling, projectInfo);
   const fixJob = enqueueFixDispatch(db, task, {
     prompt: fixPrompt,
-    junior: (opts.junior || 'A').toUpperCase(),
+    // Same assignment policy as the plan cycle (deterministic by task id), so
+    // an unpinned re-review/fix round stays on the task's own junior — never a
+    // hardcoded A (N3).
+    junior: (opts.junior || assignJunior({ taskId: task.id })).toUpperCase(),
     juniorModel: opts.juniorModel ?? UNSPECIFIED_MODEL,
     folder: folder,
     seniorId: opts.seniorId,
