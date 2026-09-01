@@ -140,8 +140,18 @@ export function buildJuniorPlanPrompt(
     (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
-    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
-    `\n${JUNIOR_COMPLETION_INSTRUCTION}`
+    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '')
+    // N13: plan AUTHORING deliberately does NOT carry the completion sentinel, so
+    // the driver's N0 evidence gate stays DISARMED for authoring. The N0 race
+    // (an agent that goes idle while its own long terminal subprocess runs) is an
+    // IMPLEMENTATION concern; during authoring the agent explores briefly then
+    // writes a plan, and its live "Working…" indicator reliably marks activity, so
+    // idle+stable is the correct, proven (pre-N0) completion signal. Requiring the
+    // sentinel here caused intermittent stalls: when the agent finished authoring
+    // but did not echo the exact marker line, the 5-minute evidence timeout reaped
+    // it and DISCARDED the authored plan (the N9/N10/N11 "no progress for the stall
+    // window" deaths). The sentinel stays on the IMPLEMENTATION and fix prompts,
+    // where the subprocess race is real.
   );
 }
 

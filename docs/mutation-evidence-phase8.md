@@ -436,3 +436,35 @@ captured verbatim from `npx vitest run` per mutation.
 Executed 2026-09-01 on branch `bureau-wt-05a02b9a-82c5-406d-a58d-5b6bda29cc4c`; failure output
 captured verbatim from `npx vitest run` per mutation.
 
+
+---
+
+## M-N13 — plan authoring stalled because it armed the N0 completion-sentinel gate
+
+- **Symptom:** filed engine-dev tasks (N9/N10/N11) died in plan authoring with
+  "Antigravity … junior did not complete: no progress for the stall window (error,
+  modal, or login wall?)" — 4 plan-authoring stalls vs 1 success (N1a) across the
+  2026-09-01 runs.
+- **Root cause (live-observed, `wt/n13-plan-authoring-stall`):** `buildJuniorPlanPrompt`
+  appended `JUNIOR_COMPLETION_INSTRUCTION`, so the plan-authoring prompt contained the
+  `BUREAU-JUNIOR-COMPLETE` marker, which arms the driver's N0 completion-evidence gate
+  (`antigravity-seam.ts`: `prompt.includes(JUNIOR_COMPLETION_MARKER) ? {completionEvidence…} : {}`).
+  Live observation of a real folder-set authoring (junior A, Gemini 3.7 Flash Medium)
+  showed the agent explores the codebase for minutes with a reliable "Working…" indicator,
+  then finishes. When the agent finished WITHOUT echoing the exact marker line, the gate
+  held idle+stable open until the 5-minute `evidenceTimeoutMs` fired → `'stalled'` → the
+  authored plan was DISCARDED and `plan.cycle` died. Intermittent because marker emission
+  is non-deterministic (three controlled observations completed; the real long/hard tasks
+  intermittently omitted it). The N0 subprocess race the sentinel guards is an
+  IMPLEMENTATION concern; authoring's real completion signal is the "Working…" indicator
+  clearing (idle+stable), which is reliable.
+- **Fix:** `buildJuniorPlanPrompt` no longer appends `JUNIOR_COMPLETION_INSTRUCTION`, so
+  the evidence gate stays DISARMED for authoring (idle+stable completion, the proven
+  pre-N0 behavior). The sentinel remains on `buildImplementationPrompt` and `buildFixPrompt`
+  where the subprocess race is real.
+- **Mutation:** re-add `\n${JUNIOR_COMPLETION_INSTRUCTION}` to `buildJuniorPlanPrompt`.
+  Catcher: `test/integration/tc_plan_cycle.test.ts` — `AssertionError: expected '…' not to
+  contain 'BUREAU-JUNIOR-COMPLETE'`. Reproduced → restored. The implementation-prompt
+  assertions (still `toContain`) stay green, proving the gate is armed there and only there.
+
+Executed 2026-09-01 on branch `wt/n13-plan-authoring-stall`.
