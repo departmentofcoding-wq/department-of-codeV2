@@ -332,3 +332,49 @@ test reach the real `ExecGitBackupProvider` rooted at the dept repo.
 
 Executed 2026-09-01 on branch `wt/junior-a-n3-junior-assignment`; failure
 output captured verbatim from `npx vitest run` per mutation.
+
+---
+
+## M-N0 — junior "completion" fires while the agent's own subprocess still runs
+
+- **Guard (fix A of `docs/plan-n0-junior-completion.md`, evidence-picked):**
+  `waitForAgentIdle` gains a completion gate — idle+stable only completes when
+  `completionEvidence()` (the `BUREAU-JUNIOR-COMPLETE` sentinel present in the
+  REPLY REGION, never the echoed prompt) returns true; a markerless idle state
+  stalls LOUD after `evidenceTimeoutMs` (default 5 min, regular stall net held
+  disarmed meanwhile); real activity re-arms the evidence clock. The driver seam
+  (`antigravity-seam.ts`) auto-arms the gate when the prompt contains the
+  sentinel (all three department junior prompts now carry the instruction;
+  arbitrary CLI prompts keep the old behavior).
+- **Live basis (2026-09-01, junior A @9333, `scripts/n0_observe.ts`,
+  log `docs/junior-artifacts/n0-observation-run4.log`):** agent ends its turn
+  with a 90s subprocess running; from t=8s the DOM shows working=false,
+  canSend=true, NO Stop/Cancel/spinner anywhere — the current rule would
+  complete at t=12s (the b55e2fda ~38s signature reproduced). Fix C (terminal-
+  busy DOM signal) is dead: no such signal exists during the gap.
+- **Mutations (both reproduced → restored):**
+  - M-N0a (gate bypassed — `const evidenced = true`): 3 failures in
+    `test/unit/tc_agent_wait.test.ts` — `expected +0 to be 3` (evidence never
+    consulted; completed during the gap), `expected 'completed' to be
+    'stalled'` (markerless state no longer fails loud), `expected +0 to be 4`
+    (re-arm untested). 
+  - M-N0b (instruction dropped from `buildImplementationPrompt`): 1 failure in
+    `test/integration/tc_plan_cycle.test.ts` — `expected '…' to contain
+    'BUREAU-JUNIOR-COMPLETE'`.
+- **M-N0c (round 2, senior-caught):** the first wiring read evidence through
+  `extractAgentReply`, whose whole-prompt needle can never match a single
+  transcript line for multi-line prompts — it fell back to the page tail (the
+  ECHOED prompt), whose instruction block contains the marker: the gate could
+  false-OPEN with zero agent output. Fixed with the line-aware pure helper
+  `juniorCompletionEvidence` (`sliceAfterPrompt` keys off the prompt's LAST
+  line). Mutation (helper checks `fullText` directly, no slice): 2 failures in
+  `test/unit/tc_antigravity.test.ts` — `expected true to be false` on BOTH the
+  just-echoed-multi-line-prompt case and the subprocess-gap (no marker) case.
+- **Restore:** all restored; full suite green ×2 (see the round-2 walkthrough
+  for counts), `tsc --noEmit` clean. Live round-2 validation
+  (`docs/junior-artifacts/n0-observation-run5-gate.log`): the SHIPPED gate held
+  ~80s of `awaiting-evidence` through the real subprocess gap on a multi-line
+  department-shaped prompt and completed only at the agent's true marker (t=126s).
+
+Executed 2026-09-01 on branch `wt/junior-a-n0-junior-completion`; failure output
+captured verbatim from `npx vitest run` per mutation.

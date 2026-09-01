@@ -35,6 +35,27 @@ export const MAIN_WINDOW_ATTACH_MS = 60000;
 /** aria-label / placeholder of the agent chat input (calibrated against 2.8.1). */
 export const ANTIGRAVITY_INPUT_LABEL = 'Message input';
 /**
+ * N0 completion sentinel. The department's junior prompts instruct the agent to
+ * end its FINAL message with this exact line only when the requested work is
+ * fully done; the harness then refuses to treat an idle+stable chat pane as
+ * "completed" until the marker appears in the REPLY REGION (after the echoed
+ * prompt — the echo contains the string too, first-hand scar 2026-09-01).
+ * Rationale, live-verified 2026-09-01: an agent that ends its TURN while its
+ * own terminal subprocess runs renders NO Stop/Cancel/spinner anywhere in the
+ * DOM — chat-idleness alone cannot distinguish "waiting on my test run" from
+ * "done" (the b55e2fda ~38s false completion). See docs/plan-n0-junior-completion.md.
+ */
+export const JUNIOR_COMPLETION_MARKER = 'BUREAU-JUNIOR-COMPLETE';
+/** The instruction text appended to every department-built junior prompt; its
+ *  presence in a prompt is what auto-arms the N0 completion gate in the driver
+ *  seam (the gate keys on the marker string appearing in the prompt). */
+export const JUNIOR_COMPLETION_INSTRUCTION =
+  'Completion signal (required): when — and only when — the requested work is fully done ' +
+  'and this is your FINAL message for it, end that message with this exact final line on its own:\n' +
+  `${JUNIOR_COMPLETION_MARKER}\n` +
+  'While your own terminal commands or test runs are still executing you are NOT done — wait for ' +
+  'them, then continue; never print that line before all work and verification are complete.\n';
+/**
  * The main IDE workbench is served over https from loopback; the loading
  * splash is a `data:` URL. Match on the workbench URL, since the page title
  * changes to reflect the active chat/workspace.
@@ -631,6 +652,7 @@ function extractMarkedBlock(fullText: string, markers: RegExp[]): string {
     const t = lines[i].trim();
     if (i > start && isTimestamp(t)) continue; // mid-block stamp: skip, keep going
     if (i > start && isChrome(t)) break;
+    if (t === JUNIOR_COMPLETION_MARKER) continue; // N0 sentinel: harness signal, never artifact content
     if (t) block.push(t);
   }
   return block.join('\n').trim();
@@ -663,6 +685,20 @@ export function sliceAfterPrompt(fullText: string, prompt: string): string {
     }
   }
   return fullText;
+}
+
+/**
+ * N0 completion evidence: is the completion sentinel present in the REPLY REGION
+ * (after the echoed prompt)? Line-aware by construction — `sliceAfterPrompt`
+ * keys off the prompt's LAST line, which survives multi-line prompts. The
+ * first wiring used `extractAgentReply`, whose needle is the whole (multi-line)
+ * prompt — structurally unmatchable against single transcript lines, so it fell
+ * back to the page tail, which right after send is the ECHOED PROMPT: the
+ * marker inside the echoed instruction could open the gate with zero agent
+ * output (senior REVISE 2026-09-01, the exact false-completion N0 closes).
+ */
+export function juniorCompletionEvidence(fullText: string, prompt: string): boolean {
+  return sliceAfterPrompt(fullText, prompt).includes(JUNIOR_COMPLETION_MARKER);
 }
 
 /** Everything the junior produced, plus the isolated reply/plan/walkthrough. */

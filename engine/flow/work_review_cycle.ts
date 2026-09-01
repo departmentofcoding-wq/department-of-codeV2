@@ -8,7 +8,7 @@ import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
-import { assignJunior } from '../harness/antigravity.ts';
+import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
 
@@ -118,7 +118,7 @@ export function buildFixPrompt(
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
-    `\n===== SENIOR'S REQUIRED CHANGES =====\n${feedback.trim()}\n`
+    `\n===== SENIOR'S REQUIRED CHANGES =====\n${feedback.trim()}\n\n${JUNIOR_COMPLETION_INSTRUCTION}`
   );
 }
 

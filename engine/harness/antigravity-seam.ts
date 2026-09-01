@@ -2,6 +2,8 @@ import { ensureCompleted } from './agent-wait.ts';
 import {
   ANTIGRAVITY_DEFAULT_PORT,
   ANTIGRAVITY_INPUT_LABEL,
+  JUNIOR_COMPLETION_MARKER,
+  juniorCompletionEvidence,
   MAIN_WINDOW_ATTACH_MS,
   AntigravitySession,
   ensureAntigravityRunning,
@@ -154,12 +156,29 @@ class RealAntigravityDriver implements AntigravityDriver {
       if (opts.model) model = await session.selectModel(opts.model);
 
       await session.sendPrompt(prompt);
+      // N0 completion gate: when the prompt carries the sentinel instruction
+      // (all department-built junior prompts do), completion requires idle+
+      // stable AND the marker in the reply region — an agent that ends its turn
+      // while its own subprocess runs is idle+stable but NOT done. Prompts
+      // without the sentinel (arbitrary CLI commands) keep the old behavior.
+      // Evidence is LINE-AWARE (`sliceAfterPrompt`-keyed, via
+      // juniorCompletionEvidence): a whole-prompt needle match can never hit a
+      // single transcript line and would fall back to the page tail — the
+      // echoed prompt — whose instruction block contains the marker (senior
+      // REVISE round 1).
+      const markerGate = prompt.includes(JUNIOR_COMPLETION_MARKER)
+        ? {
+            completionEvidence: async () =>
+              juniorCompletionEvidence(await session.readTranscript(250), prompt)
+          }
+        : {};
       // Wait adaptively: keep extending while the junior is working; no hard cap.
       // A stall/abort/timeout is a hard failure — the partial transcript is
       // never returned as if it were a completed answer.
       const waited = await session.waitForCompletion({
         stallMs: opts.stallMs ?? 120000,
-        signal: opts.signal
+        signal: opts.signal,
+        ...markerGate
       });
       ensureCompleted(waited, `${cfg.label} junior`);
 

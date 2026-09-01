@@ -6,7 +6,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
-import { assignJunior, sliceAfterPrompt } from '../harness/antigravity.ts';
+import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt } from '../harness/antigravity.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
@@ -140,7 +140,8 @@ export function buildJuniorPlanPrompt(
     (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
     (task.intent ? `INTENT: ${task.intent}\n` : '') +
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
-    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '')
+    (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
+    `\n${JUNIOR_COMPLETION_INSTRUCTION}`
   );
 }
 
@@ -197,7 +198,7 @@ export function buildImplementationPrompt(
     (task.spec ? `SPEC: ${task.spec}\n` : '') +
     (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
     feedbackBlock +
-    `\n===== ${planLabel} =====\n${planText}\n`
+    `\n===== ${planLabel} =====\n${planText}\n\n${JUNIOR_COMPLETION_INSTRUCTION}`
   );
 }
 

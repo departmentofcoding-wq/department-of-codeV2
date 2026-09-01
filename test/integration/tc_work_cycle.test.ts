@@ -191,6 +191,8 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
     expect(p).toContain('round 2 of at most 5');
     expect(p).toContain('fix the null case');
     expect(p).toMatch(/updated walkthrough/i);
+    // N0: the completion sentinel rides fix dispatches too.
+    expect(p).toContain('BUREAU-JUNIOR-COMPLETE');
   });
 
   it('is wired as a real job kind: work.cycle registered, single attempt, long timeout', () => {
