@@ -6,7 +6,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
-import { sliceAfterPrompt } from '../harness/antigravity.ts';
+import { assignJunior, sliceAfterPrompt } from '../harness/antigravity.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
@@ -273,7 +273,9 @@ export async function runPlanReviewCycle(
   const effectiveOpts: PlanCycleOptions = { ...opts, folder };
 
   // ---- 1. Junior AUTHORS the plan -----------------------------------------
-  const juniorId = (opts.junior || 'A').toUpperCase();
+  // No junior pinned → the assignment policy (deterministic by task id), never
+  // a hardcoded one: two concurrent tasks must land on different juniors (N3).
+  const juniorId = (opts.junior || assignJunior({ taskId: task.id })).toUpperCase();
   const juniorAttribution: AttributionTuple = {
     actor_role: 'junior-engineer',
     provider: 'antigravity',

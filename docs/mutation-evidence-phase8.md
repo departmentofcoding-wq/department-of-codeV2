@@ -293,3 +293,42 @@ repo (it fast-forwarded origin/main to the local N8+N1 tip early — benign, tha
 work was approved and slated to push, but unintended). The test was redesigned to
 spy the seam so no mutation can ever touch the dept repo. Rule: never let a backup
 test reach the real `ExecGitBackupProvider` rooted at the dept repo.
+
+---
+
+## M-N3 — both concurrent tasks dispatched to junior A (assignment policy unwired)
+
+- **Guard:** every flow door that resolves an unpinned junior now calls
+  `assignJunior({ taskId })` (deterministic hash → A/B, `JUNIOR_DEFAULT`/explicit
+  pin still win) instead of a hardcoded `'A'`:
+  - `engine/flow/plan_review_cycle.ts` — `juniorId = (opts.junior ||
+    assignJunior({ taskId: task.id }))`; the resolved id propagates into the
+    implementation dispatch payload, so the whole happy path inherits it
+    (dispatch-job already carries `payload.junior` into the chained work.cycle).
+  - `engine/flow/work_review_cycle.ts` — the REVISE fix dispatch.
+  - `engine/verify/loop.ts` — the N1(b) stale-approval re-review enqueues
+    `work.cycle` with `junior` pinned explicitly.
+- **Root cause (N3):** `assignJunior` had zero production callers — the
+  auto-kickoff chain (`fileTask` → `plan.cycle { taskId }` → registry →
+  `runPlanReviewCycle`) never invoked it, so `|| 'A'` was the de-facto policy
+  and the first 2-concurrent run put BOTH tasks (`3756ec6e`, `b55e2fda`) on
+  junior A's one window/chat → cross-contamination.
+- **Mutations (each reverted independently, all reproduced → restored):**
+  - M-N3a (plan cycle → `|| 'A'`): catchers
+    `test/integration/tc_junior_assignment.test.ts` —
+    `AssertionError: expected 'A' to be 'B'` (plan cycle + dispatch payload)
+    and `expected Set{ 'A' } to deeply equal Set{ 'A', 'B' }` (the two-task
+    split regression, using the run's own task ids). 2 of 6 fail.
+  - M-N3b (work-cycle fix dispatch → `|| 'A'`): catcher —
+    `AssertionError: expected 'A' to be 'B'` (fix dispatch payload). 1 of 6.
+  - M-N3c (verify/loop re-review payload drops `junior`): catcher —
+    `AssertionError: expected undefined to be 'B'` (work.cycle payload). 1 of 6.
+- **Restore:** all three restored; full suite **660/660 across 121 files**
+  green twice consecutively (one earlier run had a single non-reproducing
+  failure — the documented intermittent `t4` parallel-load flake, which passes
+  in isolation 3/3), `tsc --noEmit` clean. The verify-FIX sendback re-enqueue
+  of `verify.run` deliberately does NOT carry a junior (the verifier drives no
+  junior).
+
+Executed 2026-09-01 on branch `wt/junior-a-n3-junior-assignment`; failure
+output captured verbatim from `npx vitest run` per mutation.
