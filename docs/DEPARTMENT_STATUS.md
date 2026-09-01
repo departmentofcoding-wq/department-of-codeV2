@@ -31,20 +31,49 @@ needs a phase-taxonomy decision (`phase` col unstandardized). **N1 option (a)**
 (real junior verify-fix dispatch) is deferred behind N0. Small follow-up the senior
 noted: `backup_push.ts` could reuse `getTaskRepoRoot` instead of its inline lookup.
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-08-31, origin/main `271f086`+):** the
-tree is green (654/654, tsc clean, origin == local at push time) and non-dept
-delivery is unblocked end-to-end. The pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`)
-in priority order: **(1) N3** — find why junior B was bypassed so both tasks shared
-junior A (likely a runner env default like `JUNIOR_DEFAULT=A`, or a pinned rekick
-payload; confirm `assignJunior` drives selection, not an env). Investigative, no live
-GUI needed to start. **(2) N0** — the junior "completion" race (fires ~38s before the
+**PRE-PHASE-8 N3 FIXED (2026-09-01, merged local main `c4d16fb`, PUSHED to origin):** the
+junior-B bypass is closed. **Root cause was simpler than the ledger's hypothesis:**
+`assignJunior({taskId})` (deterministic A/B by task id) had **zero production callers** —
+the auto-kickoff chain (`fileTask` → `plan.cycle {taskId}` → registry → `runPlanReviewCycle`)
+never invoked it, and three flow doors defaulted an unpinned junior to a hardcoded
+`(opts.junior || 'A')`. That `|| 'A'` WAS the de-facto policy, so every auto-kickoff task
+ran on A (not `JUNIOR_DEFAULT`, which `assignJunior` honors but which was never reached).
+Fix: `assignJunior({taskId})` is now the fallback at all three doors — `plan_review_cycle.ts:278`
+(propagates into the dispatch payload), `work_review_cycle.ts:396` (REVISE fix dispatch),
+`verify/loop.ts:100` (N1(b) stale-approval re-review, pinned explicitly). Deterministic-by-id
+means every phase of a task converges on the same junior with **no persisted column**;
+explicit pins + `JUNIOR_DEFAULT` still win. New `test/integration/tc_junior_assignment.test.ts`
+(6 tests incl. the two-task split regression on the run's own UUIDs — `3756ec6e`→A,
+`b55e2fda`→B); mutations **M-N3a/b/c** recorded (`docs/mutation-evidence-phase8.md`).
+**claude senior APPROVE** — genuine independent subprocess review (the earlier zai attempt
+was a voided phantom-verdict: it self-attached to port 9335 = the working session's own
+ZCode; details in `docs/plan-n3-junior-assignment.md` §Senior review). The senior traced
+every enqueue site (incl. rekick/reconcile/verify-failure/chained work.cycle), confirmed the
+residual `?? 'A'` at `dispatch-job.ts:246` is observability-only not a selection path, and
+hand-verified the hash. Verdict `docs/reviews/verdict-n3-junior-assignment.md`. Suite
+**660/660 across 121 files green ×2**, `tsc --noEmit` clean on merged main. **Pushed to
+origin (`c4d16fb`, origin == local, verified 2026-09-01).** **Candidate N10** logged: `run_senior --senior zai` has no guard against
+attaching to a non-senior window on 9335 (the phantom-verdict class) — worth hardening.
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, main `c4d16fb` local == origin):** the
+tree is green (660/660 ×2, tsc clean) and **N3 is DONE + merged + pushed**. The
+pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`)
+in priority order: **(1) N0** — the junior "completion" race (fires ~38s before the
 agent is actually done); this NEEDS a live run to verify, so pair it with an operator
-session. N0+N3 are the two P0s gating any ≥3-task concurrent run. **(3) N2** — the
+session. With N3 landed, N0 is the **last** P0 gating any ≥3-task concurrent run. **(2) N2** — the
 delivery-gate reads the latest work review regardless of `phase`; before filtering to
 `phase='phase4'`, DECIDE the phase taxonomy (real code emits `phase4`+`walkthrough`,
 delivery tests seed `phase='work'` — a filter breaks t43/t44/t42 fixtures until the
-column is standardized). **(4) N1 option (a)** — real junior verify-fix dispatch, only
-after N0. **(5)** N9 tidy: reuse `getTaskRepoRoot` in `backup_push.ts`. Operator-only:
+column is standardized). **(3) N1 option (a)** — real junior verify-fix dispatch, only
+after N0. **(4)** N9 tidy: reuse `getTaskRepoRoot` in `backup_push.ts`. **(5)** N10 (new):
+guard `run_senior --senior zai` against attaching to a non-senior 9335 window. **Both juniors
+re-calibrated live 2026-09-01 (post-merge): A@9333 and B@9334 each answered an exact-marker
+smoke (`JUNIOR-A/B-CALIBRATION-OK`) end-to-end via `run_junior.ts` — N0's prerequisite is up.
+Calibration scar: on a COLD launch the first send can still fail "Chat input not found"
+(`ensureChatInputReady`'s 20s window < cold boot + panel mount); a warm retry succeeds
+unchanged — extend the cold-boot settle or auto-retry once. Suite note: with all three GUIs
+resident, `t4_crash_resume` failed in two consecutive full runs (lease-reap poll timeout,
+the documented flake) and passed 3/3 in isolation — not an N3 regression.** Operator-only:
 approve `3756ec6e`+`b55e2fda` in the console, the supervised provisioning convergence
 run (entry-gate step 3), decide N6 (ratify-or-retro the earlier no-verdict merges),
 archive orphan `live-mt0xgoxz`. Watch the N9 scar: never let a backup test reach the

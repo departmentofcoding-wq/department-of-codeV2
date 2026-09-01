@@ -92,7 +92,21 @@ of `phase`**. `b55e2fda`'s gate was a `phase='walkthrough'` review of `implement
 the approve path) should require the latest **`phase='phase4'`** (work/diff) approved review at
 the tip, not merely the latest review of any phase.
 
-### N3 — junior B was bypassed; both tasks ran on junior A → cross-contamination (P0 for concurrency)
+### N3 — junior B was bypassed; both tasks ran on junior A → cross-contamination (P0 for concurrency) — ✅ DONE (2026-09-01, merged local main `c4d16fb`, pushed to origin)
+**Fixed.** Root cause: `assignJunior({taskId})` had **zero production callers** — the
+auto-kickoff chain never invoked it, and three flow doors defaulted an unpinned junior to
+a hardcoded `(opts.junior || 'A')` (that `|| 'A'` was the de-facto policy, NOT
+`JUNIOR_DEFAULT`). `assignJunior` is now the fallback at `plan_review_cycle.ts:278`
+(propagates into the dispatch payload), `work_review_cycle.ts:396` (REVISE fix dispatch),
+and `verify/loop.ts:100` (N1(b) stale-approval re-review, pinned explicitly) — deterministic
+by id, so every phase converges on the same junior with no persisted column; explicit pins +
+`JUNIOR_DEFAULT` still win. Tests `test/integration/tc_junior_assignment.test.ts` (6, incl.
+the two-task split on the run's own UUIDs); mutations M-N3a/b/c. **claude senior APPROVE**
+(`docs/reviews/verdict-n3-junior-assignment.md`; the prior zai attempt was a voided
+phantom-verdict — self-attached to the working session's own ZCode on 9335, → **candidate
+N10**). Suite 660/660 ×2, `tsc` clean on merged main. Original diagnosis below.
+
+
 Deterministic `assignJunior(taskId)` would place `b55e2fda` on **B**, but all 8 dispatch
 payloads carry `"junior":"A"` and target the shared `window-default` lease. The two tasks were
 **time-sliced on one junior with one conversation**, so transcripts, plan artifacts, and even
@@ -185,6 +199,17 @@ the DB is still `null` — cosmetic).
 - **Orphan needs-review task `live-mt0xgoxz`** ("Add subtract() to math.js", `project_id=null`)
   — a leftover test artifact sitting in `needs-review`. Archive or Complete-tag it; don't let it
   masquerade as real delivery-ready work.
+
+### N10 — `run_senior --senior zai` can attach to a non-senior window on 9335 (P1, harness-safety)
+Surfaced 2026-09-01 during the N3 review: port 9335 was hosting the *working session's own*
+ZCode, so `run_senior --senior zai` attached to it and scraped the session's own transcript
+as the "review" — and that transcript contained an echoed `VERDICT: APPROVE`, so `parseVerdict`
+could FALSE-APPROVE from prompt text. The verdict was voided and N3 was re-reviewed with the
+claude senior instead. **Action:** guard the zai capture path with a window-identity check
+(confirm the 9335 target is a dedicated senior instance, not a busy/foreign window) and/or
+reject captures whose verdict marker sits inside echoed prompt text. Same class as the
+existing phantom-verdict guard. Until fixed, only drive the zai senior from a known-dedicated
+ZCode instance that is not doing the work.
 
 ### Suggested order for tomorrow
 1. Approve `3756ec6e` and `b55e2fda` in the console (both are ready). Merging b55e2fda buys the
