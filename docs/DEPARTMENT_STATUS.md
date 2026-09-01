@@ -124,21 +124,37 @@ tsc clean. **claude senior APPROVE** (`docs/reviews/verdict-n13-plan-authoring-s
 scoping, weighed the residual truncation risk as acceptable (revert-to-proven + rubric backstop),
 offered **N14** follow-up (on evidence-timeout, salvage the captured plan instead of discarding).
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, origin/main `d8e2954`):** the tree is green
-(676/676 ×2, tsc clean). **DONE + merged + pushed:** N0, N3 (concurrency P0s), N1a (verify-fix,
-via PR #6), and **N13 (plan authoring unblocked)**. **Filing tasks through the dept should work
-again now that N13 is fixed** — RE-FILE the archived work (N9 getTaskRepoRoot tidy, N10 zai window
-guard) and **N11** (the remaining concurrency P0). Punch list (`docs/plan-pre-phase8-remaining.md`):
-**(1) N11** — plan authoring bypasses the per-junior window lease → same-junior tasks double-launch/
-collide (the real concurrency fix; file it ALONE or do engine-dev — until it lands, run ONE task at
-a time). **(2) N12** — plan.cycle single-attempt cold-start terminal death (bounded infra-retry /
-pre-warm juniors). **(3) N2** — delivery-gate phase filter (needs the phase-taxonomy DECISION; it bit
-N1a's approval — a retroactive diff review of N1a is warranted). **(4) N9/N10** re-filed. **(5) N14**
-salvage-plan-on-timeout (P2, senior-suggested). Then the supervised provisioning convergence run and
-the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review of merged
-N1a, approve `3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. Runtime note: one
-resident runner is draining — do NOT start a second (competing runners double-launch juniors);
-juniors are cold-start-fragile, pre-warm A@9333/B@9334 before any concurrent run.
+**N13 VALIDATED LIVE + END-OF-DAY SIGN-OFF (2026-09-01, origin/main `3171b19`).** N11
+(`0e921cfa`) was re-filed on the fixed code to validate N13: **plan authoring WORKED** — it
+authored across two rounds with NO stall (vs the pre-fix ~10.5-min death), got APPROVED, and the
+junior IMPLEMENTED a real 349-line change. So the N13 fix is proven end-to-end. **But the fix flow
+then exposed two new problems (both filed as findings):** **N15** — the post-fix re-review
+`work.cycle` DIED on *"Claude CLI senior stalled: no output for 300s"* (the claude senior was being
+driven manually for reviews at the same time the runner called it — contention; single-attempt →
+terminal). **N16** — N11's junior work LEAKED into the **primary checkout** (uncommitted engine
+edits, the N7 scar with real engine code); it was **stashed off main** so `main` stays clean at
+`3171b19`. N11 is left stuck at `claimed` (its work lives in its worktree). Also noted: the fix
+prompt's "revision round 2" labeling reads as if round 1 vanished (the round-1 review is done by
+the senior off-window) — cosmetic, relabel. **Tree is clean and green; origin == local `3171b19`;
+nothing unreviewed was pushed.** Signing off for the day here.
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-01 EOD, origin/main `3171b19`):** the tree is green
+(676/676 ×2, tsc clean), main checkout clean. **DONE + merged + pushed:** N0, N3, N1a (PR #6), and
+**N13 (plan authoring fixed AND validated live)**. Filing works again for AUTHORING. Punch list
+(`docs/plan-pre-phase8-remaining.md`), priority: **(1) N15** — senior-stall resilience (a manual
+`claude -p` review must not collide with the runner's senior calls; make `work.cycle` survive a
+transient senior stall) — this killed N11's re-review. **(2) N16** — junior work leaked into the
+primary checkout (N7 recurrence, now engine code); scope the dispatch window strictly to the
+worktree + verify the primary tree stays clean; also N11's worktree sat at main tip, not a
+committed `bureau-wt-` branch (re-check the delivery-branch model for filed engine-dev tasks). **(3)
+N11** — recover the stuck task (its work is in `.bureau-worktrees/0e921cfa` + a labeled stash) OR
+do the window-lease serialization as engine-dev; **still the remaining concurrency P0** (until it
+lands, run ONE task at a time). **(4) N12** cold-start retry, **(5) N2** delivery-gate phase filter,
+**(6) N9/N10** re-file, **(7) N14** salvage-plan-on-timeout. Then supervised provisioning
+convergence + the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review
+of merged N1a, approve `3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. Runtime
+note: a runner (`fae5bc05`) was left running; do NOT start a second; juniors cold-start-fragile,
+pre-warm A@9333/B@9334 before any concurrent run.
 
 **CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
 a "Record of Hands" creators page was built — every persona (Claude Code, the Claude

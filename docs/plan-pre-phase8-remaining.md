@@ -310,6 +310,41 @@ Not needed for correctness now — N13 works — sequence opportunistically.
 - **Positive baselines proven live:** N0 completion gate (dispatch completed only when genuinely
   done), the window-lease heartbeat, and serial same-junior rekick recovery all worked.
 
+## 2026-09-01 late — N13 validation run (re-filed N11) findings (N15, N16)
+
+After N13 merged, N11 (`0e921cfa`) was re-filed to validate live. **The N13 fix WORKED:** N11
+authored plans across two rounds with NO stall, got APPROVED, and the junior IMPLEMENTED a real
+349-line change (worktree). Then the fix flow surfaced two NEW problems:
+
+### N15 — the claude CLI senior can stall under session contention, killing the single-attempt work.cycle (P1)
+N11's post-fix re-review `work.cycle` died: *"Claude CLI senior stalled: no output for 300s
+(CLAUDE_SENIOR_STALL_MS). Partial output was NOT recorded as a review."* The claude senior was
+being driven heavily this session (manual N3/N13 reviews via `claude -p`) at the same time the
+runner's `work.cycle` invoked it — likely CLI/session/rate contention. `work.cycle` is
+single-attempt, so the stall was terminal → N11 stuck at `claimed`. **Action:** (a) make senior
+review resilient to a transient senior stall (bounded retry, or fail the task to a re-armable state
+rather than a dead job); (b) don't run manual `claude -p` reviews concurrently with the runner's
+senior calls, or give them separate quotas; (c) the scale-aware senior split (P1.1) — under load,
+spread senior work across claude + zai. This is the senior analogue of the junior N12.
+
+### N16 — junior implementation LEAKED into the primary checkout (P1, N7 recurrence)
+N11's junior work appeared UNCOMMITTED in the **main checkout** (`engine/flow/plan_review_cycle.ts`
++ `test/integration/tc_plan_cycle.test.ts`, ~284 lines of the window-lease impl) as well as in its
+worktree (349 lines) — i.e. the junior edited the department's OWN engine files in the primary tree,
+not only its `.bureau-worktrees/0e921cfa` worktree. This is the N7 "junior scratch in the primary
+tree" scar, now with real ENGINE code: a fresh process loading the main checkout would run the
+junior's unreviewed edits. It was stashed off main (`git stash`, labeled) so main stays clean.
+**Action:** ensure the junior dispatch's window is strictly scoped to the worktree folder and the
+junior cannot edit the primary checkout (the delivery dispatch uses `requireFolder`, but this task
+targets files that also exist in main — confirm the worktree window is what the junior actually
+edits, and guard/verify the primary tree stays clean after a dispatch). Related: N11's worktree was
+sitting at `3171b19` (main tip) with uncommitted work rather than on a committed `bureau-wt-0e921cfa`
+branch — the delivery-branch model (F3/S3) needs re-checking for filed engine-dev tasks.
+
+**Minor (UX, not a bug):** the fix prompt labels the FIRST fix "revision round 2 of at most 5"
+(the counter names the upcoming review cycle, so the first fix reads as "round 2" with no visible
+"round 1" — the round-1 review is done by the senior off-window). Relabel for legibility.
+
 ### Suggested order for tomorrow
 1. Approve `3756ec6e` and `b55e2fda` in the console (both are ready). Merging b55e2fda buys the
    **per-junior window** half of the concurrency fix.
