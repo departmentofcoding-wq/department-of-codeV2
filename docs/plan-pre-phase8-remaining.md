@@ -34,7 +34,19 @@ Operator actions already taken this session (2026-08-30/31):
   tasks are now `needs-review` and pass every `pr.create` precondition — approve-ready.
 - **3756ec6e** needed no fix (tip == reviewed `86cccba`, clean, `hello.txt`="hello trading").
 
-### N0 — root cause: junior "completion" fires before the agent is done (P0)
+### N0 — root cause: junior "completion" fires before the agent is done (P0) — ✅ DONE (2026-09-01, merged `ed553c3`)
+**Fixed.** Live-observed on junior A (`docs/junior-artifacts/n0-observation-run{4,5-gate}.log`):
+an agent that ends its turn while its own terminal subprocess runs renders NO Stop/Cancel/
+spinner in the DOM — idle+stable cannot distinguish "waiting on my test run" from "done"
+(reproduced the b55e2fda ~38s false completion at t=12s with ~85s of subprocess pending).
+Fix: `waitForAgentIdle` completionEvidence gate — idle+stable completes only when the
+`BUREAU-JUNIOR-COMPLETE` sentinel is in the REPLY REGION (line-aware via `sliceAfterPrompt`);
+markerless states fail LOUD after 5 min; activity re-arms; all three junior prompts carry the
+instruction; seam auto-arms from the prompt. Two-round claude-senior review (round 1 REVISE
+caught an echoed-prompt false-open via `extractAgentReply`'s whole-prompt needle; round 2
+APPROVE, `docs/reviews/verdict-n0-junior-completion.md`). Mutations M-N0a/b/c. Live round-2
+validation: gate held ~80s through a real subprocess gap, completed only at the true marker.
+Suite 668/668, tsc clean. Original diagnosis below.
 `b55e2fda`'s `junior.dispatch` (`de0b4821`) was declared **complete at ~38s** while the
 agent transcript ends with *"I have launched the initial vitest run to verify the baseline
 before making any edits."* The agent then kept implementing **through** the senior review

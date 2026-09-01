@@ -55,29 +55,45 @@ hand-verified the hash. Verdict `docs/reviews/verdict-n3-junior-assignment.md`. 
 origin (`c4d16fb`, origin == local, verified 2026-09-01).** **Candidate N10** logged: `run_senior --senior zai` has no guard against
 attaching to a non-senior window on 9335 (the phantom-verdict class) — worth hardening.
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, main `c4d16fb` local == origin):** the
-tree is green (660/660 ×2, tsc clean) and **N3 is DONE + merged + pushed**. The
-pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`)
-in priority order: **(1) N0** — the junior "completion" race (fires ~38s before the
-agent is actually done); this NEEDS a live run to verify, so pair it with an operator
-session. With N3 landed, N0 is the **last** P0 gating any ≥3-task concurrent run. **(2) N2** — the
-delivery-gate reads the latest work review regardless of `phase`; before filtering to
-`phase='phase4'`, DECIDE the phase taxonomy (real code emits `phase4`+`walkthrough`,
-delivery tests seed `phase='work'` — a filter breaks t43/t44/t42 fixtures until the
-column is standardized). **(3) N1 option (a)** — real junior verify-fix dispatch, only
-after N0. **(4)** N9 tidy: reuse `getTaskRepoRoot` in `backup_push.ts`. **(5)** N10 (new):
-guard `run_senior --senior zai` against attaching to a non-senior 9335 window. **Both juniors
-re-calibrated live 2026-09-01 (post-merge): A@9333 and B@9334 each answered an exact-marker
-smoke (`JUNIOR-A/B-CALIBRATION-OK`) end-to-end via `run_junior.ts` — N0's prerequisite is up.
-Calibration scar: on a COLD launch the first send can still fail "Chat input not found"
-(`ensureChatInputReady`'s 20s window < cold boot + panel mount); a warm retry succeeds
-unchanged — extend the cold-boot settle or auto-retry once. Suite note: with all three GUIs
-resident, `t4_crash_resume` failed in two consecutive full runs (lease-reap poll timeout,
-the documented flake) and passed 3/3 in isolation — not an N3 regression.** Operator-only:
-approve `3756ec6e`+`b55e2fda` in the console, the supervised provisioning convergence
-run (entry-gate step 3), decide N6 (ratify-or-retro the earlier no-verdict merges),
-archive orphan `live-mt0xgoxz`. Watch the N9 scar: never let a backup test reach the
-real `ExecGitBackupProvider` rooted at the dept repo (it can `git push` origin/main).
+**PRE-PHASE-8 N0 FIXED (2026-09-01, merged local main `ed553c3`, two-round claude-senior
+review, APPROVE at `0bd049c`):** the junior "completion" race is closed — the LAST P0 gating
+concurrent runs. **Live root cause (observed on junior A, `scripts/n0_observe.ts`, logs
+`docs/junior-artifacts/n0-observation-run{4,5-gate}.log`):** an agent that ends its TURN while
+its own terminal subprocess runs renders NO Stop/Cancel/spinner anywhere in the DOM —
+idle+stable alone cannot distinguish "waiting on my test run" from "done" (the b55e2fda ~38s
+false completion, reproduced at t=12s with ~85s of subprocess pending). **Fix (evidence-picked
+A; C dead — no terminal-busy DOM signal exists):** `waitForAgentIdle` gains
+`completionEvidence` + `evidenceTimeoutMs` (5 min): idle+stable completes only when the
+`BUREAU-JUNIOR-COMPLETE` sentinel appears in the REPLY REGION; a markerless state fails LOUD;
+real activity re-arms the clock. All three department junior prompts carry the instruction;
+the driver seam auto-arms the gate from the prompt; sentinel-less CLI prompts unchanged.
+**Round 1 was REVISEd** by the senior — it caught the evidence check reading through
+`extractAgentReply` (whole-prompt needle → page-tail fallback → the ECHOED prompt could
+false-open the gate; the round-1 observation dodged it via a single-line prompt) — fixed with
+the line-aware pure `juniorCompletionEvidence` (`sliceAfterPrompt` keys off the prompt's LAST
+line), +5 unit tests incl. the demanded just-echoed-multi-line case, sentinel filtered from
+artifacts, `requireActivityStart` exemption justified (fast junior replies would false-stall).
+Round 2 APPROVE hand-verified the algorithms, re-derived M-N0a/b/c, and confirmed the
+agent-quote residual is fail-closed (loud stall, never silent false-open). Verdict
+`docs/reviews/verdict-n0-junior-completion.md` (both rounds). **Live round-2 validation: the
+shipped gate held ~80s of `awaiting-evidence` through a real subprocess gap on a
+department-shaped multi-line prompt and completed only at the true marker (t=126s).** Suite
+**668/668 across 121 files** (one adjacent run 667/668 = t30 browser-launch flake under
+three-GUI load, next run fully green), `tsc --noEmit` clean. **N0+N3 both landed: the ≥3-task
+concurrent run that opens Phase 8 is unblocked.**
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, main `ed553c3`):** the tree is green
+(668/668, tsc clean) and **both concurrency P0s (N0 + N3) are DONE + merged**. Remaining
+pre-Phase-8 punch list (`docs/plan-pre-phase8-remaining.md`): **(1) N2** — delivery-gate reads
+the latest work review regardless of `phase`; needs the phase-taxonomy DECISION before
+filtering. **(2) N1 option (a)** — real junior verify-fix dispatch (now unblocked by N0).
+**(3) N9 tidy** — reuse `getTaskRepoRoot` in `backup_push.ts`. **(4) N10** — guard
+`run_senior --senior zai` against attaching to a non-senior 9335 window. Then the supervised
+provisioning convergence run and the **≥3-task concurrent run = Phase 8 proper** (with the N0
+gate live, watch that markerless juniors surface as loud `stalled-awaiting-evidence` failures,
+not silent early completions). Operator-only: approve `3756ec6e`+`b55e2fda` in the console,
+decide N6, archive orphan `live-mt0xgoxz`. Watch the N9 scar: never let a backup test reach
+the real `ExecGitBackupProvider` rooted at the dept repo (it can `git push` origin/main).
 
 **CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
 a "Record of Hands" creators page was built — every persona (Claude Code, the Claude

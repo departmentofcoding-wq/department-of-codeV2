@@ -1,0 +1,100 @@
+[n0-observe] prompt sent at 2026-09-01T07:45:53.331Z
+[n0-observe] t=2s working=false canSend=false len=1049 termCancel=true
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Cancel (Ctrl+D)",1]]
+[n0-observe] t=4s working=true canSend=false len=1408 termCancel=true
+[n0-observe] t=6s working=true canSend=true len=1469 termCancel=false
+[n0-observe] t=8s working=false canSend=true len=1573 termCancel=false
+[n0-observe] t=10s working=false canSend=true len=1573 termCancel=false
+[n0-observe] t=12s working=false canSend=true len=1573 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=12s (idle+stable since t=10s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=14s working=false canSend=true len=1573 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=14s (idle+stable since t=12s) — termCancel=false ***
+[n0-observe] t=16s working=false canSend=true len=1573 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=16s (idle+stable since t=14s) — termCancel=false ***
+[n0-observe] t=18s working=false canSend=true len=1573 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=18s (idle+stable since t=16s) — termCancel=false ***
+[n0-observe] t=20s working=false canSend=true len=1573 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=20s (idle+stable since t=18s) — termCancel=false ***
+[n0-observe] t=22s working=false canSend=true len=1458 termCancel=false
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=24s working=false canSend=true len=1458 termCancel=false
+[n0-observe] t=26s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=26s (idle+stable since t=24s) — termCancel=false ***
+[n0-observe] t=28s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=28s (idle+stable since t=26s) — termCancel=false ***
+[n0-observe] t=30s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=30s (idle+stable since t=28s) — termCancel=false ***
+[n0-observe] t=32s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=32s (idle+stable since t=30s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=34s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=34s (idle+stable since t=32s) — termCancel=false ***
+[n0-observe] t=36s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=36s (idle+stable since t=34s) — termCancel=false ***
+[n0-observe] t=38s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=38s (idle+stable since t=36s) — termCancel=false ***
+[n0-observe] t=40s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=40s (idle+stable since t=38s) — termCancel=false ***
+[n0-observe] t=42s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=42s (idle+stable since t=40s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=44s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=44s (idle+stable since t=42s) — termCancel=false ***
+[n0-observe] t=46s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=46s (idle+stable since t=44s) — termCancel=false ***
+[n0-observe] t=48s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=48s (idle+stable since t=46s) — termCancel=false ***
+[n0-observe] t=51s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=51s (idle+stable since t=48s) — termCancel=false ***
+[n0-observe] t=53s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=53s (idle+stable since t=51s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=55s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=55s (idle+stable since t=53s) — termCancel=false ***
+[n0-observe] t=57s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=57s (idle+stable since t=55s) — termCancel=false ***
+[n0-observe] t=59s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=59s (idle+stable since t=57s) — termCancel=false ***
+[n0-observe] t=61s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=61s (idle+stable since t=59s) — termCancel=false ***
+[n0-observe] t=63s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=63s (idle+stable since t=61s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=65s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=65s (idle+stable since t=63s) — termCancel=false ***
+[n0-observe] t=67s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=67s (idle+stable since t=65s) — termCancel=false ***
+[n0-observe] t=69s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=69s (idle+stable since t=67s) — termCancel=false ***
+[n0-observe] t=71s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=71s (idle+stable since t=69s) — termCancel=false ***
+[n0-observe] t=73s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=73s (idle+stable since t=71s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=75s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=75s (idle+stable since t=73s) — termCancel=false ***
+[n0-observe] t=77s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=77s (idle+stable since t=75s) — termCancel=false ***
+[n0-observe] t=79s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=79s (idle+stable since t=77s) — termCancel=false ***
+[n0-observe] t=81s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=81s (idle+stable since t=79s) — termCancel=false ***
+[n0-observe] t=83s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=83s (idle+stable since t=81s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=85s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=85s (idle+stable since t=83s) — termCancel=false ***
+[n0-observe] t=87s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=87s (idle+stable since t=85s) — termCancel=false ***
+[n0-observe] t=89s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=89s (idle+stable since t=87s) — termCancel=false ***
+[n0-observe] t=91s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=91s (idle+stable since t=89s) — termCancel=false ***
+[n0-observe] t=93s working=false canSend=true len=1458 termCancel=false
+[n0-observe] *** CURRENT RULE WOULD COMPLETE at t=93s (idle+stable since t=91s) — termCancel=false ***
+[n0-observe]   recon: busyish=12 xterm=2 interesting=[["Send message",1]]
+[n0-observe] t=95s working=false canSend=false len=1494 termCancel=true
+[n0-observe] t=97s working=false canSend=true len=1634 termCancel=false
+[n0-observe] agent's final marker in REPLY REGION at t=97s.
+[n0-observe] genuine completion (marker + idle) at t=97s. resumedAfterGap=false.
