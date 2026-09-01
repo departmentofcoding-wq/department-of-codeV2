@@ -109,30 +109,36 @@ runner (`5ecfb91d`) was already draining — a second runner was mistakenly star
 same-junior tasks succeeded (hold the second until the first frees the junior). N9+N10 were
 **rekicked again** (different juniors B/A, safe concurrent) at run's end.
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, origin/main `b39c984`; N11 in flight):** the
-tree is green (668/668, tsc clean), **both concurrency P0s (N0 + N3) are DONE + merged**, and
-**N1a (verify-fix dispatch) is MERGED via PR #6**. The first multi-task run showed **concurrency
-is still not smooth** — the NEW gating item is **N11** (plan authoring bypasses the per-junior
-window lease → same-junior tasks double-launch and collide). **N11 was filed alone (task `0e921cfa`,
-junior A) and STALLED in plan authoring (N13) after ~10.5 min — the 4th plan-authoring stall vs 1
-success (only N1a got through). CONCLUSION: the flow cannot reliably author plans right now; N13
-is blocking task execution itself. STOP filing — do N11 + N13 as engine-dev** (manually, the way
-N0/N3/N8 were), then re-enable filing once plan authoring is reliable. Likely N13 fix: the 120s
-stall window is too tight for engine-dev planning (agents read many files silently > 120s with no
-DOM growth) — a live plan-authoring observation (à la N0) should confirm silent-read vs true wedge,
-then raise the authoring stall window (`runPlanReviewCycle` passes `stallMs: opts.juniorStallMs ??
-120000`) and/or add a progress signal that survives long silent reads. Do NOT loosen the stall net
-globally. Punch list
-(`docs/plan-pre-phase8-remaining.md`): **(1) N11** (in flight) → **(2) N13** (plan-authoring stall
-root cause — gating reliable task execution) + **(3) N12** (bounded cold-start retry / pre-warm
-juniors). Then pre-existing: **(4) N2** delivery-gate phase filter (needs the phase-taxonomy
-DECISION — it just bit N1a's approval; a retroactive diff review of N1a is warranted), **(5) N9
-tidy** getTaskRepoRoot, **(6) N10** zai window guard. Then the supervised provisioning convergence
-run and the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review of
-merged N1a, approve `3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. **N9 + N10
-were ARCHIVED** (repeatedly stalled on N13). Runtime note: one resident runner is draining — do NOT
-start a second (competing runners double-launch juniors); juniors are cold-start-fragile, pre-warm
-A@9333/B@9334 before any concurrent run.
+**PRE-PHASE-8 N13 FIXED (2026-09-01, merged origin/main `d8e2954`, PUSHED):** plan authoring is
+unblocked. **The root cause was NOT the stall net / too-tight 120s — it was the N0 completion
+sentinel applied to authoring.** `buildJuniorPlanPrompt` appended `JUNIOR_COMPLETION_INSTRUCTION`,
+arming the N0 evidence gate for authoring; a real folder-set authoring (junior A, Gemini 3.7 Flash
+Medium, live-observed) explores the codebase for minutes then writes a plan, and when it finished
+WITHOUT echoing the exact `BUREAU-JUNIOR-COMPLETE` line, the **5-min evidence timeout** (not the
+120s stall net) reaped it and DISCARDED the plan → the "no progress" deaths of N9/N10/N11.
+Intermittent (marker emission is LLM-nondeterministic; 3 controlled obs completed, the stall
+itself was not directly reproduced — mechanistic + circumstantial, disclosed to the senior). Fix:
+authoring no longer appends the sentinel → gate disarmed for authoring (idle+stable, proven pre-N0);
+sentinel stays on implementation + fix prompts. Test inverted, mutation M-N13, suite 676/676 ×2,
+tsc clean. **claude senior APPROVE** (`docs/reviews/verdict-n13-plan-authoring-stall.md`) — verified
+scoping, weighed the residual truncation risk as acceptable (revert-to-proven + rubric backstop),
+offered **N14** follow-up (on evidence-timeout, salvage the captured plan instead of discarding).
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-01, origin/main `d8e2954`):** the tree is green
+(676/676 ×2, tsc clean). **DONE + merged + pushed:** N0, N3 (concurrency P0s), N1a (verify-fix,
+via PR #6), and **N13 (plan authoring unblocked)**. **Filing tasks through the dept should work
+again now that N13 is fixed** — RE-FILE the archived work (N9 getTaskRepoRoot tidy, N10 zai window
+guard) and **N11** (the remaining concurrency P0). Punch list (`docs/plan-pre-phase8-remaining.md`):
+**(1) N11** — plan authoring bypasses the per-junior window lease → same-junior tasks double-launch/
+collide (the real concurrency fix; file it ALONE or do engine-dev — until it lands, run ONE task at
+a time). **(2) N12** — plan.cycle single-attempt cold-start terminal death (bounded infra-retry /
+pre-warm juniors). **(3) N2** — delivery-gate phase filter (needs the phase-taxonomy DECISION; it bit
+N1a's approval — a retroactive diff review of N1a is warranted). **(4) N9/N10** re-filed. **(5) N14**
+salvage-plan-on-timeout (P2, senior-suggested). Then the supervised provisioning convergence run and
+the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review of merged
+N1a, approve `3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. Runtime note: one
+resident runner is draining — do NOT start a second (competing runners double-launch juniors);
+juniors are cold-start-fragile, pre-warm A@9333/B@9334 before any concurrent run.
 
 **CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
 a "Record of Hands" creators page was built — every persona (Claude Code, the Claude

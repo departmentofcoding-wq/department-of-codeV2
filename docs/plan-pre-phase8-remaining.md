@@ -261,7 +261,22 @@ scoped to the infra class only** — a "workbench did not become available" is a
 not an agent verdict, so retrying it does not violate the "failed *agent* cycles are operator
 action" rule the way re-driving a real agent failure would. Keep genuine agent failures terminal.
 
-### N13 — plan-authoring stall pattern: 2 of 3 authoring runs died on the 120s stall window (P1, investigate)
+### N13 — plan-authoring stall — ✅ DONE (2026-09-01, merged origin/main `d8e2954`)
+**Root cause found (NOT the stall net / not too-tight 120s): it was the N0 completion-sentinel
+gate applied to plan authoring.** `buildJuniorPlanPrompt` appended `JUNIOR_COMPLETION_INSTRUCTION`,
+so the authoring prompt carried `BUREAU-JUNIOR-COMPLETE`, which arms the driver's N0
+`completionEvidence` gate. Live observation (junior A, Gemini 3.7 Flash Medium): the agent
+explores the codebase for minutes with a reliable "Working…" indicator, then writes a plan; when
+it finished authoring WITHOUT echoing the exact marker line, idle+stable was markerless → the
+**5-minute `evidenceTimeoutMs`** (not the 120s stall net) fired → `'stalled'` → the authored plan
+was DISCARDED. Intermittent because marker emission is LLM-nondeterministic (3 controlled obs
+completed; the intermittent stall was not directly reproduced — mechanistic + circumstantial).
+**Fix:** `buildJuniorPlanPrompt` no longer appends the sentinel, so the gate stays disarmed for
+authoring (idle+stable completion, the proven pre-N0 behavior); the sentinel stays on
+implementation + fix prompts where the subprocess race is real. Test inverted; mutation M-N13;
+suite 676/676 ×2, tsc clean. **claude senior APPROVE** (`docs/reviews/verdict-n13-plan-authoring-stall.md`).
+**Effect: plan authoring is unblocked — filed tasks can author plans again.** Original diagnosis below.
+
 Both N9 (junior B) and N10 (junior A, after rekick) died with *"…junior did not complete: no
 progress for the stall window (error, modal, or login wall?)"* — the `waitForAgentIdle` stall net
 (`stallMs` default 120000) firing during plan authoring. N1a's junior-A authoring **succeeded** on
@@ -275,6 +290,18 @@ observation did); if it's silent-long-read, raise the plan-authoring stall windo
 larger for authoring, or add a progress signal that survives long silent reads); if it's a wall,
 surface it. Do NOT loosen the stall net globally — it is what prevented a partial/echoed plan from
 being recorded as real.
+
+### N14 — authoring completion: fall back to the captured plan on evidence-timeout instead of discarding (P2, senior-suggested)
+Raised by the claude senior during the N13 review as a structurally cleaner alternative. N13
+DISARMED the evidence gate for authoring; a more conservative design would keep a gate armed but,
+on `evidenceTimeoutMs`, fall back to the already-captured `planText` (run it through the plan
+rubric) instead of discarding via `ensureCompleted`→`stalled`. Rationale: authoring's deliverable
+IS the visible chat text (unlike implementation's file edits, which live outside the chat pane), so
+a timed-out-but-substantial authoring can be salvaged rather than lost. Would restore an N0-style
+safety property for authoring while keeping N13's no-discard behavior. **Also (non-blocking):** log
+when authoring completes via idle+stable with a plan that then fails the rubric, to detect whether
+the theoretical mid-exploration truncation risk (the residual the senior flagged) actually occurs.
+Not needed for correctness now — N13 works — sequence opportunistically.
 
 ### Also reconfirmed this run
 - **N2 is real and unfixed:** N1a's delivery gate was a `phase='walkthrough'` review, not a
