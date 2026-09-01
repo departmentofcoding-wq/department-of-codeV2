@@ -123,9 +123,9 @@ describe('T29: End-to-End Worktree & Verifier Integration Test (WX)', () => {
       expect(gitLogMsgs).toContain(`bureau-checkpoint: ${taskId} verify-failure-sendback`);
       expect(gitLogMsgs).toContain('Attribution: verifier');
 
-      // Assert verify.run job 2 enqueued for retry
-      const verifyJobs2 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
-      expect(verifyJobs2.length).toBeGreaterThanOrEqual(1);
+      // Assert junior.dispatch job 1 enqueued for fix round (N1a)
+      const juniorJobs1 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'junior.dispatch' AND state = 'pending'", taskId);
+      expect(juniorJobs1.length).toBeGreaterThanOrEqual(1);
 
       // --- Step 3: Run 2 — Failure 2 ---
       // Update fail.js to write another dirty file
@@ -134,18 +134,18 @@ describe('T29: End-to-End Worktree & Verifier Integration Test (WX)', () => {
         `const fs = require('fs');\nconst path = require('path');\nfs.writeFileSync(path.join(__dirname, 'dirty_wip2.txt'), 'dirty work 2');\nprocess.exit(1);\n`
       );
 
-      const job2 = verifyJobs2[0];
+      const job2 = enqueueJob(db, { kind: 'verify.run', task_id: taskId, payload: { taskId } });
       await executeVerifyRunJob({ db, job: job2, payload: { taskId }, signal: new AbortController().signal });
 
       let taskAfterRun2 = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
       expect(taskAfterRun2?.state).toBe('claimed');
       expect(taskAfterRun2?.verify_fixes).toBe(2);
 
-      const verifyJobs3 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'verify.run' AND state = 'pending'", taskId);
-      expect(verifyJobs3.length).toBeGreaterThanOrEqual(1);
+      const juniorJobs2 = db.all<BureauJobRow>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'junior.dispatch' AND state = 'pending'", taskId);
+      expect(juniorJobs2.length).toBeGreaterThanOrEqual(2);
 
       // --- Step 4: Run 3 — Failure 3 (Ceiling reached: verify_fixes=2 >= ceiling=2) ---
-      const job3 = verifyJobs3[0];
+      const job3 = enqueueJob(db, { kind: 'verify.run', task_id: taskId, payload: { taskId } });
       await executeVerifyRunJob({ db, job: job3, payload: { taskId }, signal: new AbortController().signal });
 
       let taskAfterRun3 = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);

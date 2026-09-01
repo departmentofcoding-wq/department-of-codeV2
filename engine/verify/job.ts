@@ -4,7 +4,7 @@ import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
 import { completeJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
-import { handleVerifyOutcome, type VerifyOutcomeResult } from './loop.ts';
+import { handleVerifyOutcome, isVerifyFixSendback, readVerifyCeiling, type VerifyOutcomeResult } from './loop.ts';
 import { runStagedVerifier } from './verifier.ts';
 import { getBranchTipCommit } from '../delivery/pr_create.ts';
 
@@ -48,6 +48,28 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
   //    contract handleVerifyOutcome consumes.
   const outcome = await runStagedVerifier(ctx.db, taskId, workspaceHandle.path);
   const finishedTime = new Date().toISOString();
+
+  // Read ceiling and evaluate sendback condition before the finalization transaction
+  const ceiling = readVerifyCeiling(ctx.db);
+  const isSendback = isVerifyFixSendback(task, outcome, ceiling);
+
+  // Pre-transaction checkpoint (WX-1 / N1a): commit any dirty edits on sendback BEFORE
+  // junior.dispatch is enqueued in execTransaction so junior claims a clean tree.
+  if (isSendback) {
+    try {
+      await provider.checkpoint(ctx.db, taskId, VERIFIER_ATTRIBUTION, 'verify-failure-sendback');
+    } catch (err) {
+      journal(ctx.db, {
+        kind: 'system',
+        attribution: VERIFIER_ATTRIBUTION,
+        taskId,
+        detail: {
+          action: 'checkpoint_failed',
+          error: err instanceof Error ? err.message : String(err)
+        }
+      });
+    }
+  }
 
   // Read the worktree tip BEFORE the finalization transaction (a git subprocess
   // must not run inside execTransaction). Passed to handleVerifyOutcome so its
@@ -113,26 +135,15 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
     });
 
     // Execute synchronous DB state transitions & loop logic
-    outcomeResult = handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION, { tip });
+    outcomeResult = handleVerifyOutcome(ctx.db, taskId, outcome, VERIFIER_ATTRIBUTION, {
+      tip,
+      ceiling,
+      isSendback,
+      folder: workspaceHandle.path
+    });
 
     // Atomically mark the job done inside finalization transaction
     completeJob(ctx.db, ctx.job.id);
   });
-
-  // 5. Awaited Seam Checkpoint after transaction completes (WX-1)
-  if (outcomeResult.isSendback) {
-    try {
-      await provider.checkpoint(ctx.db, taskId, VERIFIER_ATTRIBUTION, 'verify-failure-sendback');
-    } catch (err) {
-      journal(ctx.db, {
-        kind: 'system',
-        attribution: VERIFIER_ATTRIBUTION,
-        taskId,
-        detail: {
-          action: 'checkpoint_failed',
-          error: err instanceof Error ? err.message : String(err)
-        }
-      });
-    }
-  }
 }
+
