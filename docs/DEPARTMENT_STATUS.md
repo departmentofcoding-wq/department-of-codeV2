@@ -113,10 +113,16 @@ same-junior tasks succeeded (hold the second until the first frees the junior). 
 tree is green (668/668, tsc clean), **both concurrency P0s (N0 + N3) are DONE + merged**, and
 **N1a (verify-fix dispatch) is MERGED via PR #6**. The first multi-task run showed **concurrency
 is still not smooth** — the NEW gating item is **N11** (plan authoring bypasses the per-junior
-window lease → same-junior tasks double-launch and collide). **N11 is FILED and running now**
-(task `0e921cfa`, junior A) — filed ALONE on purpose: until N11 lands the dept can only safely run
-ONE task at a time (filing 2+ re-triggers the very collision). If N11 stalls in plan authoring
-(N13, ~2/3 rate today), do N11+N13 as **engine-dev** instead of re-filing. Punch list
+window lease → same-junior tasks double-launch and collide). **N11 was filed alone (task `0e921cfa`,
+junior A) and STALLED in plan authoring (N13) after ~10.5 min — the 4th plan-authoring stall vs 1
+success (only N1a got through). CONCLUSION: the flow cannot reliably author plans right now; N13
+is blocking task execution itself. STOP filing — do N11 + N13 as engine-dev** (manually, the way
+N0/N3/N8 were), then re-enable filing once plan authoring is reliable. Likely N13 fix: the 120s
+stall window is too tight for engine-dev planning (agents read many files silently > 120s with no
+DOM growth) — a live plan-authoring observation (à la N0) should confirm silent-read vs true wedge,
+then raise the authoring stall window (`runPlanReviewCycle` passes `stallMs: opts.juniorStallMs ??
+120000`) and/or add a progress signal that survives long silent reads. Do NOT loosen the stall net
+globally. Punch list
 (`docs/plan-pre-phase8-remaining.md`): **(1) N11** (in flight) → **(2) N13** (plan-authoring stall
 root cause — gating reliable task execution) + **(3) N12** (bounded cold-start retry / pre-warm
 juniors). Then pre-existing: **(4) N2** delivery-gate phase filter (needs the phase-taxonomy
