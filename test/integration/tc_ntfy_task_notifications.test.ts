@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFakeDb } from '../fixtures/db_factory.ts';
 import { transition } from '../../engine/state/machine.ts';
-import { fileTask } from '../../engine/filing/file_task.ts';
+import { fileTask, drainFilingNotifications } from '../../engine/filing/file_task.ts';
 import { confirmVerify, createSession, updateSessionDraft } from '../../engine/intake/index.ts';
 import { setNtfyTransportOverride } from '../../engine/notifications/ntfy-seam.ts';
 import { subscribeTaskStateChange, clearTaskStateSubscribers, type TaskStateChangeEvent } from '../../engine/state/notifications.ts';
@@ -204,5 +204,45 @@ describe('T-NTFY: Task status change notifications integration', () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(capturedPosts.length).toBe(1);
+  });
+
+  it('drainFilingNotifications awaits the filing push so its journal span survives CLI shutdown', async () => {
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', 'https://ntfy.sh')");
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', 'bureau-alerts-topic')");
+
+    // A transport that only resolves when the test releases it — models a push
+    // still in flight when a short-lived CLI would reach its db.close().
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setNtfyTransportOverride({
+      async post() {
+        await gate;
+        return { status: 200, text: 'ok' };
+      }
+    });
+
+    const session = createSession(db, { attribution: OPERATOR_ATTR });
+    updateSessionDraft(db, session.id, {
+      title: 'Drain before close',
+      intent: 'The journal span must survive CLI shutdown',
+      verify_cmd: 'npm test'
+    });
+    confirmVerify(db, session.id, OPERATOR_ATTR);
+
+    const task = fileTask(db, session.id, OPERATOR_ATTR);
+
+    const spanQuery = "SELECT detail FROM bureau_journal WHERE task_id = ? AND detail LIKE '%ntfy_notification%'";
+    // Push still in flight: the span is NOT yet written.
+    expect(db.get(spanQuery, task.id)).toBeUndefined();
+
+    release();
+    await drainFilingNotifications();
+
+    // After the drain the push has settled and its span is durable — a CLI
+    // may now close the DB and exit without losing the record.
+    const span = db.get<{ detail: string }>(spanQuery, task.id);
+    expect(span).toBeDefined();
+    expect(span!.detail).toContain('"state":"queued"');
+    expect(span!.detail).not.toContain('bureau-alerts-topic');
   });
 });

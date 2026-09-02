@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { AttributionTuple, DbConnection } from '../engine/contract/index.ts';
 import { openDbConnection } from '../engine/db/index.ts';
-import { fileTask } from '../engine/filing/file_task.ts';
+import { fileTask, drainFilingNotifications } from '../engine/filing/file_task.ts';
 import { confirmVerify, createSession, getOpenSessions, getSessionWithMessages, updateSessionDraft, appendIntakeMessage } from '../engine/intake/index.ts';
 import { getProject, listProjects } from '../engine/projects/index.ts';
 import { enqueueJob } from '../engine/jobs/jobs.ts';
@@ -137,6 +137,9 @@ export async function main() {
     try {
       const task = fileTask(db, sessionId, humanAttr);
       console.log(`Task filed successfully: ID ${task.id}, state ${task.state}`);
+      // Wait out the fire-and-forget filing push so its journal span is not
+      // lost to the close below (short-lived CLI — see drainFilingNotifications).
+      await drainFilingNotifications();
       db.close();
       return;
     } catch (err: any) {

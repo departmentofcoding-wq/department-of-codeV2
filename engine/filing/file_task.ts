@@ -133,15 +133,39 @@ export function fileTask(
   // filing). A filed task is born `queued` via INSERT, not transition(), so
   // this is the only place the entry-to-queued push can originate.
   if (insertedNewTask && NOTIFYING_TASK_STATES.has('queued')) {
-    void notifyTaskStateChange(db, {
+    const push = notifyTaskStateChange(db, {
       taskId: taskRow.id,
       title: taskRow.title,
       state: 'queued',
       reason: 'Task filed — entering the queue; plan kickoff follows automatically'
-    }).catch(() => {
-      // Notification errors are non-blocking and already logged
-    });
+    })
+      .catch(() => {
+        // Notification errors are non-blocking and already logged
+      })
+      .finally(() => {
+        pendingFilingNotifications.delete(push);
+      });
+    pendingFilingNotifications.add(push);
   }
 
   return taskRow;
+}
+
+/**
+ * In-flight filing-notification promises. Short-lived CLI processes must
+ * `await drainFilingNotifications()` before `db.close()`/exit: the push is
+ * fire-and-forget like machine.ts's transition hook (correct for the
+ * long-lived console/runner), but a CLI that closes the DB mid-flight loses
+ * the notification's journal span — the push may still deliver while its
+ * record vanishes, breaking the every-act-journaled law (observed live
+ * 2026-09-02: the task:file CLI delivered the QUEUED push to ntfy with no
+ * `ntfy_notification` span, because `finally { db.close() }` won the race).
+ */
+const pendingFilingNotifications = new Set<Promise<unknown>>();
+
+/** Resolves once every filing notification fired so far has settled. */
+export async function drainFilingNotifications(): Promise<void> {
+  while (pendingFilingNotifications.size > 0) {
+    await Promise.allSettled([...pendingFilingNotifications]);
+  }
 }

@@ -7,7 +7,8 @@ import {
   AgentFileError,
   AGENT_IDENTITIES,
   isAgentAutofileEnabled,
-  setAgentAutofile
+  setAgentAutofile,
+  drainFilingNotifications
 } from '../engine/filing/index.ts';
 import { journal } from '../engine/journal/writer.ts';
 import { planCycleJobId } from '../engine/jobs/ids.ts';
@@ -139,6 +140,9 @@ async function main() {
       if (!isAgentAutofileEnabled(db)) {
         console.log(`  WARNING: autofile flag reads OFF after filing — unexpected state.`);
       }
+      // The filing push is fire-and-forget; a short-lived CLI must wait it out
+      // before the finally-close, or its journal span is lost to db.close().
+      await drainFilingNotifications();
     } catch (err: any) {
       if (err instanceof AgentFileError) {
         console.error(`[task:file] REFUSED (${err.code}): ${err.message}`);
