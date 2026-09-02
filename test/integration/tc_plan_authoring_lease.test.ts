@@ -1,0 +1,219 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createFakeDb } from '../fixtures/db_factory.ts';
+import { openDbConnection, closeDatabase } from '../../engine/db/index.ts';
+import { setAntigravityDriverOverride } from '../../engine/harness/antigravity-seam.ts';
+import { setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
+import { acquireLease, releaseLease } from '../../engine/harness/lease-manager.ts';
+import { runPlanReviewCycle } from '../../engine/flow/plan_review_cycle.ts';
+
+/**
+ * N11 — plan authoring serializes on the per-junior window lease.
+ *
+ * Scar (2026-09-01): `junior.dispatch` acquires `window-${junior}` but plan
+ * AUTHORING called the driver directly with no lease — two same-junior cycles
+ * each cold-launched the IDE (two windows for one junior, the operator-observed
+ * RAM waste) and collided on cold-start attach, killing cycles. Authoring now
+ * acquires (waiting, bounded) + heartbeats + releases the same lease target a
+ * dispatch uses, so same-junior cycles serialize on one window.
+ */
+describe('N11: plan authoring serializes on the per-junior window lease', () => {
+  afterEach(() => {
+    setAntigravityDriverOverride(null);
+    setSeniorDriverOverride(null);
+  });
+
+  function seedTask(db: any, taskId: string) {
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO bureau_tasks (id, title, intent, spec, acceptance, state, work_uuid, plan_rounds, created_at, updated_at)
+       VALUES (?, 'Serialize authoring', 'two same-junior cycles must not collide', 'spec', 'accept', 'claimed', 'w-${taskId}', 0, ?, ?)`,
+      taskId, now, now
+    );
+  }
+
+  const GOOD_PLAN = [
+    'Implementation Plan',
+    'Branch: wt/junior-a-serial',
+    'Scope: one file.',
+    'Tests: t.test.ts asserts behavior; mutation: break it → test fails.',
+    'Walkthrough: verify build + suite, then post results.'
+  ].join('\n');
+
+  function approveSenior() {
+    setSeniorDriverOverride({
+      review: async () => ({ senior: 'claude', verdict: 'approve', feedback: 'ok', raw: 'VERDICT: APPROVE', model: 'test' })
+    } as any);
+  }
+
+  it('two concurrent SAME-junior plan cycles SERIALIZE — never two authors in one window, both complete', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n11-a');
+    seedTask(db, 'task-n11-b');
+
+    // The fake junior tracks how many authors run CONCURRENTLY inside the window.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    setAntigravityDriverOverride({
+      async runCommand() {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 350));
+        inFlight--;
+        return { transcript: GOOD_PLAN, launched: false };
+      }
+    } as any);
+    approveSenior();
+
+    const [r1, r2] = await Promise.all([
+      runPlanReviewCycle(db, { taskId: 'task-n11-a', junior: 'A', seniorId: 'claude' }),
+      runPlanReviewCycle(db, { taskId: 'task-n11-b', junior: 'A', seniorId: 'claude' })
+    ]);
+
+    // Both cycles completed (the second WAITED for the window, then authored).
+    expect(r1.outcome).toBe('approved');
+    expect(r2.outcome).toBe('approved');
+
+    // The serialization invariant: never more than one author in the window.
+    expect(maxInFlight).toBe(1);
+
+    // Both lease rows exist and are released — the window is free again.
+    const leases = db.all(`SELECT * FROM bureau_window_leases WHERE window_target = 'window-A'`);
+    expect(leases.length).toBe(2);
+    expect(leases.every((l: any) => l.status === 'released')).toBe(true);
+
+    // The acquisition is journaled; the second waited for the first.
+    const spans = db.all(
+      `SELECT detail FROM bureau_journal WHERE detail LIKE '%plan_authoring_window_lease_acquired%'`
+    );
+    expect(spans.length).toBe(2);
+    const waitFlags = spans.map((s: any) => JSON.parse(s.detail).waited).sort();
+    expect(waitFlags).toEqual([false, true]);
+  });
+
+  it('a junior failure releases the lease — the next same-junior cycle acquires immediately', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n11-f1');
+    seedTask(db, 'task-n11-f2');
+
+    let call = 0;
+    setAntigravityDriverOverride({
+      async runCommand() {
+        call++;
+        if (call === 1) throw new Error('junior wedge: workbench did not become available');
+        return { transcript: GOOD_PLAN, launched: false };
+      }
+    } as any);
+    approveSenior();
+
+    await expect(
+      runPlanReviewCycle(db, { taskId: 'task-n11-f1', junior: 'B', seniorId: 'claude' })
+    ).rejects.toThrow(/workbench did not become available/);
+
+    // The lease was released in the failure path: the next cycle acquires
+    // IMMEDIATELY (no wait) and completes.
+    const t0 = Date.now();
+    const res = await runPlanReviewCycle(db, { taskId: 'task-n11-f2', junior: 'B', seniorId: 'claude' });
+    expect(res.outcome).toBe('approved');
+    expect(Date.now() - t0).toBeLessThan(2000);
+
+    const active = db.get(`SELECT * FROM bureau_window_leases WHERE window_target = 'window-B' AND status = 'active'`);
+    expect(active).toBeFalsy();
+  });
+
+  it('wait-timeout fails loud when another holder keeps the window past the budget', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n11-t');
+
+    // An external holder owns the window (e.g. a wedged dispatch lease).
+    const holder = acquireLease(db, 'window-A', 'disp-external', {
+      actor_role: 'junior-engineer', provider: 'antigravity', model: 'test', account: null
+    });
+
+    setAntigravityDriverOverride({
+      async runCommand() { throw new Error('must not be reached'); }
+    } as any);
+
+    await expect(
+      runPlanReviewCycle(db, {
+        taskId: 'task-n11-t',
+        junior: 'A',
+        seniorId: 'claude',
+        juniorLeaseWaitMs: 300,
+        signal: undefined
+      })
+    ).rejects.toThrow(/Timed out after 300ms waiting for window lease 'window-A'/);
+
+    // The external holder is untouched; no authoring lease was created.
+    const row = db.get(`SELECT status FROM bureau_window_leases WHERE id = ?`, holder.id) as { status: string } | undefined;
+    expect(row?.status).toBe('active');
+    const spans = db.all(`SELECT detail FROM bureau_journal WHERE detail LIKE '%plan_authoring_window_lease_acquired%'`);
+    expect(spans.length).toBe(0);
+
+    releaseLease(db, holder.id);
+  });
+
+  it('boot migration drops the dispatch FK from an existing bureau_window_leases table (authoring can hold leases)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bureau-n11-mig-'));
+    const dbPath = path.join(tmp, 'old.db');
+    try {
+      // A pre-N11 database: the lease table carries the dispatch FK and rows.
+      const { DatabaseSync } = require('node:sqlite');
+      const raw = new DatabaseSync(dbPath);
+      raw.exec(`
+        CREATE TABLE bureau_dispatches (id TEXT PRIMARY KEY, task_id TEXT, work_uuid TEXT, actor_role TEXT, provider TEXT, model TEXT, status TEXT, attempts INTEGER, created_at TEXT);
+        CREATE TABLE bureau_window_leases (
+          id TEXT PRIMARY KEY,
+          window_target TEXT NOT NULL,
+          dispatch_id TEXT NOT NULL REFERENCES bureau_dispatches(id),
+          status TEXT NOT NULL CHECK (status IN ('active','released','expired','reaped')),
+          acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+          heartbeats INTEGER NOT NULL DEFAULT 0,
+          actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+          model TEXT NOT NULL, account TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+      `);
+      raw.prepare(`INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, status, attempts, created_at)
+                   VALUES ('disp-old', 't-old', 'w', 'junior-engineer', 'antigravity', 'm', 'completed', 1, ?)`)
+        .run(new Date().toISOString());
+      raw.prepare(`INSERT INTO bureau_window_leases (id, window_target, dispatch_id, status, acquired_at, expires_at, heartbeats, actor_role, provider, model, account, created_at, updated_at)
+                   VALUES ('lease-old', 'window-A', 'disp-old', 'released', ?, ?, 3, 'junior-engineer', 'antigravity', 'm', NULL, ?, ?)`)
+        .run(new Date().toISOString(), new Date().toISOString(), new Date().toISOString(), new Date().toISOString());
+      raw.close();
+
+      // Opening applies boot migrations: the table is rebuilt WITHOUT the FK,
+      // preserving rows; a NON-dispatch holder (plan authoring) is accepted.
+      const db = openDbConnection(dbPath);
+      const master = db.prepare(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='bureau_window_leases'`
+      ).get() as { sql: string };
+      expect(master.sql).not.toContain('REFERENCES bureau_dispatches');
+
+      const preserved = db.prepare(`SELECT * FROM bureau_window_leases WHERE id = 'lease-old'`).get() as any;
+      expect(preserved.dispatch_id).toBe('disp-old');
+      expect(preserved.heartbeats).toBe(3);
+
+      const lease = acquireLease(db, 'window-A', 'plan.cycle:not-a-dispatch', {
+        actor_role: 'junior-engineer', provider: 'antigravity', model: 'test', account: null
+      });
+      expect(lease.status).toBe('active');
+      releaseLease(db, lease.id);
+      db.close();
+      closeDatabase();
+
+      // Reopening is idempotent (the rebuild is guarded by the live DDL shape).
+      const again = openDbConnection(dbPath);
+      const master2 = again.prepare(
+        `SELECT sql FROM sqlite_master WHERE type='table' AND name='bureau_window_leases'`
+      ).get() as { sql: string };
+      expect(master2.sql).not.toContain('REFERENCES bureau_dispatches');
+      again.close();
+      closeDatabase();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
