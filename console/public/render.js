@@ -651,7 +651,10 @@ export function renderJournalTimeline(journal) {
   // System group always sorts last.
   order.sort((a, b) => (a === UNATTRIBUTED ? 1 : 0) - (b === UNATTRIBUTED ? 1 : 0));
 
-  const renderEntry = (j) => `
+  const renderEntry = (j) => {
+    const rawStr = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? null, null, 2);
+    const narrativeText = j.narrative || rawStr;
+    return `
     <div class="timeline-item kind-${escapeHtml(j.kind)}">
       <div class="timeline-meta">
         <span class="timeline-ts">${escapeHtml(j.ts)}</span>
@@ -659,10 +662,15 @@ export function renderJournalTimeline(journal) {
         <span class="actor">${escapeHtml(j.actor_role)} (${escapeHtml(j.provider)})</span>
       </div>
       <div class="timeline-body">
-        <div class="timeline-detail">${escapeHtml(j.detail)}</div>
+        <div class="timeline-narrative">${escapeHtml(narrativeText)}</div>
+        <details class="timeline-raw-detail">
+          <summary>raw</summary>
+          <pre class="timeline-raw-json">${escapeHtml(rawStr)}</pre>
+        </details>
       </div>
     </div>
   `;
+  };
 
   const sections = order.map((key) => {
     const g = groups.get(key);

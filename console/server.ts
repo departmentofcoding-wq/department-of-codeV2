@@ -8,6 +8,7 @@ import { redactOutput } from '../engine/contract/tools.ts';
 import { journal } from '../engine/journal/writer.ts';
 import { dashboardSnapshot, workerRoster, taskFlow, FLOW_STAGES } from '../engine/dashboards/views.ts';
 import { timeline } from '../engine/journal/queries.ts';
+import { narrateEntry } from '../engine/journal/narrate.ts';
 import { approveTask } from '../engine/state/machine.ts';
 import { archiveTask, unarchiveTask } from '../engine/state/archive.ts';
 import { markTaskCompleted, reopenTask } from '../engine/state/completion.ts';
@@ -524,7 +525,8 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           tokens_out: r.tokens_out,
           cost_usd: r.cost_usd,
           latency_ms: r.latency_ms,
-          detail: redactOutput(r.detail)
+          detail: redactOutput(r.detail),
+          narrative: narrateEntry(r)
         }));
         sendJson(res, 200, dtos);
         return;

@@ -226,4 +226,83 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('approved');
     expect(html).toContain('timeline-group-count">2<');
   });
+
+  it('12. renderJournalTimeline: renders narrative as primary text and raw detail in collapsed details element', () => {
+    const entries = [
+      {
+        id: 1,
+        ts: '2026-08-24T00:00:00.000Z',
+        kind: 'transition',
+        actor_role: 'foreman',
+        provider: 'deterministic',
+        model: 'core',
+        account: null,
+        task_id: 'task-A',
+        work_uuid: 'wA',
+        work_title: 'Assets tab',
+        job_id: null,
+        detail: '{"fromState":"queued","toState":"claimed"}',
+        narrative: 'Task moved from queued to claimed.'
+      }
+    ];
+    const html = renderJournalTimeline(entries as any);
+    expect(html).toContain('timeline-narrative');
+    expect(html).toContain('Task moved from queued to claimed.');
+    expect(html).toContain('timeline-raw-detail');
+    expect(html).toContain('<summary>raw</summary>');
+    expect(html).toContain('timeline-raw-json');
+  });
+
+  it('13. renderJournalTimeline: serializes object detail as formatted JSON rather than [object Object]', () => {
+    const entries = [
+      {
+        id: 2,
+        ts: '2026-08-24T00:00:00.000Z',
+        kind: 'review',
+        actor_role: 'senior-engineer',
+        provider: 'claude',
+        model: 'opus',
+        account: null,
+        task_id: 'task-B',
+        work_uuid: 'wB',
+        work_title: 'Plan review',
+        job_id: null,
+        detail: { stage: 'plan-review', verdict: 'approved' },
+        narrative: 'The plan senior (claude) approved the plan.'
+      }
+    ];
+    const html = renderJournalTimeline(entries as any);
+    expect(html).not.toContain('[object Object]');
+    expect(html).toContain('&quot;stage&quot;: &quot;plan-review&quot;');
+    expect(html).toContain('&quot;verdict&quot;: &quot;approved&quot;');
+  });
+
+  it('14. renderJournalTimeline: safely escapes hostile tokens in kind, actor, provider, narrative, and detail', () => {
+    const entries = [
+      {
+        id: 3,
+        ts: '2026-08-24T00:00:00.000Z',
+        kind: 'guardrail<img src=x onerror=alert(1)>',
+        actor_role: '<script>alert("role")</script>',
+        provider: '<script>alert("provider")</script>',
+        model: 'core',
+        account: null,
+        task_id: 'task-C',
+        work_uuid: 'wC',
+        work_title: 'Security task',
+        job_id: null,
+        detail: { injection: '<img src=x onerror="alert(\'detail\')">' },
+        narrative: 'A guardrail refused an action: <script>alert("narrative")</script>'
+      }
+    ];
+    const html = renderJournalTimeline(entries as any);
+    expect(html).not.toContain('<script>alert');
+    expect(html).not.toContain('<img src=x onerror');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('&lt;script&gt;alert(&quot;role&quot;)&lt;/script&gt;');
+    expect(html).toContain('&lt;script&gt;alert(&quot;provider&quot;)&lt;/script&gt;');
+    expect(html).toContain('&lt;script&gt;alert(&quot;narrative&quot;)&lt;/script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=\\&quot;alert(&#39;detail&#39;)\\&quot;&gt;');
+  });
 });
+
