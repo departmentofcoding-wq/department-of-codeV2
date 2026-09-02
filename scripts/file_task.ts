@@ -11,7 +11,6 @@ import {
   drainFilingNotifications
 } from '../engine/filing/index.ts';
 import { journal } from '../engine/journal/writer.ts';
-import { planCycleJobId } from '../engine/jobs/ids.ts';
 
 const USAGE = `Usage:
   npm run task:file -- --enable | --disable            # operator: toggle the agent-autofile opt-in
@@ -136,7 +135,7 @@ async function main() {
       console.log(`  Title: ${task.title}`);
       console.log(`  State: ${task.state}`);
       console.log(`  Filed by: ${attribution.actor_role}/${attribution.provider} (${attribution.model})`);
-      console.log(`  Plan kickoff job: ${planCycleJobId(task.id)} (pending — drained by the runner)`);
+      console.log(`  Queue: waiting for a free junior (N17) — the runner's queue manager admits it FIFO, pinned to a junior+senior at claim`);
       if (!isAgentAutofileEnabled(db)) {
         console.log(`  WARNING: autofile flag reads OFF after filing — unexpected state.`);
       }
