@@ -11,7 +11,9 @@ import {
   ensureFolderWindowWs,
   closeFolderWindow,
   findMainWindowWs,
-  resolveJunior
+  resolveJunior,
+  resolveDeliveryStrategy,
+  buildWorktreeDirective
 } from './antigravity.ts';
 import { HarnessError } from './errors.ts';
 
@@ -53,12 +55,13 @@ export interface AntigravityRunOptions {
   /** Folder/project to select in the GUI before sending the prompt. */
   folder?: string;
   /** The junior MUST run in `folder` (a delivery dispatch that has to commit in
-   *  the task's worktree). Because `selectFolder` only clicks an ALREADY-OPEN
-   *  project and cannot open a fresh path (verified live: a brand-new
-   *  `.bureau-worktrees/<id>` matches no sidebar control), setting this makes
-   *  `runCommand` OPEN — or reuse — a dedicated IDE window ON that folder and drive
-   *  the junior there. If the window can't be opened it fails hard, never falling
-   *  back to the wrong workspace. */
+   *  the task's worktree). How that is enforced depends on the junior's window
+   *  model (`resolveDeliveryStrategy`): a folder-window junior (A) OPENs — or
+   *  reuses — a dedicated IDE window ON that folder (a failure to open it is hard,
+   *  never falling back to the wrong workspace, since `selectFolder` cannot open a
+   *  fresh `.bureau-worktrees/<id>`); a single-window junior (B) attaches its main
+   *  window and has the absolute worktree path prepended to the prompt so the agent
+   *  works there. */
   requireFolder?: boolean;
   /** Start a fresh conversation first so a prior task can't bleed in. Default
    *  true; enforced strictly — if the fresh-conversation control can't be found
@@ -83,24 +86,32 @@ class RealAntigravityDriver implements AntigravityDriver {
         : await ensureJuniorRunning(cfg);
     const port = opts.port ?? cfg.cdpPort;
 
-    // Choose which IDE WINDOW to drive. For a REQUIRED folder (a delivery dispatch
-    // that must land in the task's worktree), open — or reuse — a dedicated window
-    // ON that folder and drive the junior THERE. `selectFolder` alone cannot open a
-    // fresh worktree (verified live), so this is what actually points the junior at
-    // the worktree; a failure to open it is a hard failure (never run in the wrong
-    // workspace). Otherwise drive the main workbench window as before.
+    // Choose HOW to point this junior at the task's worktree — the two juniors
+    // have different window models (see JuniorWindowModel):
+    //  - folder-window (A, the VS Code fork): open/reuse a dedicated window ON the
+    //    worktree and drive the junior THERE. `selectFolder` alone cannot open a
+    //    fresh worktree (verified live), so this is what actually scopes the work;
+    //    a failure to open it is hard (never run in the wrong workspace).
+    //  - single-window (B, Antigravity 2.0): there are no per-folder windows, so
+    //    attach the single main window and tell the agent the worktree path in the
+    //    prompt (injected below). This is the N9 delivery fix.
+    const strategy = resolveDeliveryStrategy(cfg, {
+      folder: opts.folder,
+      requireFolder: opts.requireFolder
+    });
     let wsUrl = '';
     let openedFolderWindow = false;
-    if (opts.folder && opts.requireFolder) {
-      wsUrl = await ensureFolderWindowWs(cfg, opts.folder, port, { signal: opts.signal });
+    if (strategy.attach === 'folder-window') {
+      wsUrl = await ensureFolderWindowWs(cfg, opts.folder!, port, { signal: opts.signal });
       openedFolderWindow = true;
     } else {
-      // The workbench window can lag the CDP endpoint SUBSTANTIALLY on a cold
-      // launch — this Antigravity build (a VS Code fork) answers its debug port
-      // within a second or two but does not expose an attachable workbench target
-      // for another 30-40s. Poll on a generous time budget (not a fixed 20
-      // iterations) so a slow cold start attaches instead of being misread as a
-      // wedge. Honors the signal (job timeout / shutdown) every poll.
+      // The main window can lag the CDP endpoint SUBSTANTIALLY on a cold launch —
+      // the IDE (a VS Code fork) answers its debug port within a second or two but
+      // does not expose an attachable workbench target for another 30-40s; the
+      // standalone app answers immediately but still renders its SPA a beat later.
+      // Poll on a generous time budget (not a fixed 20 iterations) so a slow cold
+      // start attaches instead of being misread as a wedge. Honors the signal
+      // (job timeout / shutdown) every poll.
       const attachDeadline = Date.now() + MAIN_WINDOW_ATTACH_MS;
       while (Date.now() < attachDeadline) {
         if (opts.signal?.aborted) throw new HarnessError(`${cfg.label} dispatch aborted before attach`);
@@ -114,6 +125,16 @@ class RealAntigravityDriver implements AntigravityDriver {
       }
     }
     if (!wsUrl) throw new Error(`${cfg.label} workbench window did not become available in time.`);
+
+    // Single-window junior on a REQUIRED worktree (B delivering): the folder isn't
+    // opened as a window, so the agent is told where to work by prepending the
+    // worktree directive to the prompt. Prepend (never append) so the prompt's LAST
+    // line — the N0 completion instruction — stays put, keeping the completion gate
+    // and reply/plan/walkthrough slicing (all keyed off the prompt's last line)
+    // correct. For folder-window juniors the effective prompt is unchanged.
+    const effectivePrompt = strategy.injectWorktreePath
+      ? buildWorktreeDirective(strategy.injectWorktreePath) + prompt
+      : prompt;
 
     const session = new AntigravitySession(wsUrl);
     await session.connect();
@@ -149,13 +170,18 @@ class RealAntigravityDriver implements AntigravityDriver {
         // We are already attached to a window opened ON the required folder — the
         // window IS the workspace, so there is nothing to select.
         folderSelected = true;
+      } else if (strategy.injectWorktreePath) {
+        // Single-window junior (B): the worktree is communicated in the prompt
+        // (the directive prepended above), not by clicking a sidebar project — so
+        // there is nothing to select, and the path WAS conveyed.
+        folderSelected = true;
       } else if (opts.folder) {
         // Best-effort switch among already-open projects (no worktree involved).
         folderSelected = await session.selectFolder(opts.folder);
       }
       if (opts.model) model = await session.selectModel(opts.model);
 
-      await session.sendPrompt(prompt);
+      await session.sendPrompt(effectivePrompt);
       // N0 completion gate: when the prompt carries the sentinel instruction
       // (all department-built junior prompts do), completion requires idle+
       // stable AND the marker in the reply region — an agent that ends its turn
@@ -166,10 +192,10 @@ class RealAntigravityDriver implements AntigravityDriver {
       // single transcript line and would fall back to the page tail — the
       // echoed prompt — whose instruction block contains the marker (senior
       // REVISE round 1).
-      const markerGate = prompt.includes(JUNIOR_COMPLETION_MARKER)
+      const markerGate = effectivePrompt.includes(JUNIOR_COMPLETION_MARKER)
         ? {
             completionEvidence: async () =>
-              juniorCompletionEvidence(await session.readTranscript(250), prompt)
+              juniorCompletionEvidence(await session.readTranscript(250), effectivePrompt)
           }
         : {};
       // Wait adaptively: keep extending while the junior is working; no hard cap.
@@ -182,7 +208,7 @@ class RealAntigravityDriver implements AntigravityDriver {
       });
       ensureCompleted(waited, `${cfg.label} junior`);
 
-      const artifacts = await session.captureArtifacts(prompt);
+      const artifacts = await session.captureArtifacts(effectivePrompt);
       return {
         transcript: artifacts.reply,
         fullOutput: artifacts.transcript,

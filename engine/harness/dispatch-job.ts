@@ -329,8 +329,9 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         }
       });
 
-      // N16 — the primary-checkout contamination guard. The window was pointed
-      // at the worktree (requireFolder + a dedicated folder window), but an
+      // N16 — the primary-checkout contamination guard. The dispatch was scoped
+      // to the worktree (a dedicated folder window for junior A, or the worktree
+      // path injected into the prompt for the single-window junior B), but an
       // agent that also holds the primary folder open (or edits by absolute
       // path) can leak uncommitted edits into main's TRACKED files — the
       // 0e921cfa scar: ~284 lines of unreviewed engine code in the primary

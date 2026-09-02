@@ -104,6 +104,26 @@ export function buildAntigravityArgs(port: number): string[] {
  * options, and the send control is `aria-label="Send message"`. They differ only
  * in binary, CDP port, and the env var that overrides the binary path.
  */
+/**
+ * How a junior exposes the working folder to the department, which decides how a
+ * delivery dispatch points the agent at the task's bureau worktree:
+ *
+ *  - `'folder-window'` — the VS Code fork (junior **A**): each folder opens as its
+ *    OWN CDP window titled `"<basename> - Antigravity IDE"`. The department opens
+ *    the worktree in such a window and drives the agent there; the window IS the
+ *    workspace, so nothing needs to be said in the prompt.
+ *  - `'single-window'` — the standalone Antigravity 2.0 agent app (junior **B**):
+ *    ONE window titled `"Antigravity"`, organized by in-app *Projects*, with NO
+ *    per-folder windows (verified live 2026-09-02: `Antigravity.exe <folder>`
+ *    opens no new CDP target and registers no project). A fresh
+ *    `.bureau-worktrees/<id>` can therefore never be opened as its own window, so
+ *    `ensureFolderWindowWs` times out forever — the N9 delivery death. For B the
+ *    department attaches to the single main window and hands the agent the
+ *    ABSOLUTE worktree path in the prompt (B writes to disk directly — the
+ *    2026-08-20 clicker test). The N16 primary-tree guard remains the safety net.
+ */
+export type JuniorWindowModel = 'folder-window' | 'single-window';
+
 export interface JuniorConfig {
   /** Stable id used across the department ('A' | 'B'). */
   id: string;
@@ -115,6 +135,8 @@ export interface JuniorConfig {
   binaryCandidates: string[];
   /** CDP debug port this junior is launched/attached on. */
   cdpPort: number;
+  /** How this junior scopes a delivery to a folder (see `JuniorWindowModel`). */
+  windowModel: JuniorWindowModel;
 }
 
 function localAppData(): string {
@@ -133,7 +155,8 @@ export const JUNIORS: Record<string, JuniorConfig> = {
         : os.platform() === 'darwin'
           ? ['/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE']
           : ['/usr/bin/antigravity-ide', '/opt/Antigravity IDE/antigravity-ide'],
-    cdpPort: 9333
+    cdpPort: 9333,
+    windowModel: 'folder-window'
   },
   B: {
     id: 'B',
@@ -145,7 +168,8 @@ export const JUNIORS: Record<string, JuniorConfig> = {
         : os.platform() === 'darwin'
           ? ['/Applications/Antigravity.app/Contents/MacOS/Antigravity']
           : ['/usr/bin/antigravity', '/opt/Antigravity/antigravity'],
-    cdpPort: 9334
+    cdpPort: 9334,
+    windowModel: 'single-window'
   }
 };
 
@@ -164,6 +188,57 @@ export function assignJunior(opts: { taskId: string; prefer?: string }): string 
   let h = 0;
   for (const ch of opts.taskId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % 2 === 0 ? 'A' : 'B';
+}
+
+/**
+ * How a delivery dispatch should attach to a junior and whether it must tell the
+ * agent where the worktree is. Pure and deterministic (unit-tested) so the branch
+ * that decides A-vs-B delivery is provable without a live IDE.
+ *
+ *  - `attach: 'folder-window'` — open/reuse a dedicated CDP window ON the worktree
+ *    (junior A). The window is the workspace; nothing goes in the prompt.
+ *  - `attach: 'main-window'` — attach the junior's single main window. When
+ *    `injectWorktreePath` is set (a single-window junior on a REQUIRED worktree,
+ *    i.e. B delivering), the caller prepends `buildWorktreeDirective(path)` to the
+ *    prompt so the agent knows where to work; there is no folder window to open.
+ */
+export interface DeliveryStrategy {
+  attach: 'folder-window' | 'main-window';
+  injectWorktreePath?: string;
+}
+
+export function resolveDeliveryStrategy(
+  cfg: JuniorConfig,
+  opts: { folder?: string; requireFolder?: boolean }
+): DeliveryStrategy {
+  const requiredWorktree = !!(opts.folder && opts.requireFolder);
+  if (requiredWorktree && cfg.windowModel === 'folder-window') {
+    return { attach: 'folder-window' };
+  }
+  if (requiredWorktree && cfg.windowModel === 'single-window') {
+    return { attach: 'main-window', injectWorktreePath: opts.folder };
+  }
+  return { attach: 'main-window' };
+}
+
+/**
+ * The instruction prepended to a single-window junior's delivery prompt so the
+ * agent works in the task's bureau worktree — the analogue of opening the folder
+ * as a window for junior A. Firm about staying inside the worktree: the worktree
+ * lives under the department's PRIMARY checkout, and edits that escape it trip the
+ * N16 primary-tree contamination guard (a failed dispatch). Pure (unit-tested).
+ */
+export function buildWorktreeDirective(worktreePath: string): string {
+  return (
+    'IMPORTANT — WORKING DIRECTORY. Do ALL of this task inside this exact folder, ' +
+    'and nowhere else:\n' +
+    `  ${worktreePath}\n` +
+    'This is a dedicated git worktree with the correct delivery branch already ' +
+    'checked out. Before doing anything else, cd into that folder; create, edit, ' +
+    'run commands, and commit ONLY within it. Do NOT write to, or run git in, the ' +
+    'parent repository or any other folder on disk — changes made outside this ' +
+    'worktree are rejected and fail the task.\n\n'
+  );
 }
 
 /** Resolve a junior config by id (case-insensitive), defaulting to A. */
