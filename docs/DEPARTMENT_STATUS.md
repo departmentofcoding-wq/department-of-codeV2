@@ -138,23 +138,63 @@ prompt's "revision round 2" labeling reads as if round 1 vanished (the round-1 r
 the senior off-window) — cosmetic, relabel. **Tree is clean and green; origin == local `3171b19`;
 nothing unreviewed was pushed.** Signing off for the day here.
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-01 EOD, origin/main `3171b19`):** the tree is green
-(676/676 ×2, tsc clean), main checkout clean. **DONE + merged + pushed:** N0, N3, N1a (PR #6), and
-**N13 (plan authoring fixed AND validated live)**. Filing works again for AUTHORING. Punch list
-(`docs/plan-pre-phase8-remaining.md`), priority: **(1) N15** — senior-stall resilience (a manual
-`claude -p` review must not collide with the runner's senior calls; make `work.cycle` survive a
-transient senior stall) — this killed N11's re-review. **(2) N16** — junior work leaked into the
-primary checkout (N7 recurrence, now engine code); scope the dispatch window strictly to the
-worktree + verify the primary tree stays clean; also N11's worktree sat at main tip, not a
-committed `bureau-wt-` branch (re-check the delivery-branch model for filed engine-dev tasks). **(3)
-N11** — recover the stuck task (its work is in `.bureau-worktrees/0e921cfa` + a labeled stash) OR
-do the window-lease serialization as engine-dev; **still the remaining concurrency P0** (until it
-lands, run ONE task at a time). **(4) N12** cold-start retry, **(5) N2** delivery-gate phase filter,
-**(6) N9/N10** re-file, **(7) N14** salvage-plan-on-timeout. Then supervised provisioning
-convergence + the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review
-of merged N1a, approve `3756ec6e`+`b55e2fda`, decide N6, archive orphan `live-mt0xgoxz`. Runtime
-note: a runner (`fae5bc05`) was left running; do NOT start a second; juniors cold-start-fragile,
-pre-warm A@9333/B@9334 before any concurrent run.
+**PRE-PHASE-8 SESSION (2026-09-02) — ntfy-on-filing feature landed + N15 filed and in flight.**
+Operator request: "every time a task is filed, update the dept to send my ntfy; ensure it is
+updated in the settings as well." Shipped as engine-dev on `wt/ntfy-task-filed` (merged `--no-ff`
+`5334ab9`, claude senior APPROVE, verdict `docs/reviews/verdict-ntfy-task-filed.md`, PUSHED):
+new catalog event `task.filed` (`taskState: 'queued'`) — the catalog lights up the trigger
+(`NOTIFYING_TASK_STATES`) and the console Settings list together, so they cannot drift;
+`fileTask` fires the push after the filing transaction commits (mirroring machine.ts's
+transition hook), only on the fresh-insert path (idempotent re-file does not duplicate); no
+production code transitions INTO `queued` (the filing INSERT is the only entry), so behavior
+change is exactly "filing pushes". Suite 677/677, mutations M-NTFYF-1 (firing site) / M-NTFYF-2
+(catalog gate, 3 catchers). **Then N15 was filed through the agent door (task `1ac387ee`,
+agent glm) — the filing itself live-proved the feature: the QUEUED push arrived on the topic
+(delivered to the operator's phone).** But the push's journal span was MISSING: the
+`task:file` CLI's `finally { db.close() }` won the race against the fire-and-forget
+notification (push delivered, record lost). Fixed same-session on `wt/ntfy-filing-span-drain`
+(merged `--no-ff` `a60ee47`, PUSHED): `file_task.ts` tracks the in-flight push,
+`drainFilingNotifications()` polls it to empty, and BOTH CLI doors await it before closing —
+the senior's round-1 REVISE caught that `scripts/intake.ts`'s default conversational path
+(officer `file_task` inside a drained `intake.turn`) was also exposed; round 2 APPROVE
+(verdict `docs/reviews/verdict-ntfy-filing-span-drain.md`). Mutation M-NTFYF-3b (an initially
+inert mutation — the while-loop re-polls the set — is disclosed in the evidence file).
+Suite 679/679 ×2 on merged main, tsc clean. Meanwhile the resident console/runner came online
+and **N15 ran healthy through the fixed pipeline: 3 plan-review rounds (no stall — N13
+holding), plan APPROVED, `claimed`, `junior.dispatch` running** (junior implementing in its
+worktree). Known flake `t38` failed once under full-suite parallel load, passed in isolation
+and in every later full run. `b55e2fda` (window-lease heartbeat) shows done — approved+merged
+by the operator since EOD.
+
+**➜ NEXT INSTANCE — START HERE (as of 2026-09-02, origin/main `a60ee47`):** the tree is green
+(679/679 ×2, tsc clean), main checkout clean. **NEW this session (all merged + PUSHED):** the
+operator's standing request is a feature now — **every filed task pushes an ntfy notification**
+("Task filed", inbox_tray/memo, default priority). Catalog entry `task.filed` (`taskState:
+'queued'`) is the single source of truth for trigger + Settings list (auto-updated, no console
+change needed); `fileTask` fires it post-commit, idempotent re-file doesn't duplicate
+(`5334ab9`, senior APPROVE `docs/reviews/verdict-ntfy-task-filed.md`). **Live-proven on the
+very next act:** filing **N15** through the agent door pushed to the phone (confirmed on the
+topic cache). Follow-up fix landed same session (`a60ee47`, senior REVISE→APPROVE
+`docs/reviews/verdict-ntfy-filing-span-drain.md`): the CLI doors now `drainFilingNotifications()`
+before `db.close()` — the fire-and-forget push raced CLI shutdown and lost its journal span
+(push delivered, record vanished; the senior's round-1 REVISE caught the officer-driven
+`intake.turn` path too). Mutations M-NTFYF-1/2/3b in `docs/mutation-evidence-phase8.md`.
+**N15 (`1ac387ee`) is IN FLIGHT and healthy:** authored across 3 plan rounds with NO stall
+(N13 holding), plan APPROVED, task `claimed`, `junior.dispatch` RUNNING (junior implementing
+in its worktree — N0 completion gate live). Punch list
+(`docs/plan-pre-phase8-remaining.md`), priority after N15 lands: **(1) N16** — junior work
+leaked into the primary checkout (scope the dispatch window to the worktree + verify primary
+stays clean; also re-check the delivery-branch model). **(2) N11** — recover the stuck task
+OR do the window-lease serialization as engine-dev; **still the remaining concurrency P0**
+(until it lands, run ONE task at a time). **(3) N12** cold-start retry, **(4) N2**
+delivery-gate phase filter, **(5) N9/N10** re-file (their plan.cycle jobs are dead — operator
+rekick needed), **(6) N14** salvage-plan-on-timeout. Then supervised provisioning convergence
++ the **≥3-task concurrent run = Phase 8 proper**. Operator-only: retroactive diff-review of
+merged N1a, approve `3756ec6e` (still needs-review; `b55e2fda` was approved+merged since
+EOD), decide N6, archive orphan `live-mt0xgoxz`. Runtime notes: a console+runner is live
+(online push 2026-09-02, runner claimed N15's cycle); juniors were cold at session start and
+auto-launched fine; `t38` flaked once under parallel load then passed in isolation and in
+both subsequent full-suite runs (the known browser-launch flake class).
 
 **CREATORS PAGE (2026-08-31, non-engineering keepsake).** At the operator's request,
 a "Record of Hands" creators page was built — every persona (Claude Code, the Claude

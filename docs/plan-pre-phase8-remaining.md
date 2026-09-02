@@ -481,3 +481,12 @@ and the first **≥3 concurrent tasks** driven through intake→plan→implement
 review→merge with the tail draining itself and no per-merge hand-repair. Then the
 work moves to `docs/phase-8-plan.md` proper: Secretary, lease contention, and the
 watchdog under sustained multi-task load.
+
+### N15 status (2026-09-02) — FILED and in flight
+N15 was filed through the agent door as task `1ac387ee-d280-4960-be39-3588b628d568`
+(agent glm attribution). It authored across 3 plan-review rounds with NO stall (N13
+holding), plan APPROVED, task `claimed`, `junior.dispatch` running at session close —
+the junior is implementing in its worktree. The filing also live-proved the new
+ntfy-on-filing feature (`5334ab9` + drain fix `a60ee47`): the QUEUED push was delivered
+to the operator's topic. Verification of the fix itself (stall-retry semantics) will be
+judged by its own verify.run + walkthrough review when the flow completes.
