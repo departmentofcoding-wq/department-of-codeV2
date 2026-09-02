@@ -53,15 +53,16 @@ describe('Ntfy notification events (started / needs-review / online / test)', ()
     db.close();
   });
 
-  it('1. NOTIFYING_TASK_STATES covers started, needs-review, blocked, failed, done', () => {
+  it('1. NOTIFYING_TASK_STATES covers filed, started, needs-review, blocked, failed, done', () => {
+    expect(NOTIFYING_TASK_STATES.has('queued')).toBe(true);
     expect(NOTIFYING_TASK_STATES.has('claimed')).toBe(true);
     expect(NOTIFYING_TASK_STATES.has('needs-review')).toBe(true);
     expect(NOTIFYING_TASK_STATES.has('blocked')).toBe(true);
     expect(NOTIFYING_TASK_STATES.has('failed')).toBe(true);
     expect(NOTIFYING_TASK_STATES.has('done')).toBe(true);
     // Non-notifying states stay quiet.
-    expect(NOTIFYING_TASK_STATES.has('queued')).toBe(false);
     expect(NOTIFYING_TASK_STATES.has('verifying')).toBe(false);
+    expect(NOTIFYING_TASK_STATES.has('intake')).toBe(false);
   });
 
   it('2. needs-review fires a high-priority push (the phone-approval trigger)', async () => {
@@ -147,6 +148,7 @@ describe('Ntfy notification events (started / needs-review / online / test)', ()
   it('7. the events catalog exposes both task and non-task events for the Settings list', () => {
     const keys = NOTIFICATION_EVENTS.map(e => e.key);
     expect(keys).toContain('dept.online');
+    expect(keys).toContain('task.filed');
     expect(keys).toContain('task.started');
     expect(keys).toContain('task.needs-review');
     expect(keys).toContain('ntfy.test');

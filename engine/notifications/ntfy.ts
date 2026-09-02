@@ -104,6 +104,7 @@ export class NtfyClient {
 
 /** Per-state ntfy priority. Absent = ntfy's own default (no header sent). */
 const STATE_PRIORITY: Record<string, string> = {
+  queued: 'default',
   claimed: 'default',
   'needs-review': 'high',
   blocked: 'high',
@@ -113,6 +114,7 @@ const STATE_PRIORITY: Record<string, string> = {
 
 /** Per-state ntfy tags (emoji shortcodes). */
 const STATE_TAGS: Record<string, string[]> = {
+  queued: ['inbox_tray', 'memo'],
   claimed: ['rocket'],
   'needs-review': ['eyes', 'bell'],
   blocked: ['warning', 'rotating_light'],

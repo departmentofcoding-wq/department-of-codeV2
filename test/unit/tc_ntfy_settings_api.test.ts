@@ -67,6 +67,7 @@ describe('T-NTFY: Settings ntfy API (events list + test push)', () => {
     expect(Array.isArray(res.body.events)).toBe(true);
     const keys = (res.body.events || []).map(e => e.key);
     expect(keys).toContain('dept.online');
+    expect(keys).toContain('task.filed');
     expect(keys).toContain('task.needs-review');
     expect(keys).toContain('task.started');
     expect(keys).toContain('ntfy.test');

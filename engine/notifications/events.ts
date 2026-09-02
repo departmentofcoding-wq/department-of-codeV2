@@ -26,6 +26,12 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
     description: 'The console/runner has started and the department is live.'
   },
   {
+    key: 'task.filed',
+    label: 'Task filed',
+    description: 'A new task was filed (console intake, CLI, or the agent door) and entered the queue — plan kickoff follows automatically.',
+    taskState: 'queued'
+  },
+  {
     key: 'task.started',
     label: 'Task started',
     description: 'A task has been picked up and work has begun.',
