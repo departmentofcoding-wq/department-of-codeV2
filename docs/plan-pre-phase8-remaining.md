@@ -97,7 +97,14 @@ so the worktree is committed before the fix dispatch is claimed. Ceiling exhaust
 preserved (`blocked` + operator notification). Mutation evidence M-N1a1/M-N1a2/M-N1a3. Tests in
 `test/unit/tc_verify_fix_dispatch.test.ts` and `test/integration/tc_verify_fix_dispatch_flow.test.ts`.
 
-### N2 — the delivery gate can be a plan review, not a code-diff review (P1)
+### N2 — the delivery gate can be a plan review, not a code-diff review (P1) — ✅ DONE (2026-09-02, merged origin/main `6120dc5`)
+Shipped as engine-dev by the acting-senior session (claude senior out of credits; implementer==reviewer
+disclosed, compensated by live mutations + suite ×3). `pr.create`/`pr.merge` + the A1 merge-law predicate
+now gate on the latest APPROVED `phase='phase4'` review with `reviewed_commit == tip`
+(`WORK_REVIEW_DIFF_PHASE` + `getDeliveryGatingReview`). Regression `tc_delivery_phase_gate` (8 tests, both
+incident shapes); mutations M-N2a (4 catchers) / M-N2b. Verdict
+`docs/reviews/verdict-n2-delivery-phase-gate.md`. Filed task `714269b8` tagged Completed @ `6120dc5`.
+Original finding below.
 `pr.create` reads the **latest** `bureau_work_reviews` row `ORDER BY created_at DESC` **regardless
 of `phase`**. `b55e2fda`'s gate was a `phase='walkthrough'` review of `implementation_plan.md`
 — the final **diff** was never senior-reviewed before approval. **Action:** `pr.create` (and
