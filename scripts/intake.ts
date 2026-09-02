@@ -155,6 +155,11 @@ export async function main() {
 
   await drainSingleJob(db, job.id);
 
+  // The officer's file_task tool files synchronously inside the drained job —
+  // its fire-and-forget push must be waited out before the close below, or
+  // the span is lost (same race as the --file branch above).
+  await drainFilingNotifications();
+
   if (values.show || true) {
     const details = getSessionWithMessages(db, sessionId);
     if (details) {

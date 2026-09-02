@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFakeDb } from '../fixtures/db_factory.ts';
 import { transition } from '../../engine/state/machine.ts';
 import { fileTask, drainFilingNotifications } from '../../engine/filing/file_task.ts';
-import { confirmVerify, createSession, updateSessionDraft } from '../../engine/intake/index.ts';
+import { appendIntakeMessage, confirmVerify, createSession, updateSessionDraft } from '../../engine/intake/index.ts';
+import { enqueueJob } from '../../engine/jobs/jobs.ts';
+import { MockClient } from '../../engine/llm/mock_client.ts';
+import { setOfficerClientOverride } from '../../engine/officers/task_intake_officer.ts';
+import { drainSingleJob } from '../../runner/main.ts';
 import { setNtfyTransportOverride } from '../../engine/notifications/ntfy-seam.ts';
 import { subscribeTaskStateChange, clearTaskStateSubscribers, type TaskStateChangeEvent } from '../../engine/state/notifications.ts';
 import type { DbConnection, AttributionTuple } from '../../engine/contract/types.ts';
@@ -57,6 +61,7 @@ describe('T-NTFY: Task status change notifications integration', () => {
 
   afterEach(() => {
     setNtfyTransportOverride(null);
+    setOfficerClientOverride(null);
     clearTaskStateSubscribers();
     db.close();
   });
@@ -244,5 +249,76 @@ describe('T-NTFY: Task status change notifications integration', () => {
     expect(span).toBeDefined();
     expect(span!.detail).toContain('"state":"queued"');
     expect(span!.detail).not.toContain('bureau-alerts-topic');
+  });
+
+  it('officer-driven file_task inside a drained intake.turn job is covered by the drain (scripts/intake.ts close path)', async () => {
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', 'https://ntfy.sh')");
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', 'bureau-alerts-topic')");
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setNtfyTransportOverride({
+      async post() {
+        await gate;
+        return { status: 200, text: 'ok' };
+      }
+    });
+
+    // The conversational intake CLI's default path: the officer files via its
+    // file_task tool while drainSingleJob runs the intake.turn job in-process.
+    const session = createSession(db, {
+      title: 'Officer files with drain',
+      attribution: OPERATOR_ATTR
+    });
+    const mockClient = new MockClient([
+      {
+        text: 'Proposing fields.',
+        toolCalls: [
+          { id: 'c1', name: 'propose_field', arguments: { field: 'intent', value: 'Prove the officer-filed push is drained before close' } },
+          { id: 'c2', name: 'propose_verify', arguments: { command: 'npm test' } },
+          { id: 'c2b', name: 'ask_human', arguments: { question: 'Please confirm the verification command: npm test' } }
+        ],
+        tokensIn: 10, tokensOut: 5, latencyMs: 1, costUsd: null,
+        finishReason: 'tool_calls', truncated: false
+      },
+      {
+        text: 'Filing.',
+        toolCalls: [{ id: 'c3', name: 'file_task', arguments: {} }],
+        tokensIn: 10, tokensOut: 5, latencyMs: 1, costUsd: null,
+        finishReason: 'tool_calls', truncated: false
+      }
+    ]);
+    setOfficerClientOverride(mockClient);
+
+    const job1 = enqueueJob(db, { kind: 'intake.turn', payload: { sessionId: session.id } });
+    await drainSingleJob(db, job1.id);
+
+    appendIntakeMessage(db, session.id, {
+      role: 'human',
+      content: 'Confirmed — please file the task.',
+      attribution: OPERATOR_ATTR
+    });
+    confirmVerify(db, session.id, OPERATOR_ATTR);
+
+    const job2 = enqueueJob(db, { kind: 'intake.turn', payload: { sessionId: session.id } });
+    await drainSingleJob(db, job2.id);
+
+    const task = db.get<{ id: string; state: string }>(
+      'SELECT id, state FROM bureau_tasks WHERE intake_session_id = ?',
+      session.id
+    );
+    expect(task).toBeDefined();
+    expect(task!.state).toBe('queued');
+
+    const spanQuery = "SELECT detail FROM bureau_journal WHERE task_id = ? AND detail LIKE '%ntfy_notification%'";
+    // The job drained but the push is still in flight — parked in the
+    // filing-notification set, NOT yet journaled.
+    expect(db.get(spanQuery, task!.id)).toBeUndefined();
+
+    release();
+    await drainFilingNotifications();
+
+    // The post-drain wait the CLI now performs recovers the span.
+    expect(db.get(spanQuery, task!.id)).toBeDefined();
   });
 });
