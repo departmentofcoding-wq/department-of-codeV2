@@ -492,3 +492,23 @@ fresh-insert path (idempotent re-file must not duplicate).
   restored → green.
 
 Committed as `b29ae6e` on `wt/ntfy-task-filed`.
+
+## M-NTFYF-3 — drain filing notifications before CLI db.close (2026-09-02, branch `wt/ntfy-filing-span-drain`)
+
+Live scar: the task:file CLI delivered the QUEUED push to ntfy (confirmed on the topic
+cache) but its `ntfy_notification` journal span was lost — the fire-and-forget push
+raced the CLI's `finally { db.close() }`. Fix: `file_task.ts` tracks the in-flight push
+in a module-level set; `drainFilingNotifications()` polls it to empty; both CLI doors
+(`scripts/file_task.ts`, `scripts/intake.ts`) await the drain before closing.
+
+- **First mutation attempt was INERT (disclosed):** replacing the drain's
+  `Promise.allSettled` with `await Promise.resolve()` did NOT fail the test — the
+  `while (pendingFilingNotifications.size > 0)` loop re-polls the set each microtask
+  turn, so the loop itself is the pump and the mutation was semantically harmless.
+- **M-NTFYF-3b (the set membership):** remove `pendingFilingNotifications.add(push)`.
+  Catcher: `tc_ntfy_task_notifications.test.ts` — "drainFilingNotifications awaits the
+  filing push…" failed `AssertionError: expected undefined to be defined` (the span
+  absent after the no-op drain, gated transport still unreleased at the assert). Proves
+  the drain genuinely tracks and awaits the real push. Reproduced → restored → green.
+
+Committed as `fdbcb01` on `wt/ntfy-filing-span-drain`.

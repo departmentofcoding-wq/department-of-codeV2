@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { AttributionTuple, DbConnection } from '../engine/contract/index.ts';
 import { openDbConnection } from '../engine/db/index.ts';
-import { fileTask } from '../engine/filing/file_task.ts';
+import { fileTask, drainFilingNotifications } from '../engine/filing/file_task.ts';
 import { confirmVerify, createSession, getOpenSessions, getSessionWithMessages, updateSessionDraft, appendIntakeMessage } from '../engine/intake/index.ts';
 import { getProject, listProjects } from '../engine/projects/index.ts';
 import { enqueueJob } from '../engine/jobs/jobs.ts';
@@ -137,6 +137,9 @@ export async function main() {
     try {
       const task = fileTask(db, sessionId, humanAttr);
       console.log(`Task filed successfully: ID ${task.id}, state ${task.state}`);
+      // Wait out the fire-and-forget filing push so its journal span is not
+      // lost to the close below (short-lived CLI — see drainFilingNotifications).
+      await drainFilingNotifications();
       db.close();
       return;
     } catch (err: any) {
@@ -151,6 +154,11 @@ export async function main() {
   });
 
   await drainSingleJob(db, job.id);
+
+  // The officer's file_task tool files synchronously inside the drained job —
+  // its fire-and-forget push must be waited out before the close below, or
+  // the span is lost (same race as the --file branch above).
+  await drainFilingNotifications();
 
   if (values.show || true) {
     const details = getSessionWithMessages(db, sessionId);
