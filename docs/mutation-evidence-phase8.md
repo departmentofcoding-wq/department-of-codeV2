@@ -708,3 +708,43 @@ Branch `wt/flow-claim-assignment-queue`. Suite `tc_flow_assignment_queue.test.ts
 
 Executed 2026-09-02 on branch `wt/flow-claim-assignment-queue`; full suite
 716/716 across 128 files green, `tsc --noEmit` clean.
+
+## Junior-B delivery path (N9 death fix) — M-B1, M-B2
+
+Branch `wt/junior-b-delivery-path`. Root cause: junior B is Antigravity 2.0, a
+standalone **single-window** agent app (verified live 2026-09-02 on CDP port
+9334 — one page titled `"Antigravity"`, project-organized, no per-folder
+windows; `Antigravity.exe <folder>` opens no new CDP target). The delivery path
+assumed the VS Code fork's folder-window model, so `ensureFolderWindowWs`
+waited forever for a `"<base> - Antigravity IDE"` window that B never produces —
+N9 (`693ad95a`) burned all 3 dispatch attempts on that timeout. Fix: a pure
+`resolveDeliveryStrategy(cfg, {folder, requireFolder})` branches on the junior's
+`windowModel` — folder-window juniors (A) open a window on the worktree;
+single-window juniors (B) attach the main window and have the absolute worktree
+path prepended to the prompt via `buildWorktreeDirective`. Tests in
+`test/unit/tc_antigravity.test.ts`. Both mutations executed for real (mutate →
+watch the named test fail → restore → green).
+
+- **M-B1 (the window model IS the branch — the exact N9 bug):**
+  - **Guard:** `JUNIORS.B.windowModel = 'single-window'` →
+    `resolveDeliveryStrategy` sends B down the main-window+inject path, never the
+    folder-window path that has no window to find.
+  - **Mutation:** `JUNIORS.B.windowModel` → `'folder-window'` (B treated as a VS
+    Code fork — the pre-fix assumption that killed N9).
+  - **Catchers (real failures):** "the two juniors declare different window
+    models" (B asserted single-window) and "junior B … attaches the main window
+    and injects the path" (strategy came back `folder-window`). 2 failed.
+  - **Restore:** `'single-window'` restored → 30/30 green.
+
+- **M-B2 (a single-window junior must be TOLD the worktree path):**
+  - **Guard:** the single-window branch returns
+    `{ attach: 'main-window', injectWorktreePath: opts.folder }` — the path the
+    seam prepends so B knows where to work (B has no window to carry the scope).
+  - **Mutation:** drop the field → `{ attach: 'main-window' }` (B attaches but is
+    never told the worktree — it would edit wherever it pleases / do nothing).
+  - **Catcher (real failure):** "junior B … injects the path"
+    (`injectWorktreePath` was undefined). 1 failed.
+  - **Restore:** injection restored → 30/30 green.
+
+Executed 2026-09-02 on branch `wt/junior-b-delivery-path`; full suite 723/723
+across 128 files green, `tsc --noEmit` clean.

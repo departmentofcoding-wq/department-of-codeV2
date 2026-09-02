@@ -15,15 +15,38 @@ operating manual for that seam.
 
 Both are launched with their own `--remote-debugging-port`, so both can be driven
 at once, and their two Pro accounts stay separate (different data folders). They
-share the **same DOM landmarks** (verified live), so one driver runs both:
+share the **same in-chat DOM landmarks** (verified live), so one driver TYPES into
+both:
 
-- **Chat input:** `contenteditable` with `aria-label="Message input"`.
+- **Chat input:** `contenteditable` with `aria-label="Message input"` (on 2.0,
+  `role="combobox"`; still matched by the label — re-verified live 2.11.0).
 - **Model picker:** `button[aria-label^="Select model"]` → `[role=menuitem]` options
   (e.g. "Gemini 3.7 Flash", "Claude Opus 4.6 (Thinking)", "GPT-OSS 120B").
 - **Send:** `aria-label="Send message"` — **2.0 does not submit on Enter**, so
   `sendPrompt` presses Enter *and* clicks Send if the input still holds text.
-- **Folder / project:** each workspace is a sidebar button carrying its name/path;
-  `selectFolder(nameOrPath)` clicks it.
+
+### They do NOT share a window model — this is what decides delivery
+
+A **delivery** dispatch must land the junior in the task's bureau worktree
+(`.bureau-worktrees/<taskId>`), and the two apps expose folders completely
+differently (verified live 2026-09-02):
+
+| | **A — Antigravity IDE** | **B — Antigravity 2.0** |
+|---|---|---|
+| Kind | VS Code fork | standalone agent app |
+| Windows | one CDP window **per folder**, titled `"<basename> - Antigravity IDE"` | a **single** window titled `"Antigravity"` (served `https://127.0.0.1:<port>/`) |
+| Organized by | open folders / windows | in-app **Projects** (sidebar); `Antigravity.exe <folder>` opens no new CDP target and registers no project |
+| `windowModel` | `'folder-window'` | `'single-window'` |
+| How a worktree is reached | `ensureFolderWindowWs` opens the worktree in its own window; the window IS the workspace | attach the single main window and **prepend the absolute worktree path to the prompt** (`buildWorktreeDirective`); B writes to disk directly |
+
+`resolveDeliveryStrategy(cfg, { folder, requireFolder })` (pure, unit-tested) is
+the branch: A → `{ attach: 'folder-window' }`, B → `{ attach: 'main-window',
+injectWorktreePath }`. Non-required folders (plan authoring) always attach the
+main window for both — which is why B's **planning** always worked while its
+**delivery** never did until this fix (N9 `693ad95a`, 2026-09-02). The N16
+primary-tree contamination guard remains the safety net for B, since its worktree
+sits under the live primary checkout. `selectFolder(nameOrPath)` still exists for
+best-effort switching among a junior's already-open projects (non-worktree runs).
 
 ### Registry & driving
 

@@ -12,6 +12,8 @@ import {
   extractPlan,
   extractWalkthrough,
   resolveJunior,
+  resolveDeliveryStrategy,
+  buildWorktreeDirective,
   pickFolderWindow,
   pickMainWindow,
   JUNIORS,
@@ -151,6 +153,13 @@ describe('Two-junior registry (A = IDE, B = 2.0)', () => {
     }
   });
 
+  it('the two juniors declare different window models', () => {
+    // A is the VS Code fork (per-folder windows); B is the standalone 2.0 agent
+    // app (single window). This is what decides how a delivery reaches the worktree.
+    expect(JUNIORS.A.windowModel).toBe('folder-window');
+    expect(JUNIORS.B.windowModel).toBe('single-window');
+  });
+
   it('findJuniorBinary honors the per-junior env override', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agb-'));
     const fake = path.join(tmp, 'Antigravity.exe');
@@ -164,6 +173,79 @@ describe('Two-junior registry (A = IDE, B = 2.0)', () => {
       else process.env.ANTIGRAVITY_2_PATH = saved;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------
+// Delivery window strategy (N9 fix). A delivery dispatch must reach the task's
+// bureau worktree, but the two juniors have DIFFERENT window models: A opens the
+// worktree as its own CDP window; B (Antigravity 2.0) has a single window and no
+// folder-windows, so it is told the worktree path in the prompt. resolveDeliveryStrategy
+// is the pure branch that decides which — the exact code path that, wrong, killed N9.
+// ---------------------------------------------------------------------------------
+describe('resolveDeliveryStrategy — how each junior reaches the worktree', () => {
+  const WT = 'D:/Dept of code v2/.bureau-worktrees/task-9';
+
+  it('junior A (folder-window) on a REQUIRED worktree opens a folder window, no prompt injection', () => {
+    const s = resolveDeliveryStrategy(JUNIORS.A, { folder: WT, requireFolder: true });
+    expect(s.attach).toBe('folder-window');
+    expect(s.injectWorktreePath).toBeUndefined();
+  });
+
+  it('junior B (single-window) on a REQUIRED worktree attaches the main window and injects the path', () => {
+    // This is the N9 fix: B must NOT try to open a folder window (it has none) —
+    // it attaches its single window and the path is prepended to the prompt.
+    const s = resolveDeliveryStrategy(JUNIORS.B, { folder: WT, requireFolder: true });
+    expect(s.attach).toBe('main-window');
+    expect(s.injectWorktreePath).toBe(WT);
+  });
+
+  it('a NON-required folder (planning path) never opens a folder window or injects, for either junior', () => {
+    for (const cfg of [JUNIORS.A, JUNIORS.B]) {
+      const s = resolveDeliveryStrategy(cfg, { folder: WT, requireFolder: false });
+      expect(s.attach).toBe('main-window');
+      expect(s.injectWorktreePath).toBeUndefined();
+    }
+  });
+
+  it('no folder at all → main window, no injection (arbitrary command / plan authoring)', () => {
+    for (const cfg of [JUNIORS.A, JUNIORS.B]) {
+      const s = resolveDeliveryStrategy(cfg, {});
+      expect(s.attach).toBe('main-window');
+      expect(s.injectWorktreePath).toBeUndefined();
+    }
+  });
+});
+
+describe('buildWorktreeDirective — the path handed to a single-window junior', () => {
+  const WT = 'D:/Dept of code v2/.bureau-worktrees/task-9';
+
+  it('names the exact worktree path and confines the agent to it', () => {
+    const d = buildWorktreeDirective(WT);
+    expect(d).toContain(WT);
+    expect(d).toMatch(/cd into/i);
+    expect(d).toMatch(/do not (write to|read from|run git)/i); // stay out of the parent repo
+  });
+
+  it('prepending it to a department prompt preserves the completion gate', () => {
+    // The directive is PREPENDED, so the prompt's last line (the N0 completion
+    // instruction) is unchanged and the marker still present — the completion
+    // evidence gate must behave exactly as it does without the directive.
+    const departmentPrompt = [
+      'Your implementation plan was reviewed and APPROVED. Implement it now.',
+      '===== APPROVED PLAN =====',
+      'work on the checked-out branch; add tests.',
+      JUNIOR_COMPLETION_INSTRUCTION
+    ].join('\n');
+    const effective = buildWorktreeDirective(WT) + departmentPrompt;
+    expect(effective).toContain(JUNIOR_COMPLETION_MARKER);
+    // Just-echoed effective prompt, no agent output yet → NOT evidence.
+    const echoed = [...effective.split('\n'), 'Send message'].join('\n');
+    expect(juniorCompletionEvidence(echoed, effective)).toBe(false);
+    // Agent prints the sentinel as its final line → evidence, keyed off the
+    // (unchanged) last line of the effective prompt.
+    const replied = [...effective.split('\n'), 'Done; tests pass.', JUNIOR_COMPLETION_MARKER, 'Send message'].join('\n');
+    expect(juniorCompletionEvidence(replied, effective)).toBe(true);
   });
 });
 
