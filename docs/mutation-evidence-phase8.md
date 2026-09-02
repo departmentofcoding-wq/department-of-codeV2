@@ -625,3 +625,44 @@ senior (zai/GLM-5.3).
 
 Executed 2026-09-02 on branch `wt/n11-authoring-window-lease` by the acting senior
 (zai/GLM-5.3).
+
+---
+
+## M-N12a / M-N12b — bounded infra-class auto-retry for plan authoring
+
+- **Feature (N12):** a cold-IDE attach miss ("workbench window did not become
+  available" / "no CDP window titled … appeared") during plan authoring is an
+  INFRASTRUCTURE failure, not an agent verdict. `runPlanReviewCycle` now retries
+  the authoring `runCommand` a bounded number of times (default 2, env
+  `PLAN_AUTHORING_INFRA_RETRIES` > meta `plan:authoring_infra_retries`) scoped
+  STRICTLY to that class via `isJuniorWedgedWindowError`; the retry reuses the
+  held per-junior window lease (still released in `finally`). A genuine AGENT
+  failure (stall net, login/modal wall) is not matched by the classifier and
+  stays terminal on the first miss — the "failed agent cycles are operator
+  action" rule is unchanged. This is the junior analogue of N15's senior-stall
+  retry.
+
+- **M-N12a (infra-only classifier scoping):**
+  - **Guard:** `engine/flow/plan_review_cycle.ts` — `if (isJuniorWedgedWindowError(err) && infraAttempt <= maxInfraRetries)`.
+  - **Mutation:** dropped the classifier (`true && …`) so ANY error retries.
+  - **Catchers (2 real failures):** `tc_plan_authoring_lease.test.ts` — "N12 … a
+    genuine AGENT failure is NOT retried" (stall error got retried; `calls` became
+    3 not 1) AND "N11 … a junior failure releases the lease" (the agent stall was
+    retried to success, so the cycle resolved instead of rejecting). 2 failed / 5 passed.
+  - **Restore:** classifier restored → 7/7 green.
+
+- **M-N12b (the retry must actually happen):**
+  - **Guard:** same predicate — `infraAttempt <= maxInfraRetries`.
+  - **Mutation:** `infraAttempt <= 0` (never retry — pre-N12 single-attempt).
+  - **Catcher (1 real failure):** "N12 … an INFRA attach miss … is RETRIED, then
+    authoring succeeds" — the first infra miss went terminal (`calls` stayed 1, the
+    cycle rejected). 1 failed.
+  - **Restore:** bound restored → 7/7 green.
+
+- **Cross-test:** N11's `tc_plan_authoring_lease` "a junior failure releases the
+  lease" used a `workbench did not become available` message (now infra-retryable);
+  switched to a genuine agent stall (`no progress for the stall window`) so it still
+  exercises lease-release on a TERMINAL failure without tripping N12's retry.
+
+Executed 2026-09-02 on branch `wt/n12-plancycle-infra-retry`; full suite 706/706
+across 127 files green, `tsc --noEmit` clean.

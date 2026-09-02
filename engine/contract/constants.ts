@@ -125,10 +125,16 @@ export const REVIEW_PR_META_KEYS = {
   REVIEW_PLAN_ROUNDS_CEILING: 'review:plan_rounds_ceiling',
   REVIEW_WORK_ROUNDS_CEILING: 'review:work_rounds_ceiling',
   PR_BASE_BRANCH: 'pr:base_branch',
-  SENIOR_STALL_RETRIES: 'senior:stall_retries'
+  SENIOR_STALL_RETRIES: 'senior:stall_retries',
+  PLAN_AUTHORING_INFRA_RETRIES: 'plan:authoring_infra_retries'
 } as const;
 
 export const DEFAULT_SENIOR_STALL_RETRIES = 2;
+
+/** N12: bounded auto-retries for plan authoring on an INFRA-class attach miss
+ *  ("workbench window did not become available" / cold-start), NOT agent
+ *  failures. Kept small — an infra miss is a cold IDE, not an agent verdict. */
+export const DEFAULT_PLAN_AUTHORING_INFRA_RETRIES = 2;
 
 export const PROJECT_META_KEYS = {
   PROJECTS_ROOT: 'projects_root',
