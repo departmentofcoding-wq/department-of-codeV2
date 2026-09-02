@@ -666,3 +666,45 @@ Executed 2026-09-02 on branch `wt/n11-authoring-window-lease` by the acting seni
 
 Executed 2026-09-02 on branch `wt/n12-plancycle-infra-retry`; full suite 706/706
 across 127 files green, `tsc --noEmit` clean.
+
+## N17 — claim-time assignment + capacity queue (2026-09-02)
+
+Branch `wt/flow-claim-assignment-queue`. Suite `tc_flow_assignment_queue.test.ts`
+(10 tests) + updated `file_task`/`tc_agent_file_task`/`tc_dispatch_antigravity`/
+`tc_primary_contamination_guard` fixtures. All mutations executed for real
+(mutate → watch the named test fail → restore → green).
+
+- **M-N17a (the capacity gate):**
+  - **Guard:** `juniorIsOccupied` (`engine/flow/assignment.ts`) — a junior with
+    an in-flight pinned task is not free; `reconcileQueuedTasks` admits at most
+    one task per junior.
+  - **Mutation:** `return !!row && row.n > 0;` → `return false;` (every junior
+    always free — the pre-N17 world: all filed tasks admitted at once).
+  - **Catchers (real failures):** T-N17-1 "five filed tasks → one sweep admits
+    exactly the roster size (2)" — the sweep admitted all five (`admitted`
+    length 5 ≠ 2, both juniors double-booked); T-N17-3's busy-roster step
+    likewise admitted a third task onto a full roster. 1–2 failed per run.
+  - **Restore:** predicate restored → 10/10 green.
+
+- **M-N17b (unpinned dispatch must refuse, not default):**
+  - **Guard:** `handleJuniorDispatch`'s N17 resolution block — no assignment and
+    no payload pin → guardrail span + hard error (never junior A / window-default).
+  - **Mutation:** `resolvedJunior = 'A'` before the (now unreachable) throw —
+    the resurrected 2026-09-02 behavior (a fresh junior-A session receives
+    another task's approved plan).
+  - **Catcher (real failure):** T-N17-8 "an unpinned dispatch REFUSES loud" —
+    the dispatch completed on junior A instead of rejecting. 1 failed.
+  - **Restore:** refusal restored → 10/10 green.
+
+- **M-N17c (the assignment pin is the truth, payloads cannot re-route):**
+  - **Guard:** same resolution block — `resolvedJunior = assignment.junior`
+    regardless of a conflicting `payload.junior` (mismatch journals a guardrail).
+  - **Mutation:** payload wins when present —
+    `resolvedJunior = payload.junior ?? assignment.junior`.
+  - **Catcher (real failure):** T-N17-7 "dispatch drives the ASSIGNMENT junior
+    even when the payload pins another" — the driver received 'A' while the
+    task is pinned to 'B' (the cross-contamination direction). 1 failed.
+  - **Restore:** assignment-wins restored → 10/10 green.
+
+Executed 2026-09-02 on branch `wt/flow-claim-assignment-queue`; full suite
+716/716 across 128 files green, `tsc --noEmit` clean.

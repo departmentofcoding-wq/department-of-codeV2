@@ -51,7 +51,7 @@ describe('Agent Task-Filing Door (fileAgentTask)', () => {
     db.close();
   });
 
-  it('T-AGENTFILE-1: Happy path (flag ON) files a queued task, kicks off plan.cycle, and attributes honestly', () => {
+  it('T-AGENTFILE-1: Happy path (flag ON) files a queued task (N17: queued, NOT kicked off) and attributes honestly', () => {
     expect(isAgentAutofileEnabled(db)).toBe(false); // fail-closed default
     setAgentAutofile(db, true);
     expect(isAgentAutofileEnabled(db)).toBe(true);
@@ -62,11 +62,13 @@ describe('Agent Task-Filing Door (fileAgentTask)', () => {
     expect(task.title).toBe(baseInput.title);
     expect(task.intake_session_id).toBeTruthy();
 
-    // The plan-cycle kickoff job exists (pending — drained by a runner, not here).
+    // N17: filing no longer kicks off plan.cycle — the task enters the FIFO
+    // queue unassigned; the queue manager (reconcileQueuedTasks) admits it
+    // when a junior frees up. No cycle row, no assignment yet.
     const job = db.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', planCycleJobId(task.id));
-    expect(job).toBeDefined();
-    expect(job?.kind).toBe('plan.cycle');
-    expect(job?.state).toBe('pending');
+    expect(job).toBeUndefined();
+    expect(task.assigned_junior).toBeNull();
+    expect(task.assigned_senior).toBeNull();
 
     // task-filed span carries the agent's identity, not a forged human.
     const filedSpan = db.get<BureauJournalRow>(

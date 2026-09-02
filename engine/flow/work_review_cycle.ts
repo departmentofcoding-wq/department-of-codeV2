@@ -9,6 +9,7 @@ import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
 import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
+import { readTaskAssignment, ensureTaskAssignment } from './assignment.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
 
@@ -236,7 +237,48 @@ export async function runWorkReviewCycle(
     return { outcome: 'skipped', reason: 'no_walkthrough' };
   }
 
-  const seniorId = opts.seniorId ?? assignSeniorForTask(task.id);
+  // ---- N17: the claim-time pin governs who reviews and who fixes ----------
+  // The pin was written when the queue manager admitted the task (its plan
+  // cycle); every phase reads it. A payload pin that DISAGREES with the row is
+  // a routing bug (the cross-contamination class) — journaled, assignment wins.
+  // A legacy claimed task with no pin (pre-N17) gets one now, busy-picking if
+  // needed: it is already mid-flight, stranding it helps nobody.
+  let pinnedJunior = opts.junior;
+  let pinnedSenior = opts.seniorId;
+  const pin = readTaskAssignment(db, task.id);
+  if (pin) {
+    if (opts.junior && opts.junior.toUpperCase() !== pin.junior) {
+      journal(db, {
+        kind: 'guardrail',
+        attribution: rubricAttribution,
+        taskId: task.id,
+        workUuid: task.work_uuid,
+        jobId: opts.jobId ?? null,
+        detail: {
+          action: 'assignment_pin_mismatch',
+          door: 'work.cycle',
+          payloadJunior: opts.junior,
+          assignedJunior: pin.junior,
+          resolution: 'assignment wins'
+        }
+      });
+    }
+    pinnedJunior = pin.junior;
+    pinnedSenior = pin.senior;
+  } else {
+    const ensured = ensureTaskAssignment(db, task.id, {
+      preferJunior: opts.junior,
+      preferSenior: opts.seniorId,
+      allowBusyPick: true,
+      jobId: opts.jobId
+    });
+    if (ensured.status === 'assigned') {
+      pinnedJunior = ensured.assignment.junior;
+      pinnedSenior = ensured.assignment.senior;
+    }
+  }
+
+  const seniorId = pinnedSenior ?? assignSeniorForTask(task.id);
   const senior = getSeniorDriver(seniorId);
   const maxRetries = readSeniorStallRetries(db);
   let review: Awaited<ReturnType<typeof senior.review>> | null = null;
@@ -361,7 +403,16 @@ export async function runWorkReviewCycle(
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: opts.jobId ?? null,
-      detail: { stage: 'work-review', senior: seniorId, verdict, reviewId, round: roundsUsed, ceiling }
+      detail: {
+        stage: 'work-review',
+        senior: seniorId,
+        verdict,
+        reviewId,
+        round: roundsUsed,
+        ceiling,
+        // N17: the senior's full reply is on the journal record.
+        feedback: review.feedback
+      }
     });
   });
 
@@ -477,13 +528,13 @@ export async function runWorkReviewCycle(
   const fixPrompt = buildFixPrompt(task, review.feedback, roundsUsed + 1, ceiling, projectInfo);
   const fixJob = enqueueFixDispatch(db, task, {
     prompt: fixPrompt,
-    // Same assignment policy as the plan cycle (deterministic by task id), so
-    // an unpinned re-review/fix round stays on the task's own junior — never a
-    // hardcoded A (N3).
-    junior: (opts.junior || assignJunior({ taskId: task.id })).toUpperCase(),
+    // N17: the claim-time pin — the SAME junior that authored and implemented
+    // gets the fixes, in its same conversation. Deterministic policy only as a
+    // legacy fallback for pre-N17 tasks that somehow have no pin.
+    junior: (pinnedJunior || assignJunior({ taskId: task.id })).toUpperCase(),
     juniorModel: opts.juniorModel ?? UNSPECIFIED_MODEL,
     folder: folder,
-    seniorId: opts.seniorId,
+    seniorId: pinnedSenior,
     seniorModel: opts.seniorModel
   });
   notifyOperator(

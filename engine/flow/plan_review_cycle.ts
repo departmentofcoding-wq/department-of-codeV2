@@ -6,10 +6,10 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver, type AntigravityRunResult } from '../harness/antigravity-seam.ts';
-import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowError } from '../harness/antigravity.ts';
+import { JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowError } from '../harness/antigravity.ts';
+import { ensureTaskAssignment } from './assignment.ts';
 import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import { assignSeniorForTask } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 import { DEFAULT_AUTHORING_LEASE_WAIT_MS } from '../contract/constants.ts';
 
@@ -77,6 +77,14 @@ export type PlanCycleResult =
       reason: 'ceiling' | 'state';
       roundsUsed: number;
       ceiling: number;
+    }
+  | {
+      /** N17: no junior has capacity right now — the cycle did NO agent work
+       *  and the task stays queued/unassigned; the queue manager re-admits it
+       *  when a junior frees. */
+      outcome: 'deferred';
+      reason: 'no_free_junior';
+      busy: string[];
     }
   | {
       outcome: 'approved';
@@ -327,10 +335,42 @@ export async function runPlanReviewCycle(
   }
   const effectiveOpts: PlanCycleOptions = { ...opts, folder };
 
+  // ---- 0c. N17: claim-time assignment --------------------------------------
+  // The task's junior AND senior are decided here, once, transactionally —
+  // persisted on the task row and read by every later phase (implementation
+  // dispatch, REVISE/verify-fix dispatches, re-reviews). An explicit operator
+  // pin (opts.junior / opts.seniorId) wins for the FRESH assignment only; an
+  // existing pin is immutable. If no junior has capacity the cycle DEFERS:
+  // zero agent work, task stays queued/unassigned, the queue manager
+  // (`engine/flow/reconcile.ts`) re-admits it when a junior frees. This is the
+  // handler-side gate; the queue manager normally never lets a cycle start
+  // without capacity — this catches legacy pending rows, rekicks, and CLI runs.
+  const ensured = ensureTaskAssignment(db, task.id, {
+    preferJunior: opts.junior,
+    preferSenior: opts.seniorId,
+    jobId: opts.jobId
+  });
+  if (ensured.status === 'unavailable') {
+    journal(db, {
+      kind: 'guardrail',
+      attribution: SENIOR_RUBRIC_ATTRIBUTION,
+      taskId: task.id,
+      jobId: opts.jobId ?? null,
+      detail: {
+        action: 'plan_cycle_deferred',
+        reason: 'no_free_junior',
+        busy: ensured.busy,
+        taskState: task.state
+      }
+    });
+    return { outcome: 'deferred', reason: 'no_free_junior', busy: ensured.busy };
+  }
+  const assignment = ensured.assignment;
+
   // ---- 1. Junior AUTHORS the plan -----------------------------------------
-  // No junior pinned → the assignment policy (deterministic by task id), never
-  // a hardcoded one: two concurrent tasks must land on different juniors (N3).
-  const juniorId = (opts.junior || assignJunior({ taskId: task.id })).toUpperCase();
+  // The claim-time pin — never a per-phase re-derivation, never a hardcoded
+  // default (the N3/2026-09-02 cross-contamination class).
+  const juniorId = assignment.junior.toUpperCase();
   const juniorAttribution: AttributionTuple = {
     actor_role: 'junior-engineer',
     provider: 'antigravity',
@@ -468,7 +508,17 @@ export async function runPlanReviewCycle(
     taskId: task.id,
     workUuid: task.work_uuid,
     jobId: opts.jobId ?? null,
-    detail: { source: 'antigravity', stage: 'plan-authoring', junior: jr.junior ?? juniorId, planId }
+    detail: {
+      source: 'antigravity',
+      stage: 'plan-authoring',
+      junior: jr.junior ?? juniorId,
+      planId,
+      // N17: the full prompt sent to the junior + the authored reply's head are
+      // part of the record — the journal is reviewable without the artifacts dir.
+      prompt: juniorPrompt,
+      replyHead: planText.slice(0, 400),
+      replyChars: planText.length
+    }
   });
 
   // ---- 2. Cheap deterministic gate BEFORE any senior tokens ----------------
@@ -496,7 +546,9 @@ export async function runPlanReviewCycle(
   }
 
   // ---- 3. Senior REVIEWS the plan (with the task verbatim) -----------------
-  const seniorId = opts.seniorId ?? assignSeniorForTask(task.id);
+  // The claim-time pin (assignment.senior) — one senior per task for its whole
+  // life, so review rounds stay in one conversation and one accountable reviewer.
+  const seniorId = assignment.senior;
   const senior = getSeniorDriver(seniorId);
   const maxRetries = readSeniorStallRetries(db);
   let review: Awaited<ReturnType<typeof senior.review>> | null = null;
@@ -701,7 +753,15 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.carry.jobId ?? null,
-      detail: { stage: 'plan-review', senior: p.seniorId, verdict: dbVerdict, planId: p.planId }
+      detail: {
+        stage: 'plan-review',
+        senior: p.seniorId,
+        verdict: dbVerdict,
+        planId: p.planId,
+        // N17: the senior's full reply is on the journal record, not only in
+        // the bureau_plan_reviews row.
+        feedback: p.feedback
+      }
     });
 
     // Legacy A-7a continuation, on the harness path: an approved plan immediately
@@ -849,7 +909,14 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.jobId ?? null,
-      detail: { stage: 'plan-review', by: p.by, senior: p.seniorId ?? 'rubric', verdict: dbVerdict, planId: p.planId }
+      detail: {
+        stage: 'plan-review',
+        by: p.by,
+        senior: p.seniorId ?? 'rubric',
+        verdict: dbVerdict,
+        planId: p.planId,
+        feedback: p.feedback
+      }
     });
   });
 

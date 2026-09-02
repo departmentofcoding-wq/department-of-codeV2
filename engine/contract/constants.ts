@@ -50,7 +50,10 @@ export const SPAN_KINDS = [
   'project-provisioned',
   'dispatch',
   'observation',
-  'review'
+  'review',
+  // N17: the claim-time act — a task's junior/senior pin decided once and
+  // journaled for audit (engine/flow/assignment.ts).
+  'assignment'
 ] as const;
 
 export type SpanKind = typeof SPAN_KINDS[number];

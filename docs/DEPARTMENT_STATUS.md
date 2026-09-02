@@ -16,6 +16,63 @@ phase plan, then git. Nothing important lives only in a chat window.
 | In flight | **2026-08-30/31 — two NEW department-filed tasks at `needs-review`, both approve-ready after an operator fix this session:** `3756ec6e` ("hello marker", Trading repo — clean, tip==reviewed `86cccba`) and `b55e2fda` ("window-lease heartbeat" = the P1.2 fix, this repo). b55e2fda was **unblocked**: its only gate was a `phase='walkthrough'` review at `9186a05` but the branch had advanced to `c126a68` (test-only fixes), so `pr.create` would have refused (`reviewed_commit != tip`); a real **phase4 code-diff** senior verdict was recorded at the tip (Claude Opus 4.8, `docs/reviews/verdict-b55e-heartbeat-tip.md`, full suite **646/117 green** at `c126a68`). Both now pass every `pr.create` precondition — operator: Approve in the console to deliver. **This run was the first 2-task-concurrent flow and it exposed that concurrency is NOT yet safe** (juniors shared one window/chat → cross-contamination); the full findings + tomorrow's plan are in `docs/plan-pre-phase8-remaining.md` (**2026-08-30 session findings, N0–N7**). Also present: an orphan `needs-review` test artifact `live-mt0xgoxz` ("Add subtract() to math.js") to archive. — Historical below. **Two 2026-08-28 department-filed tasks were at `needs-review`:** `7ef423f2` (POSIX `pkill -f`→`-x` hardening) and `5d29e47b` (scale-aware senior assignment via new `SENIOR_SCALE_DEFAULT`). Both ran the FULL flow unattended (intake→plan→junior implement→claude review→staged verify exit 0→needs-review), worktrees clean, `reviewed_commit` == branch tip. Historical: **PUSHED to origin/main `1708e3d` (2026-08-27):** the agent task-filing door AND the **Phase 8 entry fix pack F1–F6** (delivery-tail drill scars). Fix pack: round-1 claude senior REVISE (F4/F5 fake tests — tested reimplementations) → amend (real exported `resolveClaudeSeniorTimeoutMs`+`resolveIntakeSession` the tests import; F6 PLAN_MARKERS; **timeout default 180000→1200000 / 20 min, operator-set — durable, so the F4 scar no longer strands tasks**) → **zai (ZCode/GLM-5.3) senior APPROVE** (9m agentic review, re-ran build+suite 519/519 ×2 + re-executed M-TAIL-1/2 and the F4/F5 revert-mutations; verdict `docs/reviews/verdict-phase8-fixpack.md`) → `--no-ff` merge `1708e3d` → 519/519+build clean on main → pushed. Task `e156395d` Completed-tagged (commit `1708e3d`, not forged done). **Remaining pre-Phase-8 dev work = Stream B (provisioning console) FILED through the agent door (`1429a7de`) and RESUMED after two harness stops:** door→auto-kickoff→plan.cycle claim→**junior A (Antigravity) authored the plan**; the F4 timeout no longer bites. Stop #1 (RESOLVED, recalibration `995f6d8`): the zai/ZCode senior harness failed on ZCode 3.9.2 (empty home screen captured; `detectUncapturedReview` correctly refused → plan.cycle died fail-closed). `ZCodeSession` recalibrated for 3.9.2 — composer `[data-testid="v4-composer-input"]` (3.9.2 has no aria-label/placeholder), model picker `chat-model-select-trigger`, new-conversation `conversation-new-task`; send/stop unchanged — proven by a 39s smoke review AND in-flow: 5-round plan review with 4 real zai verdicts (rubric amend, then REVISE ×3, then **APPROVE round 5**, review `365c926f`). Stop #2 (NEW, 2026-08-27 10:41–10:42 UTC): on approval the implementation `junior.dispatch` (dispatch `eb5b0aaa`) died terminally — the Antigravity instance was down/wedged when the worktree window was requested ("opened a window … but no CDP window titled `<taskId> - Antigravity IDE` appeared"), 3 attempts burned → job dead at `claimed`. **Operator resume (11:12 UTC):** clean-relaunched junior A with `--remote-debugging-port=9333` (restored session reopened the worktree window under the EXACT expected title — the title heuristic is NOT the defect; the dead instance was), re-enqueued the identical payload through the engine's own `enqueueJob` (job `af75acf6`, journal #632) → dispatch claimed, junior implementing in the worktree (transcript confirmed growing, tracing `engine/projects/provision.ts`). Scar: a `junior.dispatch` that exhausts attempts is NOT auto-retried (by design) — recovery = ensure the junior GUI is up with its debug port, then re-enqueue the same payload via `enqueueJob`. Known wart: long GUI dispatches always get their 2-minute window lease reaped (`heartbeats: 0`, no renewal path) — harmless while no competing dispatch wants `window-default`; heartbeats are a candidate follow-up. Convergence run (supervised `gh`) still an operator activity. Agent task-filing door MERGED to local main `67eb81f` (`--no-ff`) — 2026-08-27, senior APPROVE (verdict `docs/reviews/verdict-agent-task-door.md`; suite 502/502 ×3 with only the intermittent `t4` parallel-load flake, build clean, M-AGENTFILE-1/2 re-executed live).** One engine helper `fileAgentTask` (`engine/filing/agent_file.ts`) + CLI `npm run task:file` + `POST /api/tasks/file` (ENDPOINTS 30→31); actor allowlist + fail-closed `intake:agent_autofile` meta opt-in + vacuous-verify/field gates + session-layer idempotency; auto-confirm attributed to the agent (`confirmVerify` untouched, human-only); attribution claude=`senior-engineer/anthropic`, glm=`senior-engineer/zai`. Suite 502/502 ×2, build clean; M-AGENTFILE-1/2 recorded (`docs/mutation-evidence-phase8.md`); e2e on temp DB (flag-off refusal, opt-in, HTTP 401/403/201, GLM stdin relay, idempotent retry); walkthrough `docs/walkthrough-agent-task-door.md`, plan `docs/plan-agent-task-door.md` (untracked). DONE for this stream (verdict posted + `--no-ff` merged to local main `67eb81f`, re-verified 502/502 + build clean on merged main). NEXT: opt in with `npm run task:file -- --enable` and file the first real task through the live door — the flag stays OFF until the operator does; push to origin is the operator's call. Prior follow-ups still open from the 2026-08-26 drill: (1) wire `GhCliPrProvider` (+ workspace provider) into runner/console boot — tonight's pr.create/pr.merge were drained by an operator-side process with the seams set because NO runtime path registers a PrProvider; (2) delivery-branch model: the junior committed on `wt/junior-a-project-provisioning` inside the worktree while `bureau-wt-<taskId>` stayed at base (operator fast-forwarded + journaled) — either the worktree manager forces the bureau branch or pr.create uses the worktree's real branch; (3) ✅ RESOLVED by the fix pack: `CLAUDE_SENIOR_TIMEOUT_MS` default is now 1200000 (20 min) on main — relaunch any runner/console to pick it up; (4) plan rubric vs conversational junior replies burned round 3; (5) Stream B (console UX) + the supervised `gh repo create` convergence run for the new provisioning engine. Ledger + plan-doc commits are the operator's call (files deliberately untracked). |
 | Next action | **2026-08-30/31 update:** (1) **Approve `3756ec6e` + `b55e2fda`** in the console — both are unblocked and pass all `pr.create` preconditions. (2) Before any ≥3-concurrent run, land the P0s from the new run: **N0** (junior "completion" fires before the agent is done) and **N3** (junior-B bypassed → both tasks shared junior A and contaminated each other), then **N1/N2** (verify-sendback advances the tip past `reviewed_commit`; delivery gate can be a plan review not a diff review). (3) Decide **N6** (six evening merges landed with no verdict docs — ratify or retro-document) and resolve the merge-law policy tension. See `docs/plan-pre-phase8-remaining.md` **§2026-08-30 session findings** for the ordered plan. Archive the orphan `live-mt0xgoxz`. — Prior (2026-08-28): **Phase 8 entry gate CLEARED** — origin main green + pushed (`40e4157`), Stream B shipped (PR #2), full flow unattended (proven twice). Immediate: (1) approve the two `needs-review` tasks in the console to close them; (2) the supervised provisioning convergence run (entry-gate step 3, operator-supervised); (3) begin **Phase 8 proper** — file **≥3 tasks concurrently** and exercise the Secretary, lease contention, and watchdog under load (`docs/plan-pre-phase8-remaining.md` = the P0/P1/P2 punch list). Then Phase 9 (kernel extraction) and Phase 10 (first new department). Loose ends carried forward: the A1 merge-law hooks are **NOT installed in-repo** (`npm run hooks:install` would block the department's own engine-development merges — resolve that policy tension first); the intake `acceptance_tests` drafting needs a `bureau_intake_sessions.acceptance_tests` D0 addendum (the A3 staged verifier already consumes `task.acceptance_tests`); A5 prices are operator-set via `setModelPrice`/meta (unset ⇒ honest "unpriced floor", see `npm run cost:report`). Gemini keys live; ceilings in `bureau_meta`. |
 
+**PRE-PHASE-8 SESSION (2026-09-02 evening) — the 12:10 THREE-TASK INCIDENT;
+operator-ordered ARCHIVE-ALL; N17 claim-time assignment + capacity queue LANDED.**
+The morning's concurrency attempt (3 tasks filed 12:10:34–12:11:16:
+`cd9ba44d` N9-tidy, `9505f897` journal-narration, `2d1ac42d` README-greet)
+**all claimed instantly** — no admission control — and collided exactly as the
+operator watched: two tasks time-sliced ONE junior window ("continue current
+conversation" is implicit per window), an unpinned dispatch silently defaulted
+to **junior A + a fresh session** carrying junior B's approved plan, ~150
+`window_lease_conflict` spans flooded the journal at ~4/s, dispatches died on
+CDP timeouts, and the operator was hand-rekicking by 12:30 (spans
+#1397–#2804; forensics in `docs/plan-n17-claim-assignment-queue.md`).
+**Operator acts this session (journaled, DB backed up to
+`db/backups/bureau.pre-20260902-archive-all.db`):** the 3 orphaned `running`
+job rows dead-marked (their runner died 12:31) and **ALL 10 unarchived tasks
+archived** through the engine's own `archiveTask` door (7 done history + the 3
+incident tasks; states preserved, done-gate absolute; the incident tasks are
+to be RE-FILED under the fixed queue). **N17 (the fix, branch
+`wt/flow-claim-assignment-queue`, merged `--no-ff`, see below): the law is now
+— (1) a task's junior AND senior are decided ONCE at claim, transactionally
+pinned (`bureau_tasks.assigned_junior/assigned_senior/assigned_at`, new
+`assignment` span kind) and read by EVERY phase; payload pins that disagree
+lose to the row (guardrail). (2) ONE task per junior: occupied from admission
+until needs-review/blocked/done/failed/archived — roster size = capacity = 2
+concurrent tasks, by construction. (3) Filed tasks wait in a **FIFO queue**
+(filing no longer enqueues `plan.cycle`; the queue manager — the evolved
+reconciler, every runner tick — admits the oldest queued task only when a
+junior is free; dead cycles stay operator-action). (4) An unpinned dispatch
+**fails loud** — the junior-A/window-default silent path is dead. (5) Journal
+completeness: authoring spans carry the full prompt, review spans carry the
+senior's full feedback, the claim is an `assignment` span. (6) Window-lease
+waits journal the conflict ONCE (not per 250ms poll). Components: NEW
+`engine/flow/assignment.ts`; queue manager `engine/flow/reconcile.ts`; gates
+in plan/work cycles, verify loop, dispatch-job; filing kickoff removed.
+Suite **716/716 ×2 across 128 files**, tsc clean. Mutations **M-N17a/b/c**
+(each resurrects one incident failure mode; each caught). **claude senior
+APPROVE** — BACK FROM CREDITS, genuine independent subprocess review
+(claude-sonnet-4-5, agentic; verified the assignment CAS race path, the
+defer-reset one-way exit, no-deadlock occupancy analysis, done-gate untouched;
+zero findings) — verdict `docs/reviews/verdict-n17-claim-assignment-queue.md`.
+**With N0+N3+N11+N12+N13+N17 all landed, concurrent runs are now structurally
+safe: the ≥3-task filing that opens Phase 8 exercises the QUEUE (2 run, the
+rest wait FIFO).**
+
+**➜ NEXT INSTANCE — START HERE (2026-09-02 evening):** the tree is green
+(716/716 ×2, tsc clean), the department is EMPTY (all tasks archived this
+session, zero unarchived rows) and concurrency is structurally fixed (N17).
+Immediate: (1) bring the resident console/runner up (it sweeps the queue
+every tick); juniors were DOWN at session end — `ensureJuniorRunning` will
+cold-launch them on first dispatch (90s budget). (2) **Re-file the three
+incident tasks** (N9 tidy → journal narration → README greet) or file fresh
+ones through the agent door — they now queue FIFO and only 2 run at once;
+`assignment` spans in the journal show each claim. (3) Watch the first
+admitted pair end-to-end (plan → implement → review on pinned juniors, same
+conversation) — that live run is the Phase 8 opener. Operator-only leftovers:
+retro-diff-review of merged N1a, decide N6, N14 salvage-plan still open.
+
+
 **PRE-PHASE-8 SESSION (2026-08-31) — N8, N1(b), N9 all fixed + PUSHED to
 origin/main.** Three pre-Phase-8 P0 code fixes were worked as engine-dev (branch →
 claude-senior review → `--no-ff` merge → re-verify), then pushed. Origin/main
@@ -202,7 +259,7 @@ risk, minor reorder from the punch list): **N2 first** (delivery-gate integrity 
 for the practice just performed manually), then N16, N11, N12, N14. Before ANY runner restart:
 pin `SENIOR_DEFAULT=zai` and verify the 9335 instance, else new cycles burn against dead claude.
 
-**➜ NEXT INSTANCE — START HERE (as of 2026-09-02, origin/main `a60ee47`):** the tree is green
+**PRIOR SESSION POINTER (2026-09-02 morning, superseded by the N17 session above):** the tree is green
 (679/679 ×2, tsc clean), main checkout clean. **NEW this session (all merged + PUSHED):** the
 operator's standing request is a feature now — **every filed task pushes an ntfy notification**
 ("Task filed", inbox_tray/memo, default priority). Catalog entry `task.filed` (`taskState:

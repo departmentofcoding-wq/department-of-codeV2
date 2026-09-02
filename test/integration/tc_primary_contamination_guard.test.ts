@@ -62,9 +62,9 @@ describe('N16: primary-checkout contamination guard', () => {
     db = openDbConnection(dbPath);
     const now = new Date().toISOString();
     db.run(
-      `INSERT INTO bureau_tasks (id, title, work_uuid, created_at, updated_at)
-       VALUES (?, 'N16 Task', 'wuuid-n16', ?, ?)`,
-      taskId, now, now
+      `INSERT INTO bureau_tasks (id, title, work_uuid, created_at, updated_at, assigned_junior, assigned_senior, assigned_at)
+       VALUES (?, 'N16 Task', 'wuuid-n16', ?, ?, 'A', 'claude', ?)`,
+      taskId, now, now, now
     );
     db.run(
       `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, status, attempts, created_at)

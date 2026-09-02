@@ -39,7 +39,11 @@ export function acquireLease(
   windowTarget: string,
   dispatchId: string,
   attribution: AttributionTuple,
-  leaseMs?: number
+  leaseMs?: number,
+  /** Suppress the `window_lease_conflict` guardrail span (the waiter journals
+   *  its own once-per-wait span instead — a polling retry loop must not write
+   *  a span every 250ms poll; the 2026-09-02 incident wrote ~150 in 3min). */
+  quietConflict?: boolean
 ): BureauWindowLeaseRow {
   const durationMs = getLeaseMs(db, leaseMs);
   const id = crypto.randomUUID();
@@ -67,16 +71,18 @@ export function acquireLease(
     );
   } catch (err: any) {
     if (err?.message?.includes('UNIQUE constraint failed') || err?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      journal(db, {
-        kind: 'guardrail',
-        attribution,
-        detail: {
-          reason: 'window_lease_conflict',
-          windowTarget,
-          dispatchId,
-          error: err.message
-        }
-      });
+      if (!quietConflict) {
+        journal(db, {
+          kind: 'guardrail',
+          attribution,
+          detail: {
+            reason: 'window_lease_conflict',
+            windowTarget,
+            dispatchId,
+            error: err.message
+          }
+        });
+      }
       throw new LeaseError(`Window target '${windowTarget}' is already leased by an active dispatch.`, windowTarget, dispatchId);
     }
     throw err;
@@ -295,7 +301,11 @@ export async function waitForWindowLease(
 
   for (;;) {
     try {
-      return acquireLease(db, windowTarget, holderId, attribution);
+      // Journal the conflict exactly ONCE per wait (the first poll); the
+      // subsequent polls are the wait doing its job, not newsworthy failures —
+      // per-poll spans flooded the journal (~150 spans in 3 minutes) during the
+      // 2026-09-02 incident.
+      return acquireLease(db, windowTarget, holderId, attribution, undefined, attempt > 0);
     } catch (err: any) {
       if (!(err instanceof LeaseError)) throw err;
       attempt++;

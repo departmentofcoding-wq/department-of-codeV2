@@ -8,6 +8,7 @@ import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 import { getAntigravityDriver, type AntigravityDriver, type AntigravityRunOptions, type AntigravityRunResult } from './antigravity-seam.ts';
 import { findMainWindowWs, isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
+import { readTaskAssignment } from '../flow/assignment.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { notifyOperator } from '../state/notifications.ts';
@@ -87,7 +88,71 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
     throw new Error(`Dispatch '${payload.dispatchId}' not found in bureau_dispatches`);
   }
 
-  const windowTarget = payload.windowTarget || (payload.junior ? `window-${payload.junior}` : 'window-default');
+  // ---- N17: the junior identity of an agent (prompt) dispatch is RESOLVED
+  // FROM THE TASK'S CLAIM-TIME PIN — never a silent default. Before this, a
+  // dispatch whose payload lost its `junior` field fell back to `window-default`
+  // and `resolveJunior(undefined)` = junior A with a FRESH conversation: the
+  // 2026-09-02 incident where junior B's approved plan was handed to a
+  // brand-new junior-A session. Now: payload pin must match the task's pin
+  // (mismatch → guardrail, assignment wins); no pin at all → the dispatch
+  // FAILS LOUD (a dispatch without a task row keeps the explicit payload pin,
+  // e.g. CLI-driven standalone runs).
+  let resolvedJunior: string | undefined;
+  if (payload.prompt) {
+    const assignment = dispatch.task_id ? readTaskAssignment(ctx.db, dispatch.task_id) : null;
+    if (assignment) {
+      if (payload.junior && payload.junior.toUpperCase() !== assignment.junior) {
+        journal(ctx.db, {
+          kind: 'guardrail',
+          attribution: {
+            actor_role: (dispatch.actor_role as any) || 'junior-engineer',
+            provider: dispatch.provider || 'antigravity',
+            model: dispatch.model || 'unspecified',
+            account: dispatch.account ?? null
+          },
+          taskId: dispatch.task_id,
+          workUuid: dispatch.work_uuid,
+          jobId: ctx.job.id,
+          detail: {
+            action: 'assignment_pin_mismatch',
+            door: 'junior.dispatch',
+            payloadJunior: payload.junior,
+            assignedJunior: assignment.junior,
+            resolution: 'assignment wins'
+          }
+        });
+      }
+      resolvedJunior = assignment.junior;
+    } else if (payload.junior) {
+      resolvedJunior = payload.junior.toUpperCase();
+    } else {
+      journal(ctx.db, {
+        kind: 'guardrail',
+        attribution: {
+          actor_role: (dispatch.actor_role as any) || 'junior-engineer',
+          provider: dispatch.provider || 'antigravity',
+          model: dispatch.model || 'unspecified',
+          account: dispatch.account ?? null
+        },
+        taskId: dispatch.task_id,
+        workUuid: dispatch.work_uuid,
+        jobId: ctx.job.id,
+        detail: {
+          action: 'dispatch_unpinned_refused',
+          reason: 'no claim-time assignment and no payload junior — refusing rather than defaulting to junior A / window-default'
+        }
+      });
+      throw new Error(
+        `Dispatch '${dispatch.id}' has no junior pin: the task has no claim-time assignment and the payload carries no 'junior'. ` +
+          `Refusing to default to junior A / window-default (the 2026-09-02 cross-contamination class). ` +
+          `Re-kick the task flow so the queue manager assigns it, or pin the junior explicitly.`
+      );
+    }
+  }
+
+  const windowTarget = payload.prompt
+    ? `window-${resolvedJunior}`
+    : payload.windowTarget || (payload.junior ? `window-${payload.junior}` : 'window-default');
   const nowIso = new Date().toISOString();
 
   // Transactionally update dispatch status to running and increment attempts
@@ -216,7 +281,8 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         ag,
         payload.prompt,
         {
-          junior: payload.junior,
+          // N17: the resolved pin (assignment wins over any payload pin).
+          junior: resolvedJunior,
           port: payload.antigravityPort,
           model: payload.model,
           folder: workFolder,
@@ -249,7 +315,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         jobId: ctx.job.id,
         detail: {
           source: 'antigravity',
-          junior: result.junior ?? payload.junior ?? 'A',
+          junior: result.junior ?? resolvedJunior ?? payload.junior ?? null,
           dispatchId: dispatch.id,
           prompt: payload.prompt,
           model: result.model ?? payload.model ?? null,
@@ -441,9 +507,9 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           task_id: dispatch.task_id,
           payload: {
             taskId: dispatch.task_id,
-            // Carry who to drive on a REVISE: the SAME junior that implemented,
-            // and the SAME senior across fix rounds (when known).
-            ...(payload.junior ? { junior: payload.junior } : {}),
+            // Carry who to drive on a REVISE: the SAME junior that implemented
+            // (N17 pin), and the SAME senior across fix rounds (when known).
+            ...(resolvedJunior ? { junior: resolvedJunior } : {}),
             ...(payload.model ? { juniorModel: payload.model } : {}),
             ...(payload.folder ? { folder: payload.folder } : {}),
             ...(payload.workSeniorId ? { seniorId: payload.workSeniorId } : {}),

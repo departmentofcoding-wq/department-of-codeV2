@@ -6,6 +6,7 @@ import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
+import { readTaskAssignment } from '../flow/assignment.ts';
 import type { VerifyRunResult } from './verifier.ts';
 
 export interface VerifyOutcomeResult {
@@ -157,13 +158,16 @@ export function handleVerifyOutcome(
           taskId
         );
         if (!inFlight || inFlight.n === 0) {
-          // Junior pinned explicitly (deterministic policy — same junior every
-          // phase of this task) so the re-review's fix dispatch can't flip to
-          // another task's junior under concurrency (N3).
+          // N17: the claim-time pin — the re-review's fix dispatch must drive
+          // the SAME junior that implemented, in its conversation (never a
+          // per-phase re-derivation; deterministic policy only as legacy fallback).
           enqueueJob(db, {
             kind: 'work.cycle',
             task_id: taskId,
-            payload: { taskId, junior: assignJunior({ taskId }) }
+            payload: {
+              taskId,
+              junior: readTaskAssignment(db, taskId)?.junior ?? assignJunior({ taskId })
+            }
           });
         }
         journal(db, {
@@ -222,7 +226,12 @@ export function handleVerifyOutcome(
     }
 
     const fixPrompt = buildVerifyFixPrompt(task, outcome, newFixes, ceiling, projectInfo);
-    const junior = (opts.junior || assignJunior({ taskId })).toUpperCase();
+    // N17: claim-time pin first — the verify-fix dispatch continues the SAME
+    // junior's conversation. Payload override only when the row has no pin
+    // (legacy pre-N17 task), then the deterministic policy as final fallback.
+    const junior = (
+      readTaskAssignment(db, taskId)?.junior ?? opts.junior ?? assignJunior({ taskId })
+    ).toUpperCase();
     const juniorModel = opts.juniorModel ?? 'unspecified';
     const dispatchId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
