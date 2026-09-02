@@ -9,3 +9,7 @@ node_modules/
 dist/
 /.bureau-worktrees/
 
+
+# Resident runner/console runtime logs (local, not tracked)
+resident-*.log
+resident-*.log2

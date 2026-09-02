@@ -59,18 +59,121 @@ zero findings) — verdict `docs/reviews/verdict-n17-claim-assignment-queue.md`.
 safe: the ≥3-task filing that opens Phase 8 exercises the QUEUE (2 run, the
 rest wait FIFO).**
 
-**➜ NEXT INSTANCE — START HERE (2026-09-02 evening):** the tree is green
-(716/716 ×2, tsc clean), the department is EMPTY (all tasks archived this
-session, zero unarchived rows) and concurrency is structurally fixed (N17).
-Immediate: (1) bring the resident console/runner up (it sweeps the queue
-every tick); juniors were DOWN at session end — `ensureJuniorRunning` will
-cold-launch them on first dispatch (90s budget). (2) **Re-file the three
-incident tasks** (N9 tidy → journal narration → README greet) or file fresh
-ones through the agent door — they now queue FIFO and only 2 run at once;
-`assignment` spans in the journal show each claim. (3) Watch the first
-admitted pair end-to-end (plan → implement → review on pinned juniors, same
-conversation) — that live run is the Phase 8 opener. Operator-only leftovers:
-retro-diff-review of merged N1a, decide N6, N14 salvage-plan still open.
+**THREE INCIDENT TASKS RE-FILED — the N17 queue is proven LIVE (2026-09-02,
+later evening).** All three tasks the operator archived from the 12:10 incident
+are now back through the agent door under the fixed queue, and the FIFO
+admission machinery is demonstrably working end-to-end on real rows:
+- `693ad95a` — **N9 tidy** (reuse `getTaskRepoRoot` in `backup_push.ts`; dept
+  repo). First admitted → **`claimed`, junior B, senior zai** (`assignment`
+  span, basis `policy-free`, empty busyRoster at claim). Its `plan.cycle` is
+  running.
+- `8b6d7495` — **journal narration** (`narrateEntry` pure mapper + console
+  timeline; dept repo). Admitted by the queue manager on a later runner tick →
+  pinned **junior A, senior zai** (`assignment` span, basis `first-free`,
+  freeRoster `[A]` / busyRoster `[B]`). Both juniors now occupied.
+- `4d9058fb` — **README greet** (greet script + Usage section; project
+  `dept-scratch-20260902`, repo confirmed on disk + on GitHub). **Held `queued`,
+  UNASSIGNED** behind the other two — capacity=2 is full, so it waits FIFO.
+This is precisely the Phase 8 opener behavior: **2 run, the 3rd waits**, each
+claim carrying an `assignment` span, no instant-claim-all, no window collision.
+Filed via `npm run task:file --json` (attribution `senior-engineer/anthropic`,
+idempotency-keyed); the autofile flag reads ON. Faithful re-files of the
+archived specs (`9505f897`, `2d1ac42d`, `cd9ba44d`).
+
+**JUNIOR B (Antigravity 2.0) DELIVERY FIXED + MERGED (2026-09-02, local main
+`796e6ac`, `--no-ff`, claude-senior APPROVE) — NOT yet pushed; N9 rekick PAUSED
+per operator.** When the two admitted tasks ran, `8b6d7495` (journal narration,
+junior A) and `4d9058fb` (README greet → scratch, junior A) both reached
+**needs-review, verifier exit 0** — approve-ready. But **N9 `693ad95a` (pinned
+junior B) died**: plan authored + zai-APPROVED on B (main-window attach works
+for B), then all 3 implementation dispatches timed out with "no CDP window
+titled '693ad95a… - Antigravity IDE' appeared" → job `dead`, task stranded at
+`claimed`. **Root cause (live-verified on CDP 9334):** junior B is **not** a VS
+Code fork — it is the standalone **single-window** Antigravity 2.0 agent app
+(one window titled `"Antigravity"`, project-organized, `Antigravity.exe
+<folder>` opens no new CDP target). The delivery path assumed A's folder-window
+model (`ensureFolderWindowWs` waiting for a `"<base> - Antigravity IDE"` title B
+never produces), so **B had never delivered a task**. **Fix (branch
+`wt/junior-b-delivery-path`):** a `JuniorWindowModel` capability on
+`JuniorConfig` (A=`folder-window`, B=`single-window`) + pure
+`resolveDeliveryStrategy` — A opens a window on the worktree; B attaches its
+single main window and has the absolute worktree path PREPENDED to the prompt
+(`buildWorktreeDirective`; B writes to disk directly). In-chat landmarks
+(input/model/send) were already correct and unchanged; N16 primary-tree guard
+still fires for B (keys off `deliveryWorktreePath`, junior-agnostic). Tests +
+mutations **M-B1/M-B2** (`tc_antigravity.test.ts`, `docs/mutation-evidence-phase8.md`).
+Suite **723/723 ×2 across 128 files** (runs 1&3 green; run 2 hit the known
+parallel-load flake, 2 unrelated integration tests, green on re-run), tsc clean.
+claude-senior independent subprocess review = **APPROVE**, zero blockers, one
+nit fixed (stale N16 comment); verdict `docs/reviews/verdict-junior-b-delivery-path.md`.
+**PENDING (operator-gated): rekick N9 pinned to junior B as the live proof** —
+its worktree `.bureau-worktrees/693ad95a…` is intact at base on branch
+`bureau-wt-693ad95a…`; re-enqueue the same `junior.dispatch` payload via
+`enqueueJob` once the operator says go. Origin push of `796e6ac` also the
+operator's call.
+
+**➜ NEXT INSTANCE — START HERE (superseded by the fix-pack session below):** see
+the **JUNIOR-B RUN FIX PACK** section — F1–F3 are implemented, senior-APPROVED,
+and waiting on the operator's merge of `wt/junior-b-run-fixpack`.
+
+**JUNIOR-B RUN FIX PACK LANDED ON BRANCH (2026-09-02 evening, zai/GLM implementer
++ claude senior APPROVE) — F1/F2/F3 from the N9 rekick, awaiting operator merge.**
+Branch `wt/junior-b-run-fixpack`: feature `467ae5f` + docs/test follow-up
+(`7fda164` lineage — cite `467ae5f` as the reviewed hash). Plan
+`docs/plan-junior-b-run-fixpack.md` (untracked), mutations **M-F1/M-F2/M-F3** in
+`docs/mutation-evidence-phase8.md`, verdict
+`docs/reviews/verdict-junior-b-run-fixpack.md`. What landed:
+- **F1 (the blocker):** the N16 primary-tree guard now snapshots the
+  tracked-dirty set (per-path content oids) at dispatch START and flags only
+  paths the run ITSELF dirtied (`snapshotPrimaryTree` + pure
+  `changedAgainstBaseline`) — the operator's pre-existing uncommitted ledger
+  edit no longer false-fails an honest worktree dispatch (the N9
+  false-positive, reproduced verbatim by mutation M-F1); genuine leaks still
+  fail loud (0e921cfa preserved, incl. the further-changed-pre-dirty-file
+  case). **Every worktree dispatch was blocked on this; the branch unblocks
+  them without requiring the primary tree to be committed clean first.**
+- **F2 (fallback form, per the plan's explicit sanction):** per-task
+  `[bureau-task:<id>]` handle line in all task prompts + a CONTEXT preamble on
+  implementation/fix/verify-fix prompts stating the prompt is self-contained
+  and forbidding re-exploration/re-planning (the N9 restart token waste);
+  revision-round plan prompts quote the junior's previous plan from
+  `bureau_plans`; dispatch observation spans journal the conversation mode.
+  Selector-driven conversation RE-OPEN is deliberately deferred until a live
+  junior-B calibration (both junior ports were down; guessing click targets is
+  the cross-contamination class). Junior-agnostic — A's behavior unchanged.
+- **F3:** "launched but no CDP endpoint on port N within timeout" (port dead +
+  single-instance lock) is now a recoverable wedge class — kill-all +
+  relaunch-with-port through the existing one-heal recovery, which now budgets
+  `JUNIOR_PORT_WAIT_MS` for the port (this class relaunches truly cold).
+  Failed-recovery and absent-install still never trigger a relaunch.
+- **New scar (kept in the evidence file):** a plain named import of a type-only
+  export (`PrimaryTreeSnapshot`) is accepted by tsc and vitest but breaks under
+  `node --experimental-strip-types` — caught ONLY by the `t38` demo child
+  process (first full-suite run failed exactly there). Inline
+  `import { …, type X }` is mandatory for type imports.
+Suite **735/735 ×2 across 128 files** (senior re-ran it live: 735/735 single
+run), tsc clean. **Senior review:** claude headless subprocess, independent —
+re-executed M-F1 and M-F3 live, checked the N0-sentinel-last-line and
+one-heal-bounded laws, APPROVE with one minor (rename-case unit pin, fixed in
+the follow-up) + one nit (untested production default `recover` callback —
+pre-existing practice, live proof at the rekick). **Operator next:**
+(1) merge `wt/junior-b-run-fixpack` (hand-merges stay paused — this needs the
+operator's own tracked/`--no-ff` path), restart the resident runner/console on
+the merged code, then (2) rekick N9 through junior B (its worktree
+`.bureau-worktrees/693ad95a…` still holds B's intact implementation —
+salvage/re-drive, don't re-implement), (3) approve `8b6d7495`/`4d9058fb`,
+(4) decide the origin push (`796e6ac` + this branch). Ledger edit remains
+uncommitted by convention.
+
+**PRIOR NEXT-INSTANCE (2026-09-02, before the fix pack — now partially
+superseded):** the tree was green (723/723 ×2, tsc clean); `796e6ac` on local
+main carried the junior-B delivery fix (unpushed). Two tasks sat at
+needs-review approve-ready (`8b6d7495`, `4d9058fb`); N9 (`693ad95a`) stranded at
+`claimed` awaiting the operator-gated rekick through junior B (the live proof of
+the B fix). Immediate then: (1) rekick N9 through junior B on a restarted
+runner, (2) approve the two needs-review tasks, (3) decide the origin push of
+`796e6ac`. Operator-only leftovers: retro-diff-review of merged N1a, decide N6,
+N14 salvage-plan still open.
 
 
 **PRE-PHASE-8 SESSION (2026-08-31) — N8, N1(b), N9 all fixed + PUSHED to
