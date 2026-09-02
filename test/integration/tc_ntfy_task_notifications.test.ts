@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFakeDb } from '../fixtures/db_factory.ts';
 import { transition } from '../../engine/state/machine.ts';
+import { fileTask } from '../../engine/filing/file_task.ts';
+import { confirmVerify, createSession, updateSessionDraft } from '../../engine/intake/index.ts';
 import { setNtfyTransportOverride } from '../../engine/notifications/ntfy-seam.ts';
 import { subscribeTaskStateChange, clearTaskStateSubscribers, type TaskStateChangeEvent } from '../../engine/state/notifications.ts';
 import type { DbConnection, AttributionTuple } from '../../engine/contract/types.ts';
@@ -64,8 +66,9 @@ describe('T-NTFY: Task status change notifications integration', () => {
     db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', 'https://ntfy.sh')");
     db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', 'bureau-alerts-topic')");
 
-    // Move task: intake -> queued -> claimed -> verifying -> blocked. `claimed`
-    // now fires a "task started" push too, so isolate the blocked one by state.
+    // Move task: intake -> queued -> claimed -> verifying -> blocked. `queued`
+    // (filed) and `claimed` (started) fire pushes too, so isolate the blocked
+    // one by state.
     transition(db, 'task-ntfy-test', 'queued', SYSTEM_ATTR);
     transition(db, 'task-ntfy-test', 'claimed', SYSTEM_ATTR);
     transition(db, 'task-ntfy-test', 'verifying', SYSTEM_ATTR);
@@ -76,7 +79,8 @@ describe('T-NTFY: Task status change notifications integration', () => {
     // Wait a tick for async notification dispatch.
     await new Promise((r) => setTimeout(r, 20));
 
-    // 'claimed' (started) and 'blocked' both notify; 'queued'/'verifying' do not.
+    // 'queued' (filed), 'claimed' (started) and 'blocked' all notify;
+    // 'verifying' does not.
     const started = capturedPosts.find((p) => p.headers['Title'].includes('-> CLAIMED'));
     const post = capturedPosts.find((p) => p.headers['Title'].includes('-> BLOCKED'));
     expect(started).toBeDefined();
@@ -149,11 +153,12 @@ describe('T-NTFY: Task status change notifications integration', () => {
 
     await new Promise((r) => setTimeout(r, 20));
 
-    // 'claimed' (started) and 'blocked' notify; 'queued'/'verifying' stay quiet.
+    // 'queued' (filed), 'claimed' (started) and 'blocked' notify;
+    // 'verifying' stays quiet.
     const states = events.map((e) => e.state);
+    expect(states).toContain('queued');
     expect(states).toContain('claimed');
     expect(states).toContain('blocked');
-    expect(states).not.toContain('queued');
     expect(states).not.toContain('verifying');
     expect(events.find((e) => e.state === 'blocked')).toEqual({
       taskId: 'task-ntfy-test',
@@ -163,5 +168,41 @@ describe('T-NTFY: Task status change notifications integration', () => {
     });
 
     unsubscribe();
+  });
+
+  it('pushes a QUEUED notification when a task is filed, and does not duplicate on idempotent re-file', async () => {
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_server_url', 'https://ntfy.sh')");
+    db.run("INSERT INTO bureau_meta (key, value) VALUES ('ntfy_topic', 'bureau-alerts-topic')");
+
+    // A complete, confirmed intake session — the same door the console, the
+    // CLI, and the agent autofile all walk through.
+    const session = createSession(db, { attribution: OPERATOR_ATTR });
+    updateSessionDraft(db, session.id, {
+      title: 'Notify on filing',
+      intent: 'The operator wants a push when a task is filed',
+      verify_cmd: 'npm test'
+    });
+    confirmVerify(db, session.id, OPERATOR_ATTR);
+
+    const task = fileTask(db, session.id, OPERATOR_ATTR);
+    expect(task.state).toBe('queued');
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(capturedPosts.length).toBe(1);
+    expect(capturedPosts[0].url).toBe('https://ntfy.sh/bureau-alerts-topic');
+    expect(capturedPosts[0].headers['Title']).toContain('-> QUEUED');
+    expect(capturedPosts[0].headers['Priority']).toBe('default');
+    expect(capturedPosts[0].headers['Tags']).toBe('inbox_tray,memo');
+    expect(capturedPosts[0].body).toContain('Title: Notify on filing');
+    expect(capturedPosts[0].body).toContain('Status: queued');
+    expect(capturedPosts[0].body).toContain('Reason: Task filed');
+
+    // Idempotent re-file returns the same task and must NOT push again.
+    const again = fileTask(db, session.id, OPERATOR_ATTR);
+    expect(again.id).toBe(task.id);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(capturedPosts.length).toBe(1);
   });
 });

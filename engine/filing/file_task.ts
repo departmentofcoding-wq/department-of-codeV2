@@ -3,13 +3,19 @@ import { getSession } from '../intake/session.ts';
 import { journal } from '../journal/writer.ts';
 import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 import { planCycleJobId } from '../jobs/ids.ts';
+import { notifyTaskStateChange } from '../state/notifications.ts';
+import { NOTIFYING_TASK_STATES } from '../notifications/events.ts';
 
 export function fileTask(
   db: DbConnection,
   sessionId: string,
   attribution: AttributionTuple
 ): BureauTaskRow {
-  return db.execTransaction(() => {
+  // Set only on the fresh-insert path — the idempotent re-file returns the
+  // existing task and must not push a second "filed" notification.
+  let insertedNewTask = false;
+
+  const taskRow = db.execTransaction(() => {
     const session = getSession(db, sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
@@ -91,6 +97,8 @@ export function fileTask(
       throw new Error('Failed to insert task row');
     }
 
+    insertedNewTask = true;
+
     journal(db, {
       kind: 'task-filed',
       attribution,
@@ -118,4 +126,22 @@ export function fileTask(
 
     return taskRow;
   });
+
+  // Filing pushes an ntfy "task filed" notification when the catalog enables
+  // the queued state — fired AFTER the filing transaction commits, best-effort,
+  // mirroring machine.ts's transition hook (notification failures never block
+  // filing). A filed task is born `queued` via INSERT, not transition(), so
+  // this is the only place the entry-to-queued push can originate.
+  if (insertedNewTask && NOTIFYING_TASK_STATES.has('queued')) {
+    void notifyTaskStateChange(db, {
+      taskId: taskRow.id,
+      title: taskRow.title,
+      state: 'queued',
+      reason: 'Task filed — entering the queue; plan kickoff follows automatically'
+    }).catch(() => {
+      // Notification errors are non-blocking and already logged
+    });
+  }
+
+  return taskRow;
 }
