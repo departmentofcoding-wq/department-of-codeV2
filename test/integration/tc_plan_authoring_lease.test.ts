@@ -102,7 +102,10 @@ describe('N11: plan authoring serializes on the per-junior window lease', () => 
     setAntigravityDriverOverride({
       async runCommand() {
         call++;
-        if (call === 1) throw new Error('junior wedge: workbench did not become available');
+        // A genuine AGENT failure (stall), NOT an infra attach miss — so N12's
+        // infra-only retry does not kick in and this stays terminal, which is
+        // what exercises the lease-release-on-failure path here.
+        if (call === 1) throw new Error('junior stalled: no progress for the stall window');
         return { transcript: GOOD_PLAN, launched: false };
       }
     } as any);
@@ -110,7 +113,7 @@ describe('N11: plan authoring serializes on the per-junior window lease', () => 
 
     await expect(
       runPlanReviewCycle(db, { taskId: 'task-n11-f1', junior: 'B', seniorId: 'claude' })
-    ).rejects.toThrow(/workbench did not become available/);
+    ).rejects.toThrow(/no progress for the stall window/);
 
     // The lease was released in the failure path: the next cycle acquires
     // IMMEDIATELY (no wait) and completes.
@@ -215,5 +218,122 @@ describe('N11: plan authoring serializes on the per-junior window lease', () => 
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * N12 — bounded auto-retry for plan authoring on an INFRA-class attach miss.
+ *
+ * A "workbench window did not become available" / cold-start attach miss is an
+ * infrastructure failure, not an agent verdict — so plan.cycle (max_attempts:1)
+ * retries it a bounded number of times (fresh attach) instead of dying terminally
+ * and needing an operator rekick. A genuine AGENT failure (stall net, wall) is
+ * NOT matched by the infra classifier and stays terminal on the first miss, so
+ * the "failed agent cycles are operator action" rule is unchanged.
+ */
+describe('N12: bounded infra-class auto-retry for plan authoring', () => {
+  afterEach(() => {
+    setAntigravityDriverOverride(null);
+    setSeniorDriverOverride(null);
+  });
+
+  function seedTask(db: any, taskId: string) {
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO bureau_tasks (id, title, intent, spec, acceptance, state, work_uuid, plan_rounds, created_at, updated_at)
+       VALUES (?, 'N12 infra retry', 'authoring survives a cold-start attach miss', 'spec', 'accept', 'claimed', 'w-${taskId}', 0, ?, ?)`,
+      taskId, now, now
+    );
+  }
+  const GOOD_PLAN = [
+    'Implementation Plan',
+    'Branch: wt/junior-a-n12',
+    'Scope: one file.',
+    'Tests: t.test.ts asserts behavior; mutation: break it → test fails.',
+    'Walkthrough: verify build + suite, then post results.'
+  ].join('\n');
+  function approveSenior() {
+    setSeniorDriverOverride({
+      review: async () => ({ senior: 'claude', verdict: 'approve', feedback: 'ok', raw: 'VERDICT: APPROVE', model: 'test' })
+    } as any);
+  }
+  function setInfraRetries(db: any, n: number) {
+    db.run(
+      `INSERT INTO bureau_meta (key, value) VALUES ('plan:authoring_infra_retries', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      String(n)
+    );
+  }
+
+  it('an INFRA attach miss ("workbench window did not become available") is RETRIED, then authoring succeeds', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n12-a');
+    let calls = 0;
+    setAntigravityDriverOverride({
+      async runCommand() {
+        calls++;
+        if (calls === 1) throw new Error('Antigravity 2.0 workbench window did not become available in time.');
+        return { transcript: GOOD_PLAN, launched: false };
+      }
+    } as any);
+    approveSenior();
+
+    const res = await runPlanReviewCycle(db, { taskId: 'task-n12-a', junior: 'A', seniorId: 'claude' });
+    expect(res.outcome).toBe('approved');
+    expect(calls).toBe(2); // one infra miss + one success
+
+    // The retry was journaled as an infra-class guardrail (not an agent verdict).
+    const spans = db.all(`SELECT detail FROM bureau_journal WHERE detail LIKE '%plan_authoring_infra_retry%'`);
+    expect(spans.length).toBe(1);
+    expect(JSON.parse((spans[0] as any).detail).stage).toBe('plan-authoring');
+
+    // The single held lease is released after the successful retry.
+    const leases = db.all(`SELECT * FROM bureau_window_leases WHERE window_target = 'window-A'`);
+    expect(leases.every((l: any) => l.status === 'released')).toBe(true);
+  });
+
+  it('a genuine AGENT failure is NOT retried — one attempt, terminal, lease released', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n12-agent');
+    let calls = 0;
+    setAntigravityDriverOverride({
+      async runCommand() {
+        calls++;
+        throw new Error('junior did not complete: no progress for the stall window');
+      }
+    } as any);
+    approveSenior();
+
+    await expect(
+      runPlanReviewCycle(db, { taskId: 'task-n12-agent', junior: 'A', seniorId: 'claude' })
+    ).rejects.toThrow(/no progress for the stall window/);
+    expect(calls).toBe(1); // NOT retried — an agent failure stays terminal
+
+    const spans = db.all(`SELECT detail FROM bureau_journal WHERE detail LIKE '%plan_authoring_infra_retry%'`);
+    expect(spans.length).toBe(0);
+    const active = db.get(`SELECT * FROM bureau_window_leases WHERE window_target = 'window-A' AND status = 'active'`);
+    expect(active).toBeFalsy(); // lease still released on the terminal path
+  });
+
+  it('infra retries are BOUNDED — exhausting the budget fails terminally', async () => {
+    const db = createFakeDb();
+    seedTask(db, 'task-n12-exhaust');
+    setInfraRetries(db, 2);
+    let calls = 0;
+    setAntigravityDriverOverride({
+      async runCommand() {
+        calls++;
+        throw new Error('workbench window did not become available in time.');
+      }
+    } as any);
+    approveSenior();
+
+    await expect(
+      runPlanReviewCycle(db, { taskId: 'task-n12-exhaust', junior: 'A', seniorId: 'claude' })
+    ).rejects.toThrow(/workbench window did not become available/);
+    expect(calls).toBe(3); // initial attempt + 2 bounded retries, then terminal
+
+    const active = db.get(`SELECT * FROM bureau_window_leases WHERE window_target = 'window-A' AND status = 'active'`);
+    expect(active).toBeFalsy();
   });
 });

@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
-import { DEFAULT_PLAN_ROUNDS_CEILING, DEFAULT_SENIOR_STALL_RETRIES, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
+import { DEFAULT_PLAN_ROUNDS_CEILING, DEFAULT_SENIOR_STALL_RETRIES, DEFAULT_PLAN_AUTHORING_INFRA_RETRIES, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver, type AntigravityRunResult } from '../harness/antigravity-seam.ts';
-import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt } from '../harness/antigravity.ts';
+import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowError } from '../harness/antigravity.ts';
 import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
@@ -233,6 +233,29 @@ function readSeniorStallRetries(db: DbConnection): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SENIOR_STALL_RETRIES;
 }
 
+/**
+ * N12: how many extra times to retry plan authoring on an INFRA-class attach
+ * miss ("workbench window did not become available" / cold-start), before the
+ * cycle fails terminally. env `PLAN_AUTHORING_INFRA_RETRIES` > meta
+ * `plan:authoring_infra_retries` > DEFAULT_PLAN_AUTHORING_INFRA_RETRIES. This is
+ * scoped strictly to the infra class (see isJuniorWedgedWindowError) — a genuine
+ * AGENT failure (stall net, login/modal wall, bad plan) stays terminal, so the
+ * "failed agent cycles are operator action" rule is unchanged.
+ */
+function readAuthoringInfraRetries(db: DbConnection): number {
+  const envVal = process.env['PLAN_AUTHORING_INFRA_RETRIES'];
+  if (envVal !== undefined) {
+    const n = parseInt(envVal, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  const row = db.get<{ value: string }>(
+    'SELECT value FROM bureau_meta WHERE key = ?',
+    REVIEW_PR_META_KEYS.PLAN_AUTHORING_INFRA_RETRIES
+  );
+  const n = row ? parseInt(row.value, 10) : DEFAULT_PLAN_AUTHORING_INFRA_RETRIES;
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_PLAN_AUTHORING_INFRA_RETRIES;
+}
+
 function readCeiling(db: DbConnection): number {
   const row = db.get<{ value: string }>(
     'SELECT value FROM bureau_meta WHERE key = ?',
@@ -354,20 +377,58 @@ export async function runPlanReviewCycle(
     }
   });
 
+  // N12: a cold IDE that misses the workbench-attach window ("workbench window
+  // did not become available") is an INFRASTRUCTURE miss, not an agent verdict —
+  // retrying it (a fresh attach; the driver's cold-start budget + WS2 recovery
+  // apply per call) does not violate the "failed AGENT cycles are operator
+  // action" rule. Bound the retries to the infra class ONLY: a genuine agent
+  // failure (stall net, login/modal wall) is NOT matched by
+  // isJuniorWedgedWindowError and stays terminal on the first miss. We hold the
+  // per-junior window lease across all attempts (still released in finally).
+  const maxInfraRetries = readAuthoringInfraRetries(db);
   let jr: AntigravityRunResult;
   try {
-    jr = await ag.runCommand(juniorPrompt, {
-      junior: juniorId,
-      model: opts.juniorModel,
-      folder: effectiveOpts.folder,
-      stallMs: opts.juniorStallMs ?? 120000,
-      // Round 1 must start fresh (no other task's context). A REVISE round
-      // (priorFeedback present) is the SAME task continuing: stay in the junior's
-      // existing conversation so it sees its prior plan + the senior's required
-      // changes — and so we don't depend on a reset control the IDE may not expose.
-      freshConversation: !opts.priorFeedback,
-      signal: opts.signal
-    });
+    let infraAttempt = 0;
+    for (;;) {
+      infraAttempt++;
+      try {
+        jr = await ag.runCommand(juniorPrompt, {
+          junior: juniorId,
+          model: opts.juniorModel,
+          folder: effectiveOpts.folder,
+          stallMs: opts.juniorStallMs ?? 120000,
+          // Round 1 must start fresh (no other task's context). A REVISE round
+          // (priorFeedback present) is the SAME task continuing: stay in the junior's
+          // existing conversation so it sees its prior plan + the senior's required
+          // changes — and so we don't depend on a reset control the IDE may not expose.
+          freshConversation: !opts.priorFeedback,
+          signal: opts.signal
+        });
+        break;
+      } catch (err: any) {
+        // Only an infra-class attach miss is retryable, and only within budget.
+        // Everything else (agent failure) or exhaustion propagates → terminal.
+        if (isJuniorWedgedWindowError(err) && infraAttempt <= maxInfraRetries) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: juniorAttribution,
+            taskId: task.id,
+            workUuid: task.work_uuid,
+            jobId: opts.jobId ?? null,
+            detail: {
+              action: 'plan_authoring_infra_retry',
+              stage: 'plan-authoring',
+              windowTarget: authoringWindow,
+              attempt: infraAttempt,
+              maxRetries: maxInfraRetries,
+              error: err instanceof Error ? err.message : String(err)
+            }
+          });
+          continue;
+        }
+        throw err;
+      }
+    }
   } finally {
     authoringHeartbeat.stop();
     releaseLease(db, authoringLease.id);
