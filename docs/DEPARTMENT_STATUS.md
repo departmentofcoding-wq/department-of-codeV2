@@ -166,6 +166,42 @@ worktree). Known flake `t38` failed once under full-suite parallel load, passed 
 and in every later full run. `b55e2fda` (window-lease heartbeat) shows done — approved+merged
 by the operator since EOD.
 
+**ACTING-SENIOR SESSION (2026-09-02, ~05:00Z onwards) — claude senior OUT OF CREDITS; operator
+delegated the shift to a ZCode/GLM-5.3 session ("run one task at a time, you be the senior").**
+State found on pickup: the morning session had already run **N15 (`1ac387ee`) to `needs-review`,
+approved it, and created PR #7 — but `pr.merge` DIED** ("not mergeable: merge commit cannot be
+cleanly created"): the delivery branch was cut at `5334ab9`, main had advanced `a60ee47`+…
+`847bf43`, and BOTH sides appended at the EOF of `docs/mutation-evidence-phase8.md` → conflict.
+That dead merge is where the department actually stopped. **N15 landed this session:**
+(1) **Real phase4 code-diff review at the tip `aa10257`** by the acting senior (the flow's gating
+review was `walkthrough`-phase — the N2 trap; this review closed it): full diff read (5 files,
++614/−34), suite 683/683 ×124 + tsc clean re-run independently, integration tests verified genuine
+(transient recovery, blocked-on-exhaustion + rearm, fail-closed), **mutation M-N15a re-executed
+live** (`maxRetries=0` → 3 real failures, restored → green). Verdict
+`docs/reviews/verdict-n15-senior-stall-resilience.md` (commit `0b4df6d`), phase4 round-2 review
+row + journal span recorded (zai/glm-5.3 attribution).
+(2) **Repair + re-delivery through the engine's tracked path:** merged main into
+`bureau-wt-1ac387ee` (`eb29c20`, docs-only conflict resolution: M-NTFYF-3 ordered before
+M-N15a/b), tsc + affected suites green, **phase4 round-3 review row at the new tip** (pr.merge
+requires `reviewed_commit == tip`), branch pushed, journaled `pr_merge_repair_redrive` guardrail
+span + fresh `pr.merge` job → **PR #7 MERGED, task `done`** (`merged_by` system), local = origin =
+`aeedd37`. Suite on merged main **685/685** (first run 684/685 — one known browser-flake-class
+failure, green on both re-runs), tsc clean.
+**Queue state on pickup (all five remaining punch-list tasks stalled with dead jobs):** N16
+(`ec241734` queued; plan.cycle dead — zai GUI senior stall), N14 (`095d42ae` queued; plan.cycle
+dead — junior-A focus loss, **junior A @9333 is DOWN**), N2 (`714269b8` claimed, plan ceiling 7
+burned vs the dying claude senior; junior.dispatch dead ×3 — **N11's window-lease collision**,
+"window-A already leased"), N12 (`980aacd8` claimed, plan ceiling burned; junior.dispatch dead ×3
+— "CDP timeout: Runtime.evaluate" on junior B), N11 (`0e921cfa` claimed; work.cycle dead on the
+original claude stall — the N15 incident itself). **Decision (disclosed): with claude out of
+credits, the zai GUI senior stalling, and both juniors wedged/down, the punch list is worked as
+ENGINE-DEV one task at a time — implementer == reviewer (this session) is a conscious deviation
+forced by the outage, compensated by mutation evidence + suite ×2 + fail-closed checks; the filed
+task rows get the Completed tag citing the shipping commit, never a forged done.** Order (value +
+risk, minor reorder from the punch list): **N2 first** (delivery-gate integrity — permanent law
+for the practice just performed manually), then N16, N11, N12, N14. Before ANY runner restart:
+pin `SENIOR_DEFAULT=zai` and verify the 9335 instance, else new cycles burn against dead claude.
+
 **➜ NEXT INSTANCE — START HERE (as of 2026-09-02, origin/main `a60ee47`):** the tree is green
 (679/679 ×2, tsc clean), main checkout clean. **NEW this session (all merged + PUSHED):** the
 operator's standing request is a feature now — **every filed task pushes an ntfy notification**
