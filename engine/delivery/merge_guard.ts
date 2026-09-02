@@ -1,4 +1,5 @@
 import type { DbConnection } from '../contract/types.ts';
+import { WORK_REVIEW_DIFF_PHASE } from '../contract/constants.ts';
 
 export interface MergeGuardResult {
   /** True only when the commit reached `main` through the tracked delivery path. */
@@ -11,9 +12,9 @@ export interface MergeGuardResult {
  * The merge law, as a machine-checkable predicate.
  *
  * A commit may reach `main` ONLY if it went through the department's tracked
- * delivery path: a Senior returned APPROVE on a walkthrough whose
- * `reviewed_commit` is exactly this commit, AND the owning task reached the
- * done-gate (`state = 'done'` with `merged_at` set — the done-gate CHECK has
+ * delivery path: a Senior returned APPROVE on a code-diff review (phase='phase4',
+ * N2) whose `reviewed_commit` is exactly this commit, AND the owning task reached
+ * the done-gate (`state = 'done'` with `merged_at` set — the done-gate CHECK has
  * already required verifier exit 0 + operator approval before `merged_at` can
  * be written, so this single condition transitively proves the whole gate).
  *
@@ -35,14 +36,18 @@ export function mergeAllowed(db: DbConnection, tipCommit: string): MergeGuardRes
 
   const shortCommit = commit.slice(0, 12);
 
-  // 1. A Senior APPROVE verdict bound to EXACTLY this commit. `reviewed_commit`
-  //    is recorded by the work-review cycle on walkthrough APPROVE (the branch
-  //    tip the senior actually reviewed) and re-checked by pr.create/pr.merge.
+  // 1. A Senior APPROVE verdict bound to EXACTLY this commit, at the code-diff
+  //    phase (N2): `reviewed_commit` is recorded by the work-review path on
+  //    APPROVE (the branch tip the senior actually reviewed) and re-checked by
+  //    pr.create/pr.merge — and since N2 the delivery gate accepts only
+  //    phase='phase4' rows, so the merge law predicate matches that exactly
+  //    (a walkthrough-phase approval alone must not bless an out-of-band merge).
   const review = db.get<{ task_id: string }>(
     `SELECT task_id FROM bureau_work_reviews
-      WHERE reviewed_commit = ? AND verdict = 'approved'
+      WHERE reviewed_commit = ? AND verdict = 'approved' AND phase = ?
       ORDER BY created_at DESC LIMIT 1`,
-    commit
+    commit,
+    WORK_REVIEW_DIFF_PHASE
   );
   if (!review) {
     return {

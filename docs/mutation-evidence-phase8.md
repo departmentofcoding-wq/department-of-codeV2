@@ -551,3 +551,28 @@ Committed as `fdbcb01` on `wt/ntfy-filing-span-drain`.
   - **Restore:** Restored `transition(db, task.id, 'blocked', ...)` on exhaustion; full suite 683/683 across 124 files green.
 
 Executed 2026-09-02 on branch `bureau-wt-1ac387ee-d280-4960-be39-3588b628d568`.
+
+---
+
+## M-N2a / M-N2b — delivery gate requires a phase4 code-diff review at the tip
+
+- **Feature (N2):** `pr.create`/`pr.merge` and the A1 merge-law predicate key on the
+  latest APPROVED `phase='phase4'` review (`WORK_REVIEW_DIFF_PHASE`,
+  `getDeliveryGatingReview` in `engine/delivery/diff_review_gate.ts`) — a
+  walkthrough/plan-phase approval can no longer satisfy delivery, and the standing
+  `reviewed_commit == tip` law is unchanged on top of it.
+
+- **M-N2a (delivery-gate phase filter):**
+  - **Guard:** `diff_review_gate.ts` — `AND phase = ?` in the gating SELECT.
+  - **Mutation:** phase filter removed (query reverted to latest approved row of ANY phase — the pre-N2 behavior).
+  - **Catchers (4 real failures):** `tc_delivery_phase_gate.test.ts` — "REFUSES … walkthrough-phase at the tip (the N1a incident)" (promise resolved instead of rejecting — the walkthrough slip is exactly the incident), "REFUSES … plan-phase", "REFUSES a stale phase4 approval … (the b55e2fda shape)", "pr.merge REFUSES a walkthrough-only approval". 4 failed / 4 passed.
+  - **Restore:** filter restored → 8/8 green.
+
+- **M-N2b (merge-law predicate):**
+  - **Guard:** `engine/delivery/merge_guard.ts` — `AND phase = ?` in the out-of-band merge blessing.
+  - **Mutation:** predicate phase filter removed.
+  - **Catcher:** `tc_merge_guard.test.ts` — "N2: refuses a commit whose only approval is walkthrough-phase (not diff-verified)" failed (guard allowed the walkthrough-blessed commit). 1 failed / 16 passed.
+  - **Restore:** restored → 17/17 green.
+
+Executed 2026-09-02 on branch `wt/n2-delivery-phase-gate` by the acting senior
+(zai/GLM-5.3); full suite 694/694 ×125 files green ×3, `tsc --noEmit` clean.

@@ -80,7 +80,7 @@ describe('T44: pr.merge Job Integration Test & Real Prune Path (B-7)', () => {
     const now = new Date().toISOString();
     db.run(
       `INSERT INTO bureau_work_reviews (id, task_id, work_uuid, phase, round, verdict, reviewed_commit, actor_role, provider, model, created_at)
-       VALUES (?, ?, 'work-uuid', 'work', 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
+       VALUES (?, ?, 'work-uuid', 'phase4', 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
       `wr-${Math.random()}`,
       taskId,
       verdict,

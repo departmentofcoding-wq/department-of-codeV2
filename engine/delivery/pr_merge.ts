@@ -1,4 +1,4 @@
-import type { AttributionTuple, BureauTaskRow, BureauWorkReviewRow, JobContext } from '../contract/types.ts';
+import type { AttributionTuple, BureauTaskRow, JobContext } from '../contract/types.ts';
 import { getPrProvider } from '../contract/pr-seam.ts';
 import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
 import { journal } from '../journal/writer.ts';
@@ -7,6 +7,7 @@ import { notifyOperator } from '../state/notifications.ts';
 import { DeliveryError } from './types.ts';
 import { formatActor } from '../contract/validation.ts';
 import { getBranchTipCommit } from './pr_create.ts';
+import { getDeliveryGatingReview } from './diff_review_gate.ts';
 import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
@@ -67,16 +68,18 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
 
       currentTip = getBranchTipCommit(db, taskId);
 
-      const latestReview = db.get<BureauWorkReviewRow>(
-        'SELECT * FROM bureau_work_reviews WHERE task_id = ? ORDER BY created_at DESC LIMIT 1',
-        taskId
-      );
+      // N2: same gate as pr.create — the latest APPROVED phase4 code-diff
+      // review, at the current tip. A walkthrough/plan-phase approval can
+      // never satisfy the merge either.
+      const gatingReview = getDeliveryGatingReview(db, taskId);
 
-      if (!latestReview || latestReview.verdict !== 'approved') {
-        throw new Error(`Task ${taskId} work review verdict is not approved`);
+      if (!gatingReview) {
+        throw new Error(
+          `Task ${taskId} lacks an approved phase4 code-diff review (delivery requires phase='phase4'; walkthrough/plan-phase approvals do not gate delivery)`
+        );
       }
-      if (!latestReview.reviewed_commit || latestReview.reviewed_commit !== currentTip) {
-        throw new Error(`Task ${taskId} work review commit (${latestReview.reviewed_commit}) does not match current tip (${currentTip})`);
+      if (!gatingReview.reviewed_commit || gatingReview.reviewed_commit !== currentTip) {
+        throw new Error(`Task ${taskId} phase4 review commit (${gatingReview.reviewed_commit}) does not match current tip (${currentTip})`);
       }
     });
   } catch (err: any) {

@@ -1,10 +1,11 @@
 import { execSync } from 'node:child_process';
-import type { AttributionTuple, BureauTaskRow, BureauWorkReviewRow, DbConnection, JobContext } from '../contract/types.ts';
+import type { AttributionTuple, BureauTaskRow, DbConnection, JobContext } from '../contract/types.ts';
 import { getPrProvider } from '../contract/pr-seam.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { journal } from '../journal/writer.ts';
 import { DeliveryError, PrRefusalError } from './types.ts';
 import { DEFAULT_PR_BASE_BRANCH, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
+import { getDeliveryGatingReview } from './diff_review_gate.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
   actor_role: 'system',
@@ -63,16 +64,18 @@ export async function handlePrCreate(ctx: JobContext): Promise<void> {
 
       currentTip = getBranchTipCommit(db, taskId);
 
-      const latestReview = db.get<BureauWorkReviewRow>(
-        'SELECT * FROM bureau_work_reviews WHERE task_id = ? ORDER BY created_at DESC LIMIT 1',
-        taskId
-      );
+      // N2: the gate is the latest APPROVED phase4 code-diff review — a
+      // walkthrough/plan-phase approval can never satisfy delivery (the
+      // b55e2fda / N1a "flow-complete, not diff-verified" incidents).
+      const gatingReview = getDeliveryGatingReview(db, taskId);
 
-      if (!latestReview || latestReview.verdict !== 'approved') {
-        throw new Error(`Task ${taskId} lacks an approved work review (verdict must be approved)`);
+      if (!gatingReview) {
+        throw new Error(
+          `Task ${taskId} lacks an approved phase4 code-diff review (delivery requires phase='phase4'; walkthrough/plan-phase approvals do not gate delivery)`
+        );
       }
-      if (!latestReview.reviewed_commit || latestReview.reviewed_commit !== currentTip) {
-        throw new Error(`Task ${taskId} work review commit (${latestReview.reviewed_commit}) does not match current branch tip (${currentTip})`);
+      if (!gatingReview.reviewed_commit || gatingReview.reviewed_commit !== currentTip) {
+        throw new Error(`Task ${taskId} phase4 review commit (${gatingReview.reviewed_commit}) does not match current branch tip (${currentTip})`);
       }
 
       const baseBranchRow = db.get<{ value: string }>(

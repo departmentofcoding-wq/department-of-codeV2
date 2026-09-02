@@ -78,7 +78,7 @@ describe('T43: pr.create Job Integration Test', () => {
     const now = new Date().toISOString();
     db.run(
       `INSERT INTO bureau_work_reviews (id, task_id, work_uuid, phase, round, verdict, reviewed_commit, actor_role, provider, model, created_at)
-       VALUES (?, ?, 'work-uuid', 'work', 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
+       VALUES (?, ?, 'work-uuid', 'phase4', 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
       `wr-${Math.random()}`,
       taskId,
       verdict,
@@ -162,7 +162,7 @@ describe('T43: pr.create Job Integration Test', () => {
       payload: { taskId }
     };
 
-    await expect(handlePrCreate(mockCtx)).rejects.toThrow(/work review commit \(outdated-hash-999\) does not match current branch tip/);
+    await expect(handlePrCreate(mockCtx)).rejects.toThrow(/phase4 review commit \(outdated-hash-999\) does not match current branch tip/);
 
     const spans = db.all("SELECT * FROM bureau_journal WHERE task_id = ? AND kind = 'guardrail'", taskId);
     expect(spans).toHaveLength(1);

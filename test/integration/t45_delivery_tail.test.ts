@@ -129,6 +129,17 @@ describe('T45: delivery tail — walkthrough APPROVE drains all the way to done'
     const operator: AttributionTuple = { actor_role: 'human-operator', provider: 'human', model: 'operator', account: 'admin' };
     approveTask(db, taskId, operator);
 
+    // --- N2: the delivery gate requires a phase4 code-diff review at the tip.
+    // The walkthrough APPROVE above drove the FLOW (verify → needs-review); the
+    // diff-verification act is recorded separately at the same tip — exactly how
+    // the operator/acting senior records a real diff review (the b55e2fda / N15
+    // precedent). Without this row, pr.create must REFUSE delivery below.
+    db.run(
+      `INSERT INTO bureau_work_reviews (id, task_id, work_uuid, phase, round, verdict, comments, reviewed_commit, actor_role, provider, model, account, created_at)
+       VALUES (?, ?, 'wuuid-45', 'phase4', 2, 'approved', 'PHASE4 code-diff review at tip', ?, 'senior-engineer', 'zai', 'glm-5.3', NULL, ?)`,
+      `wr-phase4-${Math.random()}`, taskId, juniorTip, new Date().toISOString()
+    );
+
     // --- Drain delivery: pr.create → pr.merge → done ---
     await drainUntil(db, () => db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', taskId)!.state === 'done');
 

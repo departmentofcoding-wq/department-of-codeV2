@@ -256,7 +256,7 @@ describe('Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes', () =>
 
       db.run(
         `INSERT INTO bureau_work_reviews (id, task_id, work_uuid, phase, round, verdict, reviewed_commit, actor_role, provider, model, created_at)
-         VALUES ('wr-f3', ?, 'wuuid-f3-pr', 'walkthrough', 1, 'approved', ?, 'senior-engineer', 'zai', 'glm', ?)`,
+         VALUES ('wr-f3', ?, 'wuuid-f3-pr', 'phase4', 1, 'approved', ?, 'senior-engineer', 'zai', 'glm', ?)`,
         taskId, tipHash, now
       );
 
