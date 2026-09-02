@@ -124,8 +124,11 @@ export const HARNESS_META_KEYS = {
 export const REVIEW_PR_META_KEYS = {
   REVIEW_PLAN_ROUNDS_CEILING: 'review:plan_rounds_ceiling',
   REVIEW_WORK_ROUNDS_CEILING: 'review:work_rounds_ceiling',
-  PR_BASE_BRANCH: 'pr:base_branch'
+  PR_BASE_BRANCH: 'pr:base_branch',
+  SENIOR_STALL_RETRIES: 'senior:stall_retries'
 } as const;
+
+export const DEFAULT_SENIOR_STALL_RETRIES = 2;
 
 export const PROJECT_META_KEYS = {
   PROJECTS_ROOT: 'projects_root',

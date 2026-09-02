@@ -492,3 +492,41 @@ fresh-insert path (idempotent re-file must not duplicate).
   restored → green.
 
 Committed as `b29ae6e` on `wt/ntfy-task-filed`.
+
+---
+
+## M-N15a / M-N15b — Senior stall resilience in work.cycle & plan.cycle
+
+- **Feature (N15):** A transient senior stall/failure (Claude CLI stall, subprocess failure, uncaptured review)
+  is retried with a bounded budget (meta `senior:stall_retries` / env `SENIOR_STALL_RETRIES`, default 2 retries / 3 attempts).
+  On retry exhaustion, the task transitions to `blocked` (`senior-engineer` attribution) with a `senior_stall_exhausted`
+  journal span and operator notification, ready for operator re-arm (`rearmTask` with `reenqueueKind`).
+
+- **M-N15a (Retry Bound Guard):**
+  - **Guard:** `engine/flow/work_review_cycle.ts` & `engine/flow/plan_review_cycle.ts` — `while (attempts <= maxRetries)` retry loop.
+  - **Mutation:** Disabled retry budget (`const maxRetries = 0;`).
+  - **Catcher:** `test/integration/tc_senior_stall_resilience.test.ts` → `work.cycle transient stall recovery (N-1 stalls then success)`:
+    ```
+    FAIL test/integration/tc_senior_stall_resilience.test.ts > N15: Senior stall resilience (bounded retries + re-armable failure) > work.cycle transient stall recovery (N-1 stalls then success)
+    AssertionError: expected 'blocked' to be 'approved' // Object.is equality
+
+    Expected: "approved"
+    Received: "blocked"
+    ```
+  - **Restore:** Restored `readSeniorStallRetries(db)`; test suite green.
+
+- **M-N15b (Blocked-on-Exhaustion State Guard):**
+  - **Guard:** `engine/flow/work_review_cycle.ts` & `engine/flow/plan_review_cycle.ts` — `transition(db, task.id, 'blocked', exhaustionAttribution, { reason: 'senior_stall_exhausted', attempts })`.
+  - **Mutation:** Omitted the state transition to `blocked` on stall exhaustion.
+  - **Catcher:** `test/integration/tc_senior_stall_resilience.test.ts` → `work.cycle stall exhaustion (state === claimed) transitions to blocked and is rearmable`:
+    ```
+    FAIL test/integration/tc_senior_stall_resilience.test.ts > N15: Senior stall resilience (bounded retries + re-armable failure) > work.cycle stall exhaustion (state === claimed) transitions to blocked and is rearmable
+    AssertionError: expected 'claimed' to be 'blocked' // Object.is equality
+
+    Expected: "blocked"
+    Received: "claimed"
+    ```
+  - **Restore:** Restored `transition(db, task.id, 'blocked', ...)` on exhaustion; full suite 683/683 across 124 files green.
+
+Executed 2026-09-02 on branch `bureau-wt-1ac387ee-d280-4960-be39-3588b628d568`.
+
