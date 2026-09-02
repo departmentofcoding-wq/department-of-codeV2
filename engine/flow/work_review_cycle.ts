@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
-import { DEFAULT_WORK_ROUNDS_CEILING, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
+import { DEFAULT_WORK_ROUNDS_CEILING, DEFAULT_SENIOR_STALL_RETRIES, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
@@ -83,7 +83,22 @@ export type WorkReviewResult =
       /** True when the ceiling was hit and the task was blocked instead of looping. */
       ceilingReached: boolean;
     }
-  | { outcome: 'skipped'; reason: 'no_walkthrough' };
+  | { outcome: 'skipped'; reason: 'no_walkthrough' }
+  | { outcome: 'blocked'; reason: 'senior_stall_exhausted'; senior: string; attempts: number };
+
+export function readSeniorStallRetries(db: DbConnection): number {
+  const envVal = process.env['SENIOR_STALL_RETRIES'];
+  if (envVal !== undefined) {
+    const n = parseInt(envVal, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  const row = db.get<{ value: string }>(
+    'SELECT value FROM bureau_meta WHERE key = ?',
+    REVIEW_PR_META_KEYS.SENIOR_STALL_RETRIES
+  );
+  const n = row ? parseInt(row.value, 10) : DEFAULT_SENIOR_STALL_RETRIES;
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SENIOR_STALL_RETRIES;
+}
 
 function readWorkCeiling(db: DbConnection): number {
   const row = db.get<{ value: string }>(
@@ -223,20 +238,92 @@ export async function runWorkReviewCycle(
 
   const seniorId = opts.seniorId ?? assignSeniorForTask(task.id);
   const senior = getSeniorDriver(seniorId);
-  const review = await senior.review({
-    kind: 'walkthrough',
-    taskTitle: task.title,
-    taskIntent: task.intent ?? undefined,
-    taskSpec: task.spec ?? undefined,
-    taskAcceptance: task.acceptance ?? undefined,
-    projectName: projectInfo?.name,
-    projectPath: projectInfo?.path,
-    walkthrough,
-    model: opts.seniorModel,
-    // First work review starts fresh; later rounds reuse the same senior
-    // conversation/window so context carries across the up-to-ceiling rounds.
-    freshConversation: (task.cycles ?? 0) === 0
-  });
+  const maxRetries = readSeniorStallRetries(db);
+  let review: Awaited<ReturnType<typeof senior.review>> | null = null;
+  let attempts = 0;
+
+  while (attempts <= maxRetries) {
+    attempts++;
+    try {
+      review = await senior.review({
+        kind: 'walkthrough',
+        taskTitle: task.title,
+        taskIntent: task.intent ?? undefined,
+        taskSpec: task.spec ?? undefined,
+        taskAcceptance: task.acceptance ?? undefined,
+        projectName: projectInfo?.name,
+        projectPath: projectInfo?.path,
+        walkthrough,
+        model: opts.seniorModel,
+        // First work review attempt starts fresh if cycles == 0; retries (attempt > 1)
+        // start fresh to clear any stuck conversation state; otherwise reuse context.
+        freshConversation: attempts > 1 ? true : (task.cycles ?? 0) === 0
+      });
+      break;
+    } catch (err: any) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (attempts <= maxRetries) {
+        journal(db, {
+          kind: 'guardrail',
+          attribution: rubricAttribution,
+          taskId: task.id,
+          workUuid: task.work_uuid,
+          jobId: opts.jobId ?? null,
+          detail: {
+            action: 'senior_review_retry',
+            stage: 'work-review',
+            senior: seniorId,
+            attempt: attempts,
+            maxRetries,
+            error: errorMsg
+          }
+        });
+      } else {
+        const exhaustionAttribution: AttributionTuple = {
+          actor_role: 'senior-engineer',
+          provider: seniorId,
+          model: opts.seniorModel ?? UNSPECIFIED_MODEL,
+          account: null
+        };
+        journal(db, {
+          kind: 'guardrail',
+          attribution: exhaustionAttribution,
+          taskId: task.id,
+          workUuid: task.work_uuid,
+          jobId: opts.jobId ?? null,
+          detail: {
+            action: 'senior_stall_exhausted',
+            stage: 'work-review',
+            senior: seniorId,
+            attempts,
+            error: errorMsg
+          }
+        });
+        const refreshed = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', task.id);
+        if (refreshed && refreshed.state === 'claimed') {
+          transition(db, task.id, 'blocked', exhaustionAttribution, {
+            reason: 'senior_stall_exhausted',
+            attempts
+          });
+        }
+        notifyOperator(
+          opts.jobId ?? 'work.cycle',
+          `Task ${task.id} walkthrough senior review stalled/failed after ${attempts} attempt(s) (${seniorId}) — ` +
+            `blocked for operator re-arm`
+        );
+        return {
+          outcome: 'blocked',
+          reason: 'senior_stall_exhausted',
+          senior: seniorId,
+          attempts
+        };
+      }
+    }
+  }
+
+  if (!review) {
+    throw new Error(`Unexpected state: senior review missing after retry loop for task ${task.id}`);
+  }
 
   const verdict = review.verdict === 'approve' ? 'approved' : 'amend';
   const model = review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL;
