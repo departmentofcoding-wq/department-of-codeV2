@@ -241,6 +241,14 @@ describe('N16: primary-checkout contamination guard', () => {
     expect(changedAgainstBaseline(mk('D:/repo', {}), mk('D:/repo', { 'README.md': null }))).toEqual(['README.md']);
     // Mismatched roots compare conservatively (all after-dirt flagged).
     expect(changedAgainstBaseline(mk('D:/other', {}), mk('D:/repo', { 'a.ts': 'e'.repeat(40) }))).toEqual(['a.ts']);
+    // Rename entries are keyed as the composite "old -> new" string and never
+    // resolve to a file (oid null, same bucket as deletions): a pre-existing
+    // untouched rename is not flagged, and a rename that appears DURING the run
+    // is new dirt. (Senior review follow-up: this case was verified manually
+    // against `git mv` but had no explicit unit pin.)
+    const renameKey = 'docs/old.md -> docs/new.md';
+    expect(changedAgainstBaseline(mk('D:/repo', { [renameKey]: null }), mk('D:/repo', { [renameKey]: null }))).toEqual([]);
+    expect(changedAgainstBaseline(mk('D:/repo', {}), mk('D:/repo', { [renameKey]: null }))).toEqual([renameKey]);
   });
 
   it('F1 (the N9 false-positive): a PRE-EXISTING uncommitted operator edit does NOT fail an honest worktree-only dispatch', async () => {
