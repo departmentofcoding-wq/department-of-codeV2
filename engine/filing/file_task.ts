@@ -1,8 +1,6 @@
 import { taskGaps, type AttributionTuple, type BureauTaskRow, type DbConnection } from '../contract/index.ts';
 import { getSession } from '../intake/session.ts';
 import { journal } from '../journal/writer.ts';
-import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
-import { planCycleJobId } from '../jobs/ids.ts';
 import { notifyTaskStateChange } from '../state/notifications.ts';
 import { NOTIFYING_TASK_STATES } from '../notifications/events.ts';
 
@@ -106,23 +104,15 @@ export function fileTask(
       detail: { sessionId: session.id, idempotencyKey: session.idempotency_key }
     });
 
-    // Auto-kickoff: a filed task is born `queued`, and the whole build flow is
-    // driven by the `plan.cycle` job (junior authors → rubric gate → senior
-    // reviews → dispatch → verify → work review → PR). Enqueue it here, in the
-    // SAME transaction as the task insert, so there is never a filed task with
-    // no work behind it. The deterministic job id makes this idempotent: a
-    // re-file or a reconciler sweep can never spawn a second cycle. The cycle
-    // itself defaults its junior/senior from the assignment policy, so no
-    // operator arguments are required. Nothing runs until a Runner drains the
-    // job — draining stays a separate door, so this never bypasses the human
-    // approval + verifier-exit-0 gate that governs `done`.
-    enqueueJobIfAbsent(db, {
-      id: planCycleJobId(taskRow.id),
-      kind: 'plan.cycle',
-      task_id: taskRow.id,
-      payload: { taskId: taskRow.id },
-      max_attempts: 1
-    });
+    // N17 — filing does NOT kick off the flow anymore. A filed task is born
+    // `queued` and enters the department's FIFO queue; the queue manager
+    // (`engine/flow/reconcile.ts`, swept by every Runner tick) admits it only
+    // when a junior has capacity, pinning its junior + senior at that moment
+    // (the claim-time assignment, `engine/flow/assignment.ts`). The old
+    // immediate enqueue is what let three tasks filed within 42 seconds all
+    // claim at once and collide on the two junior windows (2026-09-02). The
+    // deterministic-id contract (`plan.cycle:<taskId>`) is unchanged — it is
+    // now minted by the queue manager instead of the filing door.
 
     return taskRow;
   });
@@ -137,7 +127,7 @@ export function fileTask(
       taskId: taskRow.id,
       title: taskRow.title,
       state: 'queued',
-      reason: 'Task filed — entering the queue; plan kickoff follows automatically'
+      reason: 'Task filed — entering the queue; it starts when a junior frees up (FIFO)'
     })
       .catch(() => {
         // Notification errors are non-blocking and already logged

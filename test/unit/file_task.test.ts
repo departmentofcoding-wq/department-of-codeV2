@@ -129,7 +129,7 @@ describe.each(testImplementations)('Filing Door fileTask Unit Tests ($name)', ({
     expect(filedSpans[0].actor_role).toBe(officerAttr.actor_role);
   });
 
-  it('auto-kickoff: filing enqueues exactly one plan.cycle job for the task, keyed on the task id', () => {
+  it('N17 queue: filing does NOT kick off the flow — the task waits unassigned for the queue manager', () => {
     const session = createSession(db, {
       idempotencyKey: 'idem-kickoff-1',
       attribution: officerAttr
@@ -144,18 +144,24 @@ describe.each(testImplementations)('Filing Door fileTask Unit Tests ($name)', ({
 
     const task = fileTask(db, session.id, officerAttr);
 
-    const cycleJobs = db.all<{ id: string; kind: string; task_id: string; state: string; max_attempts: number }>(
-      `SELECT id, kind, task_id, state, max_attempts FROM bureau_jobs WHERE kind = 'plan.cycle'`
+    // Filing no longer enqueues plan.cycle (the 2026-09-02 incident: three
+    // tasks filed within 42s all claimed at once). The queue manager
+    // (reconcileQueuedTasks) is the sole kickoff door — see tc_flow_assignment_queue.
+    const cycleJobs = db.all(
+      `SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`
     );
-    expect(cycleJobs).toHaveLength(1);
-    expect(cycleJobs[0].id).toBe(`plan.cycle:${task.id}`);
-    expect(cycleJobs[0].task_id).toBe(task.id);
-    expect(cycleJobs[0].state).toBe('pending');
-    // plan.cycle drives live agents once per round — one attempt, surface on fail.
-    expect(cycleJobs[0].max_attempts).toBe(1);
+    expect(cycleJobs).toHaveLength(0);
+    // The task sits queued with NO claim-time assignment yet.
+    const row = db.get<{ state: string; assigned_junior: string | null; assigned_senior: string | null }>(
+      'SELECT state, assigned_junior, assigned_senior FROM bureau_tasks WHERE id = ?',
+      task.id
+    );
+    expect(row?.state).toBe('queued');
+    expect(row?.assigned_junior).toBeNull();
+    expect(row?.assigned_senior).toBeNull();
   });
 
-  it('auto-kickoff is idempotent: re-filing a session never spawns a second plan.cycle', () => {
+  it('N17 queue: re-filing a session never spawns a plan.cycle either (idempotent)', () => {
     const session = createSession(db, {
       idempotencyKey: 'idem-kickoff-2',
       attribution: officerAttr
@@ -172,7 +178,7 @@ describe.each(testImplementations)('Filing Door fileTask Unit Tests ($name)', ({
     fileTask(db, session.id, officerAttr);
 
     const cycleJobs = db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`);
-    expect(cycleJobs).toHaveLength(1);
+    expect(cycleJobs).toHaveLength(0);
   });
 
   it('honors idempotency: re-filing an already filed session returns the existing task', () => {

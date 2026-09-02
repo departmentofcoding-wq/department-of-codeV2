@@ -18,8 +18,8 @@ describe('junior.dispatch → Antigravity prompt path', () => {
     db = openDbConnection(path.join(tmpDir, 'test.db'));
     const now = new Date().toISOString();
     db.exec(`
-      INSERT INTO bureau_tasks (id, title, work_uuid, created_at, updated_at)
-      VALUES ('task-ag', 'AG Task', 'uuid-ag', '${now}', '${now}');
+      INSERT INTO bureau_tasks (id, title, work_uuid, created_at, updated_at, assigned_junior, assigned_senior, assigned_at)
+      VALUES ('task-ag', 'AG Task', 'uuid-ag', '${now}', '${now}', 'B', 'claude', '${now}');
       INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, status, attempts, created_at)
       VALUES ('disp-ag', 'task-ag', 'uuid-ag', 'junior-engineer', 'antigravity', 'gemini-3.7-flash', 'pending', 0, '${now}');
       INSERT INTO bureau_jobs (id, kind, task_id, state, created_at)

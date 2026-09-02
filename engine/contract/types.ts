@@ -76,6 +76,14 @@ export interface BureauTaskRow {
   completed_by: string | null;
   completion_commit: string | null;
   completion_note: string | null;
+  /** N17: junior pinned at claim (queue admission). Null until the task is
+   *  admitted; immutable afterwards. Every flow door reads this, never a
+   *  per-phase re-derivation. */
+  assigned_junior: string | null;
+  /** N17: senior pinned at claim, same contract as assigned_junior. */
+  assigned_senior: string | null;
+  /** N17: when the pin was written (ISO). */
+  assigned_at: string | null;
   created_at: string;
   updated_at: string;
 }

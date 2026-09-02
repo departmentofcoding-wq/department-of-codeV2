@@ -364,7 +364,17 @@ const ADDED_COLUMNS: Array<{ table: string; name: string; definition: string }> 
   { table: 'bureau_watchdog_findings', name: 'recover_attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'bureau_projects', name: 'github_url', definition: 'TEXT' },
   { table: 'bureau_projects', name: 'provisioned_by', definition: 'TEXT' },
-  { table: 'bureau_projects', name: 'visibility', definition: 'TEXT' }
+  { table: 'bureau_projects', name: 'visibility', definition: 'TEXT' },
+  // N17 — claim-time flow assignment. A task's junior and senior are decided
+  // ONCE, transactionally, at the moment the queue manager admits it (its plan
+  // cycle starts), and persisted here. Every phase of the task (authoring
+  // rounds, implementation dispatch, REVISE/verify-fix dispatches, re-reviews)
+  // reads this pin instead of re-deriving identity per phase — the 2026-09-02
+  // incident: per-phase derivation + implicit "current conversation" windows
+  // cross-contaminated three concurrently-claimed tasks onto two juniors.
+  { table: 'bureau_tasks', name: 'assigned_junior', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'assigned_senior', definition: 'TEXT' },
+  { table: 'bureau_tasks', name: 'assigned_at', definition: 'TEXT' }
 ];
 
 export function applyBootMigrations(db: DatabaseSync): void {
