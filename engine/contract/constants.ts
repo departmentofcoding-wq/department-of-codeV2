@@ -178,6 +178,14 @@ export const DEFAULT_WORK_ROUNDS_CEILING = 5;
 
 export const DEFAULT_PR_BASE_BRANCH = 'main';
 
+// N2: the delivery gate (pr.create/pr.merge, and the A1 merge law's out-of-band
+// guard) requires a senior APPROVED CODE-DIFF review — the `phase4` rows written
+// by the work-review job (engine/review/work_review_job.ts) and by manual
+// operator-recorded diff reviews. Flow-cycle reviews record `walkthrough`
+// (work_review_cycle.ts) and can never satisfy delivery alone: a task whose only
+// approval is walkthrough-phase is "flow-complete", not "diff-verified".
+export const WORK_REVIEW_DIFF_PHASE = 'phase4';
+
 export const DEFAULT_LEASE_MS = 120_000;
 
 export const VACUOUS_VERIFY_COMMANDS = [

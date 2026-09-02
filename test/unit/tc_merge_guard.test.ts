@@ -51,12 +51,12 @@ describe('tc_merge_guard: the merge law as a predicate', () => {
     );
   }
 
-  function seedReview(taskId: string, verdict: string, reviewedCommit: string | null) {
+  function seedReview(taskId: string, verdict: string, reviewedCommit: string | null, phase = 'phase4') {
     const now = new Date().toISOString();
     db.run(
       `INSERT INTO bureau_work_reviews (id, task_id, work_uuid, phase, round, verdict, reviewed_commit, actor_role, provider, model, created_at)
-       VALUES (?, ?, 'work-uuid', 'walkthrough', 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
-      `wr-${Math.random()}`, taskId, verdict, reviewedCommit, now
+       VALUES (?, ?, 'work-uuid', ?, 1, ?, ?, 'senior-engineer', 'zai', 'glm-5.2', ?)`,
+      `wr-${Math.random()}`, taskId, phase, verdict, reviewedCommit, now
     );
   }
 
@@ -67,6 +67,15 @@ describe('tc_merge_guard: the merge law as a predicate', () => {
     const result = mergeAllowed(db, BLESSED);
     expect(result.allowed).toBe(true);
     expect(result.reason).toContain('task-1');
+  });
+
+  it('N2: refuses a commit whose only approval is walkthrough-phase (not diff-verified)', () => {
+    seedTask('task-wt-only', { state: 'done', merged: true });
+    seedReview('task-wt-only', 'approved', BLESSED, 'walkthrough');
+
+    const result = mergeAllowed(db, BLESSED);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('no Senior-approved work review');
   });
 
   it('refuses a forged commit with no work review at all (the out-of-band scar)', () => {
