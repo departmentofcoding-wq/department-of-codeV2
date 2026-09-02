@@ -136,9 +136,17 @@ interface CycleCarry {
 export function buildJuniorPlanPrompt(
   task: BureauTaskRow,
   priorFeedback?: string,
-  projectInfo?: { name: string; path: string }
+  projectInfo?: { name: string; path: string },
+  priorPlan?: string
 ): string {
   return (
+    // F2: stable per-task conversation handle — the first line of every task
+    // prompt. The single-window junior B is multi-conversation and auto-titles
+    // conversations from the first message, so seeding it with the handle keeps
+    // a task's conversations identifiable (in the sidebar and in captured
+    // transcripts) and is what a future calibrated conversation re-open would
+    // match on.
+    (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
     'Here is a task for you to plan. Do NOT write any code yet — a senior will ' +
     'review your implementation plan first.\n\n' +
     `Your plan MUST include: (1) work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches, (2) an ` +
@@ -147,8 +155,18 @@ export function buildJuniorPlanPrompt(
     'verification plan.\n\n' +
     'Format requirement: Emit your plan in a marked, structured format using a top-level # Implementation Plan (or ## Plan) header with sections corresponding to the requirements above. Conversational responses without a structured plan will be rejected.\n\n' +
     (priorFeedback
-      ? `The senior reviewed your PREVIOUS plan and required these changes — address every point:\n` +
-        `${priorFeedback}\n\n`
+      ? // F2: a revision round may land in a NEW conversation after a junior
+        // restart — the previous plan is quoted in full so the revision is
+        // self-contained instead of re-derived from the feedback alone.
+        'CONTEXT: this may be a NEW conversation (the app may have restarted since ' +
+        'your last round) — do not rely on remembering it. Your previous plan is ' +
+        "quoted below in full; revise IT against the senior's required changes " +
+        'rather than re-deriving it from scratch.\n\n' +
+        `The senior reviewed your PREVIOUS plan and required these changes — address every point:\n` +
+        `${priorFeedback}\n\n` +
+        (priorPlan && priorPlan.trim()
+          ? `===== YOUR PREVIOUS PLAN (revise this, do not re-derive it) =====\n${priorPlan.trim()}\n\n`
+          : '')
       : '') +
     '===== TASK =====\n' +
     `TITLE: ${task.title}\n` +
@@ -212,6 +230,21 @@ export function buildImplementationPrompt(
       : '';
   const planLabel = basis.approved ? 'APPROVED PLAN' : 'PLAN (implement, addressing the changes above)';
   return (
+    // F2: the handle + the continuity preamble. This dispatch is meant to
+    // CONTINUE the planning conversation (`freshConversation:false`), but after
+    // a junior restart it can land in a brand-new conversation with none of the
+    // planning context (the 2026-09-02 N9 rekick: B re-explored 7 files from
+    // scratch, wasting tokens). The prompt is therefore fully self-contained by
+    // construction, and the preamble says so explicitly and forbids the
+    // redundant re-exploration/re-planning. Junior-agnostic: junior A's
+    // folder-window dispatches carry it too, where it is equally true.
+    (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
+    'CONTEXT — READ FIRST: this message may arrive in a NEW conversation (the ' +
+    'app may have restarted since you planned). Do not rely on remembering any ' +
+    'earlier conversation: this prompt is self-contained — the task, the ' +
+    'required changes, and the full plan are all below. The plan is FINAL: do ' +
+    'NOT re-explore the codebase to re-derive it and do NOT re-plan — open the ' +
+    'files the plan names and implement it directly.\n\n' +
     header +
     `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; add the tests the plan names; ` +
     'when done, finish with a walkthrough section summarizing what changed, the ' +
@@ -379,7 +412,17 @@ export async function runPlanReviewCycle(
   };
 
   const ag = getAntigravityDriver();
-  const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback, projectInfo);
+  // F2: on a revision round, quote the junior's latest plan so the authoring
+  // prompt is self-contained even when the round lands in a fresh conversation
+  // (junior restart mid-review). The latest row at this point IS the plan the
+  // senior just reviewed — this round's plan is inserted only after authoring.
+  const priorPlanRow = opts.priorFeedback
+    ? db.get<{ plan_text: string }>(
+        'SELECT plan_text FROM bureau_plans WHERE task_id = ? ORDER BY created_at DESC LIMIT 1',
+        task.id
+      )
+    : undefined;
+  const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback, projectInfo, priorPlanRow?.plan_text);
 
   // N11: plan authoring serializes on the per-junior window lease, exactly like
   // junior.dispatch (`window-${juniorId}`). Two same-junior cycles that both

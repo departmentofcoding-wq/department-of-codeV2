@@ -102,6 +102,13 @@ describe('tc_verify_fix_dispatch: N1(a) Real Junior Verify-Fix Dispatch on Verif
     expect(prompt).toContain('ACCEPTANCE: All auth test cases pass');
     expect(prompt).toContain('VERIFY_CMD: npm test');
     expect(prompt).toContain(JUNIOR_COMPLETION_INSTRUCTION);
+    // F2: the verify-fix dispatch continues the task's conversation but may land
+    // in a fresh one after a junior restart — the prompt opens with the
+    // per-task handle and states it is self-contained.
+    expect(prompt.startsWith('[bureau-task:task-test-prompt] Fix auth header parsing\n')).toBe(true);
+    expect(prompt).toMatch(/CONTEXT — READ FIRST/);
+    expect(prompt).toMatch(/may arrive in a NEW conversation/);
+    expect(prompt).toMatch(/do not re-derive or redo prior work/);
     expect(prompt).toContain('BUREAU-JUNIOR-COMPLETE');
   });
 

@@ -748,3 +748,80 @@ watch the named test fail → restore → green).
 
 Executed 2026-09-02 on branch `wt/junior-b-delivery-path`; full suite 723/723
 across 128 files green, `tsc --noEmit` clean.
+
+## Junior-B run fix pack (from the N9 rekick) — M-F1, M-F2, M-F3
+
+Branch `wt/junior-b-run-fixpack`, plan `docs/plan-junior-b-run-fixpack.md`
+(untracked). The first live N9 delivery through junior B proved the B delivery
+fix but exposed three defects; all three fixed and mutation-proven here. Tests
+in `test/integration/tc_primary_contamination_guard.test.ts`,
+`test/unit/tc_junior_resilience.test.ts`,
+`test/integration/tc_plan_cycle.test.ts`, `test/integration/tc_work_cycle.test.ts`,
+`test/unit/tc_verify_fix_dispatch.test.ts`. All mutations executed for real
+(mutate → watch the named test fail → restore → green).
+
+- **M-F1 (the N16 guard must baseline the PRE-dispatch dirty set):**
+  - **Guard:** `dispatch-job.ts` snapshots the primary tree's tracked-dirty set
+    (with per-path `git hash-object` oids) BEFORE driving the junior
+    (`snapshotPrimaryTree`), then flags only paths NEWLY dirtied or
+    content-CHANGED during the run (`changedAgainstBaseline`, pure). Pre-F1 the
+    absolute check blamed the dispatch for ANY dirty tracked path — the
+    operator's uncommitted ledger edit failed the innocent N9 dispatch
+    (`693ad95a`, 2026-09-02) and would keep failing every worktree dispatch.
+  - **Mutation:** revert the post-check to the absolute set
+    (`Object.keys(after.dirty).sort()`, baseline ignored).
+  - **Catcher (real failure):** "F1 (the N9 false-positive): a PRE-EXISTING
+    uncommitted operator edit does NOT fail an honest worktree-only dispatch" —
+    the mutated guard contaminated on `docs/DEPARTMENT_STATUS.md` (the live
+    incident reproduced verbatim in the operator notification) and the honest
+    dispatch refused to complete. 1 failed.
+  - **Restore:** baseline diff restored → 10/10 in the file green; the leak
+    tests (new-path leak, further-changed pre-dirty file) still fail loud,
+    preserving the 0e921cfa scar.
+
+- **M-F2 (continuation prompts must be self-contained and forbid
+  re-exploration):**
+  - **Guard:** after a junior restart a `freshConversation:false` dispatch can
+    land in a brand-new conversation (junior B re-explored 7 files from scratch
+    on N9, wasting tokens). Every task prompt now opens with a
+    `[bureau-task:<id>]` handle, and the implementation/fix/verify-fix prompts
+    carry a CONTEXT preamble stating the prompt is self-contained and forbidding
+    re-exploration/re-planning; revision-round plan prompts quote the junior's
+    previous plan from `bureau_plans`.
+  - **Mutation:** drop the CONTEXT preamble from `buildImplementationPrompt`.
+  - **Catcher (real failure):** "F2: prompts open with the per-task handle; the
+    implementation prompt is a self-contained continuation that forbids
+    re-exploration". 1 failed.
+  - **Restore:** preamble restored → green. (Prompt-content mutation — the
+    weakest class, disclosed; the live rekick through junior B is the real
+    proof, operator-gated.)
+
+- **M-F3 (the port-dead + single-instance-lock wedge must self-heal):**
+  - **Guard:** `isJuniorWedgedWindowError` also matches
+    `/launched but no CDP endpoint on port \d+ within timeout/` —
+    `ensureJuniorRunning`'s port-wait death when the junior's processes hold
+    the single-instance lock but its CDP port is gone (2 burned N9 attempts,
+    manual `taskkill` was the only way out). The recovery relaunch now budgets
+    the full cold-start port wait (`JUNIOR_PORT_WAIT_MS`) instead of the 30s
+    default, since this class relaunches truly cold.
+  - **Mutation:** drop the port pattern from the matcher.
+  - **Catchers (real failures):** the matcher test ("matches the port-dead +
+    single-instance-lock wedge") plus BOTH recovery-flow tests ("triggers the
+    kill-all + relaunch recovery and the retry succeeds" / "SURVIVES the
+    recovery propagates after exactly one heal") — the port wedge stopped
+    healing in flight, exactly the N9 behavior. 3 failed.
+  - **Restore:** pattern restored → 20/20 in the file green. Negative guards
+    hold: a FAILED recovery ("forced relaunch did not bring up…") and an absent
+    install ("executable not found") still never trigger a relaunch.
+
+Scar worth keeping: the first full-suite run failed ONLY
+`t38_demo_phase3` — `node --experimental-strip-types` refuses a plain named
+import of a type-only export (`PrimaryTreeSnapshot`), which `tsc` and vitest
+both accept. The demo child process is the only test that executes engine code
+under the real runtime; the inline `import { …, type X }` modifier is mandatory
+for type imports (same class as the parameter-properties scar).
+
+Executed 2026-09-02 on branch `wt/junior-b-run-fixpack`; full suite
+735/735 ×2 across 128 files, `tsc --noEmit` clean (two earlier runs' t38/T4b
+failures were this real strip-types bug plus the documented parallel-load
+flake, both resolved/passing before the two clean runs).

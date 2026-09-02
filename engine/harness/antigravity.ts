@@ -397,16 +397,30 @@ export async function recoverJuniorRunning(
 }
 
 /**
- * Match the "wedged GUI" failure shape: the junior's CDP port answered, a
- * window/workbench was asked for, but no usable window ever appeared. Pure —
- * keyed off the exact `ensureFolderWindowWs` / main-window-attach messages so
- * ordinary agent/calibration errors never trigger a relaunch.
+ * Match the "wedged GUI" failure shapes — the classes a forced kill-all +
+ * relaunch-with-port can actually cure. Pure — keyed off the exact
+ * `ensureFolderWindowWs` / main-window-attach / port-wait messages so ordinary
+ * agent/calibration errors never trigger a relaunch.
+ *
+ *  - window wedge: the port answered, a window/workbench was asked for, but no
+ *    usable window ever appeared (dead job 8c6f373e).
+ *  - F3 port wedge (2026-09-02, N9 rekick): the junior's app processes are
+ *    alive and hold the single-instance lock, but the CDP port is DEAD — a
+ *    plain relaunch just forwards to that instance and `ensureJuniorRunning`
+ *    times out with "launched but no CDP endpoint on port N within timeout".
+ *    Only an unconditional kill-ALL + relaunch WITH the port recovers it; left
+ *    unclassified it burned every dispatch attempt (manual `taskkill` was the
+ *    only way out). Deliberately NOT matched: `recoverJuniorRunning`'s own
+ *    "forced relaunch did not bring up a CDP endpoint" (a failed recovery must
+ *    not trigger another recovery), and "executable not found" (a genuinely
+ *    absent install must keep failing loud, never thrash a kill/spawn loop).
  */
 export function isJuniorWedgedWindowError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /no CDP window titled .+ appeared within timeout/i.test(msg) ||
-    /workbench (?:window did not become available|did not become available)/i.test(msg)
+    /workbench (?:window did not become available|did not become available)/i.test(msg) ||
+    /launched but no CDP endpoint on port \d+ within timeout/i.test(msg)
   );
 }
 

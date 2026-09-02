@@ -195,6 +195,17 @@ describe('Work-review cycle — senior reviews, junior fixes, loop until approve
     expect(p).toContain('BUREAU-JUNIOR-COMPLETE');
   });
 
+  // F2: the fix dispatch continues the task's conversation but may land in a
+  // fresh one after a junior restart — the prompt opens with the per-task
+  // handle and states it is self-contained (see the plan-cycle F2 tests).
+  it('F2: buildFixPrompt opens with the task handle and the self-contained continuation preamble', () => {
+    const p = buildFixPrompt({ id: 'task-f2-fix', title: 'T', intent: 'i' } as any, 'fix the null case', 2, 5);
+    expect(p.startsWith('[bureau-task:task-f2-fix] T\n')).toBe(true);
+    expect(p).toMatch(/CONTEXT — READ FIRST/);
+    expect(p).toMatch(/may arrive in a NEW conversation/);
+    expect(p).toMatch(/do not re-derive or redo prior work/);
+  });
+
   it('is wired as a real job kind: work.cycle registered, single attempt, long timeout', () => {
     expect(getRegisteredJobKinds()).toContain('work.cycle');
     const def = getJobDefinition('work.cycle')!;
