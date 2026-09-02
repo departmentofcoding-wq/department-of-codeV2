@@ -10,6 +10,8 @@ import { getAntigravityDriver, type AntigravityDriver, type AntigravityRunOption
 import { findMainWindowWs, isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
+import { notifyOperator } from '../state/notifications.ts';
+import { inspectPrimaryTree, PrimaryTreeContaminatedError, resolvePrimaryRepoRoot } from '../worktrees/primary_guard.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -177,11 +179,15 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       // rather than failing the dispatch — surfaced in the journal.
       let workFolder = payload.folder;
       let requireFolder = false;
+      // N16: when the dispatch is worktree-scoped, remember the worktree path so
+      // the post-dispatch guard can verify the PRIMARY checkout stayed clean.
+      let deliveryWorktreePath: string | null = null;
       const wsProvider = getWorkspaceProviderOverride();
       if (payload.chainWorkReview && dispatch.task_id && wsProvider) {
         try {
           const handle = await wsProvider.prepare(ctx.db, dispatch.task_id);
           workFolder = handle.path;
+          deliveryWorktreePath = handle.path;
           // The junior MUST land in the worktree for its commits to be delivered;
           // a silent miss (selectFolder can't open a fresh path) would place work
           // in the wrong workspace. Make it a hard failure downstream.
@@ -256,6 +262,66 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           artifactFiles
         }
       });
+
+      // N16 — the primary-checkout contamination guard. The window was pointed
+      // at the worktree (requireFolder + a dedicated folder window), but an
+      // agent that also holds the primary folder open (or edits by absolute
+      // path) can leak uncommitted edits into main's TRACKED files — the
+      // 0e921cfa scar: ~284 lines of unreviewed engine code in the primary
+      // tree, rescued only by a hand stash. Verify the primary tree is clean
+      // after every worktree-scoped dispatch; on contamination fail LOUD
+      // (guardrail span + operator notification + a failed dispatch), never
+      // silently let junior edits ride into a fresh process's module graph.
+      if (deliveryWorktreePath) {
+        const primaryRoot = resolvePrimaryRepoRoot(deliveryWorktreePath);
+        try {
+          const inspection = inspectPrimaryTree(primaryRoot);
+          if (!inspection.clean) {
+            journal(ctx.db, {
+              kind: 'guardrail',
+              attribution,
+              taskId: dispatch.task_id,
+              workUuid: dispatch.work_uuid,
+              jobId: ctx.job.id,
+              detail: {
+                action: 'primary_checkout_contaminated',
+                dispatchId: dispatch.id,
+                primaryRoot,
+                dirtyPaths: inspection.dirtyPaths
+              }
+            });
+            notifyOperator(
+              ctx.job.id,
+              `Dispatch ${dispatch.id} contaminated the PRIMARY checkout: ${inspection.dirtyPaths.length} tracked path(s) ` +
+                `modified (${inspection.dirtyPaths.slice(0, 5).join(', ')}${inspection.dirtyPaths.length > 5 ? ', …' : ''}). ` +
+                `Dispatch failed loud — inspect and stash/discard the changes before re-driving.`
+            );
+            throw new PrimaryTreeContaminatedError(inspection.dirtyPaths);
+          }
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: { action: 'primary_tree_verified_clean', dispatchId: dispatch.id, primaryRoot }
+          });
+        } catch (err: any) {
+          if (err instanceof PrimaryTreeContaminatedError) throw err;
+          // The inspection itself failed (not the tree) — journaled skip, not a
+          // hard failure: the guard must not kill dispatches over its own
+          // plumbing (e.g. an exotic provider layout with no git at the
+          // derived root).
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: { action: 'primary_tree_guard_skipped', error: err?.message ?? String(err), dispatchId: dispatch.id }
+          });
+        }
+      }
     } else if (payload.actions && Array.isArray(payload.actions)) {
       // Retrieve IDE driver from neutral seam (X3: never touch override inside job handler)
       const driver = getIdeDriver();
