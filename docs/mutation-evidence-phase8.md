@@ -468,3 +468,27 @@ captured verbatim from `npx vitest run` per mutation.
   assertions (still `toContain`) stay green, proving the gate is armed there and only there.
 
 Executed 2026-09-01 on branch `wt/n13-plan-authoring-stall`.
+
+## M-NTFYF-1 / M-NTFYF-2 — ntfy push on task filing (2026-09-02, branch `wt/ntfy-task-filed`)
+
+Feature: filing a task (console intake, CLI, or the agent door) pushes an ntfy
+"task filed" notification. Catalog entry `task.filed` (`taskState: 'queued'`) is
+the single source of truth for both the trigger and the Settings list;
+`fileTask` fires the push after the filing transaction commits, only on the
+fresh-insert path (idempotent re-file must not duplicate).
+
+- **M-NTFYF-1** (the firing site): guard flipped to
+  `if (false && insertedNewTask && NOTIFYING_TASK_STATES.has('queued'))` in
+  `engine/filing/file_task.ts`. Catcher:
+  `test/integration/tc_ntfy_task_notifications.test.ts` — "pushes a QUEUED
+  notification when a task is filed…" failed at
+  `expected capturedPosts.length to be 1` (got 0). Reproduced → restored → green.
+- **M-NTFYF-2** (the catalog gate): `task.filed.taskState` set to undefined in
+  `engine/notifications/events.ts`, so the catalog stops enabling `queued`.
+  Catchers (3 failures): `tc_ntfy_events.test.ts` test 1
+  (`NOTIFYING_TASK_STATES.has('queued')` false), the integration subscriber
+  test (`states` missing `queued`), and the filing test (no push). Proves the
+  firing site is genuinely catalog-gated, not hardcoded. Reproduced →
+  restored → green.
+
+Committed as `b29ae6e` on `wt/ntfy-task-filed`.
