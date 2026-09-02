@@ -576,3 +576,28 @@ Executed 2026-09-02 on branch `bureau-wt-1ac387ee-d280-4960-be39-3588b628d568`.
 
 Executed 2026-09-02 on branch `wt/n2-delivery-phase-gate` by the acting senior
 (zai/GLM-5.3); full suite 694/694 ×125 files green ×3, `tsc --noEmit` clean.
+
+---
+
+## M-N16 — primary-checkout contamination guard on delivery dispatches
+
+- **Feature (N16):** after every worktree-scoped `junior.dispatch` (the
+  `chainWorkReview` delivery path), `engine/worktrees/primary_guard.ts` inspects the
+  PRIMARY repo's tracked files (`git status --porcelain --untracked-files=no`, root
+  derived from the worktree path). Dirty → `primary_checkout_contaminated` guardrail
+  span + operator notification + the dispatch FAILS LOUD (no completion txn, no
+  chained work.cycle); clean → `primary_tree_verified_clean` system span. Untracked
+  files never trip it (not the leak class; the engine's own artifact writes are
+  untracked). The 0e921cfa scar: ~284 lines of unreviewed junior engine code leaked
+  uncommitted into main's tracked files.
+- **M-N16 (guard neutralized):**
+  - **Mutation:** `inspectPrimaryTree` forced to `{ clean: true, dirtyPaths: [] }`.
+  - **Catchers (2 real failures):** `tc_primary_contamination_guard.test.ts` — "a
+    modified TRACKED file is contamination and fails loud" (expected dirty, got clean)
+    and "a dispatch whose agent edits a TRACKED file in the primary repo FAILS LOUD"
+    (the dispatch COMPLETED silently — exactly the incident class: leak rides along,
+    work.cycle chains, nobody is told). 2 failed / 3 passed.
+  - **Restore:** restored → 5/5 green; full suite 699/699 ×126 files ×2, tsc clean.
+
+Executed 2026-09-02 on branch `wt/n16-primary-contamination-guard` by the acting
+senior (zai/GLM-5.3).
