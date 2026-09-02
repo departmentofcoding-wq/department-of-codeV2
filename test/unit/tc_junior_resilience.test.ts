@@ -183,6 +183,43 @@ describe('WS2 — isJuniorWedgedWindowError (the wedge signature)', () => {
     expect(isJuniorWedgedWindowError(new Error('Antigravity 2.0 workbench window did not become available in time.'))).toBe(true);
   });
 
+  it('F3: matches the port-dead + single-instance-lock wedge (the 2026-09-02 N9 scar)', () => {
+    // ensureJuniorRunning, junior-labeled form (B) — the exact N9 message shape.
+    expect(
+      isJuniorWedgedWindowError(
+        new HarnessError('Antigravity 2.0 launched but no CDP endpoint on port 9334 within timeout')
+      )
+    ).toBe(true);
+    // Junior A's label form.
+    expect(
+      isJuniorWedgedWindowError(
+        new HarnessError('Antigravity IDE launched but no CDP endpoint on port 9333 within timeout')
+      )
+    ).toBe(true);
+    // The legacy ensureAntigravityRunning form (bare port callers).
+    expect(
+      isJuniorWedgedWindowError(new HarnessError('Antigravity launched but no CDP endpoint on port 9333 within timeout'))
+    ).toBe(true);
+  });
+
+  it('F3: does NOT match a failed recovery or an absent install — no kill/spawn thrash', () => {
+    // recoverJuniorRunning's own failure must not trigger another recovery.
+    expect(
+      isJuniorWedgedWindowError(
+        new HarnessError(
+          'Antigravity 2.0: forced relaunch did not bring up a CDP endpoint on port 9334 within 30s — ' +
+            'the installation may be broken or the port blocked.'
+        )
+      )
+    ).toBe(false);
+    // A genuinely-absent binary keeps failing loud, never kills/relaunches.
+    expect(
+      isJuniorWedgedWindowError(
+        new HarnessError('Antigravity 2.0 executable not found. Set ANTIGRAVITY_2_PATH to its binary.')
+      )
+    ).toBe(false);
+  });
+
   it('does not match ordinary agent/calibration failures', () => {
     expect(isJuniorWedgedWindowError(new HarnessError("Chat input ('Message input') not found"))).toBe(false);
     expect(isJuniorWedgedWindowError(new HarnessError('Antigravity 2.0 junior did not complete: no progress for the stall window.'))).toBe(
@@ -241,6 +278,39 @@ describe('WS2 — runJuniorCommandWithWedgedRecovery (dispatch heals in flight)'
       /workbench window did not become available/
     );
     expect(recover).toHaveBeenCalledTimes(1); // one in-flight heal, not a loop
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  // F3 (2026-09-02, N9 rekick): the port-dead + single-instance-lock wedge —
+  // the junior's processes are alive but its CDP port is gone, so a plain
+  // relaunch forwards to the dead instance and the port wait times out. Left
+  // unclassified, this burned every dispatch attempt until a manual
+  // `taskkill /IM Antigravity.exe /F` + relaunch-with-port; it must heal in
+  // flight exactly like the window wedge (one recovery per attempt).
+  it('F3: a port-wedge failure triggers the kill-all + relaunch recovery and the retry succeeds', async () => {
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new HarnessError('Antigravity 2.0 launched but no CDP endpoint on port 9334 within timeout')
+      )
+      .mockResolvedValueOnce({ ...ok, junior: 'B' });
+    const recover = vi.fn();
+    const res = await runJuniorCommandWithWedgedRecovery({ runCommand }, 'do the work', { junior: 'B' }, recover);
+    expect(res.transcript).toBe('done');
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(recover).toHaveBeenCalledWith(resolveJunior('B'));
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('F3: a port wedge that SURVIVES the recovery propagates after exactly one heal (no loop)', async () => {
+    const runCommand = vi.fn().mockRejectedValue(
+      new HarnessError('Antigravity IDE launched but no CDP endpoint on port 9333 within timeout')
+    );
+    const recover = vi.fn();
+    await expect(runJuniorCommandWithWedgedRecovery({ runCommand }, 'p', { junior: 'A' }, recover)).rejects.toThrow(
+      /no CDP endpoint on port 9333/
+    );
+    expect(recover).toHaveBeenCalledTimes(1);
     expect(runCommand).toHaveBeenCalledTimes(2);
   });
 });

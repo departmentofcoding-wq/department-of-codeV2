@@ -77,6 +77,15 @@ export function buildVerifyFixPrompt(
 
 
   return (
+    // F2: per-task handle + continuity preamble — the verify-fix dispatch
+    // continues the task's conversation (`freshConversation:false`), but after a
+    // junior restart it can land in a fresh one. The prompt carries everything
+    // needed (task + verifier output); see buildImplementationPrompt's F2 note.
+    (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
+    'CONTEXT — READ FIRST: this message may arrive in a NEW conversation (the ' +
+    'app may have restarted). Do not rely on remembering any earlier ' +
+    'conversation: the task and EVERY verifier-reported issue are below. Touch ' +
+    'only what the fixes need — do not re-derive or redo prior work.\n\n' +
     `The verifier failed on your worktree (verify-fix round ` +
     `${round} of at most ${ceiling}). Fix EVERY issue reported by the verifier below, ` +
     `then finish with an updated walkthrough summarizing what you changed, the test ` +

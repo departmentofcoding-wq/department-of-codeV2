@@ -7,12 +7,21 @@ import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
 import { getAntigravityDriver, type AntigravityDriver, type AntigravityRunOptions, type AntigravityRunResult } from './antigravity-seam.ts';
-import { findMainWindowWs, isJuniorWedgedWindowError, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
+import { findMainWindowWs, isJuniorWedgedWindowError, JUNIOR_PORT_WAIT_MS, recoverJuniorRunning, resolveJunior, type JuniorConfig } from './antigravity.ts';
 import { readTaskAssignment } from '../flow/assignment.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { notifyOperator } from '../state/notifications.ts';
-import { inspectPrimaryTree, PrimaryTreeContaminatedError, resolvePrimaryRepoRoot } from '../worktrees/primary_guard.ts';
+import {
+  changedAgainstBaseline,
+  PrimaryTreeContaminatedError,
+  resolvePrimaryRepoRoot,
+  snapshotPrimaryTree,
+  // `type` modifier: a plain named import of an interface breaks under
+  // `node --experimental-strip-types` (the runtime never exports it) — caught
+  // live by t38's demo child process, invisible to tsc and to vitest.
+  type PrimaryTreeSnapshot
+} from '../worktrees/primary_guard.ts';
 
 export interface JuniorDispatchPayload {
   dispatchId: string;
@@ -47,13 +56,16 @@ export interface JuniorDispatchPayload {
 
 /**
  * Drive the junior for one dispatch attempt, self-healing a WEDGED GUI in
- * flight: when the run fails with the wedged-window shape (port answered, but
- * no CDP window/workbench ever appeared — dead job 8c6f373e), force a clean
- * relaunch of that junior and retry the run ONCE before letting the attempt
- * fail. Without this, all of `junior.dispatch`'s attempts burned against the
- * same dead instance. Non-wedged failures (agent errors, calibration misses,
- * aborts) propagate untouched. The `recover` seam exists so unit tests can
- * verify the retry policy with a fake driver and a fake relauncher.
+ * flight: when the run fails with a wedged shape (port answered but no CDP
+ * window/workbench ever appeared — dead job 8c6f373e; or F3: port dead while
+ * the app's processes hold the single-instance lock, so a relaunch just
+ * forwarded to the dead instance and the port never came up — the 2026-09-02
+ * N9 scar), force a clean relaunch of that junior and retry the run ONCE
+ * before letting the attempt fail. Without this, all of `junior.dispatch`'s
+ * attempts burned against the same dead instance. Non-wedged failures (agent
+ * errors, calibration misses, aborts) propagate untouched. The `recover` seam
+ * exists so unit tests can verify the retry policy with a fake driver and a
+ * fake relauncher.
  */
 export async function runJuniorCommandWithWedgedRecovery(
   driver: AntigravityDriver,
@@ -62,7 +74,11 @@ export async function runJuniorCommandWithWedgedRecovery(
   recover: (cfg: JuniorConfig) => Promise<unknown> = cfg =>
     // Wait for the relaunched workbench to be attachable (not just the port) before
     // the retry, so the re-attempt doesn't race the cold render and burn the attempt.
-    recoverJuniorRunning(cfg, { deps: { findWindow: findMainWindowWs } })
+    // The port wait gets the FULL cold-start budget (JUNIOR_PORT_WAIT_MS, not the
+    // 30s recoverJuniorRunning default): the F3 port-wedge class relaunches from
+    // truly cold, and cold port-opens >30s under load are on the record. For the
+    // window-wedge class the port is already live, so the longer budget is free.
+    recoverJuniorRunning(cfg, { timeoutMs: JUNIOR_PORT_WAIT_MS, deps: { findWindow: findMainWindowWs } })
 ): Promise<AntigravityRunResult> {
   try {
     return await driver.runCommand(prompt, opts);
@@ -277,6 +293,49 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
         }
       }
 
+      // F1: snapshot the primary tree's tracked-dirty set (with per-path content
+      // oids) BEFORE driving the junior, so the post-dispatch N16 guard compares
+      // against what was already dirty at dispatch start instead of demanding an
+      // absolutely clean tree. Without this baseline, the operator's own
+      // uncommitted ledger edit failed an innocent dispatch (N9, 2026-09-02). A
+      // snapshot failure (no git at the derived root) falls back to the absolute
+      // check below — same plumbing, so in practice both fail together and the
+      // guard skips, exactly as before F1.
+      let primaryBaseline: PrimaryTreeSnapshot | null = null;
+      if (deliveryWorktreePath) {
+        const primaryRoot = resolvePrimaryRepoRoot(deliveryWorktreePath);
+        try {
+          primaryBaseline = snapshotPrimaryTree(primaryRoot);
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: {
+              action: 'primary_tree_baseline_captured',
+              dispatchId: dispatch.id,
+              primaryRoot,
+              preexistingDirtyPaths: Object.keys(primaryBaseline.dirty)
+            }
+          });
+        } catch (err: any) {
+          journal(ctx.db, {
+            kind: 'system',
+            attribution,
+            taskId: dispatch.task_id,
+            workUuid: dispatch.work_uuid,
+            jobId: ctx.job.id,
+            detail: {
+              action: 'primary_tree_baseline_failed',
+              dispatchId: dispatch.id,
+              primaryRoot,
+              error: err?.message ?? String(err)
+            }
+          });
+        }
+      }
+
       const result = await runJuniorCommandWithWedgedRecovery(
         ag,
         payload.prompt,
@@ -318,6 +377,10 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           junior: result.junior ?? resolvedJunior ?? payload.junior ?? null,
           dispatchId: dispatch.id,
           prompt: payload.prompt,
+          // F2: auditability of the conversation mode this dispatch ran in —
+          // 'continue' (meant to continue the task's conversation; the prompt is
+          // self-contained regardless) or 'fresh'.
+          conversationMode: payload.freshConversation === false ? 'continue' : 'fresh',
           model: result.model ?? payload.model ?? null,
           folder: payload.folder ?? null,
           folderSelected: result.folderSelected ?? null,
@@ -335,15 +398,22 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       // agent that also holds the primary folder open (or edits by absolute
       // path) can leak uncommitted edits into main's TRACKED files — the
       // 0e921cfa scar: ~284 lines of unreviewed engine code in the primary
-      // tree, rescued only by a hand stash. Verify the primary tree is clean
-      // after every worktree-scoped dispatch; on contamination fail LOUD
-      // (guardrail span + operator notification + a failed dispatch), never
-      // silently let junior edits ride into a fresh process's module graph.
+      // tree, rescued only by a hand stash. After every worktree-scoped
+      // dispatch, re-snapshot and flag only what the run ITSELF dirtied (F1
+      // baseline diff: newly-dirty paths and content changes; the operator's
+      // pre-existing uncommitted edits are NOT the junior's doing). No baseline
+      // (snapshot failed) degrades to the pre-F1 absolute check — conservative,
+      // fail-loud. On contamination fail LOUD (guardrail span + operator
+      // notification + a failed dispatch), never silently let junior edits ride
+      // into a fresh process's module graph.
       if (deliveryWorktreePath) {
         const primaryRoot = resolvePrimaryRepoRoot(deliveryWorktreePath);
         try {
-          const inspection = inspectPrimaryTree(primaryRoot);
-          if (!inspection.clean) {
+          const after = snapshotPrimaryTree(primaryRoot);
+          const dirtyPaths = primaryBaseline
+            ? changedAgainstBaseline(primaryBaseline, after)
+            : Object.keys(after.dirty).sort();
+          if (dirtyPaths.length > 0) {
             journal(ctx.db, {
               kind: 'guardrail',
               attribution,
@@ -354,16 +424,17 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
                 action: 'primary_checkout_contaminated',
                 dispatchId: dispatch.id,
                 primaryRoot,
-                dirtyPaths: inspection.dirtyPaths
+                dirtyPaths,
+                preexistingDirtyPaths: primaryBaseline ? Object.keys(primaryBaseline.dirty) : null
               }
             });
             notifyOperator(
               ctx.job.id,
-              `Dispatch ${dispatch.id} contaminated the PRIMARY checkout: ${inspection.dirtyPaths.length} tracked path(s) ` +
-                `modified (${inspection.dirtyPaths.slice(0, 5).join(', ')}${inspection.dirtyPaths.length > 5 ? ', …' : ''}). ` +
+              `Dispatch ${dispatch.id} contaminated the PRIMARY checkout: ${dirtyPaths.length} tracked path(s) ` +
+                `modified (${dirtyPaths.slice(0, 5).join(', ')}${dirtyPaths.length > 5 ? ', …' : ''}). ` +
                 `Dispatch failed loud — inspect and stash/discard the changes before re-driving.`
             );
-            throw new PrimaryTreeContaminatedError(inspection.dirtyPaths);
+            throw new PrimaryTreeContaminatedError(dirtyPaths);
           }
           journal(ctx.db, {
             kind: 'system',
@@ -371,7 +442,12 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
             taskId: dispatch.task_id,
             workUuid: dispatch.work_uuid,
             jobId: ctx.job.id,
-            detail: { action: 'primary_tree_verified_clean', dispatchId: dispatch.id, primaryRoot }
+            detail: {
+              action: 'primary_tree_verified_clean',
+              dispatchId: dispatch.id,
+              primaryRoot,
+              againstBaseline: !!primaryBaseline
+            }
           });
         } catch (err: any) {
           if (err instanceof PrimaryTreeContaminatedError) throw err;

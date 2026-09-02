@@ -124,6 +124,16 @@ export function buildFixPrompt(
   projectInfo?: { name: string; path: string }
 ): string {
   return (
+    // F2: per-task handle + continuity preamble — the fix dispatch continues the
+    // task's conversation (`freshConversation:false`), but after a junior
+    // restart it can land in a fresh one. The prompt carries everything needed
+    // (task + required changes); the preamble says so and forbids re-deriving
+    // prior work. See buildImplementationPrompt's F2 note for the full scar.
+    (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
+    'CONTEXT — READ FIRST: this message may arrive in a NEW conversation (the ' +
+    'app may have restarted). Do not rely on remembering any earlier ' +
+    'conversation: the task and EVERY required change are below. Touch only ' +
+    'what the required changes need — do not re-derive or redo prior work.\n\n' +
     `A senior reviewed your walkthrough and is requesting changes (revision round ` +
     `${round} of at most ${ceiling}). Implement EVERY required change below, then ` +
     'finish with an updated walkthrough summarizing what you changed, the test ' +

@@ -99,6 +99,39 @@ describe('Plan-review cycle — junior authors, rubric gates, senior reviews', (
     expect(p).toContain('Branch: wt/x');
   });
 
+  // F2 (2026-09-02, N9 rekick): the implementation dispatch continues the
+  // planning conversation (`freshConversation:false`), but after a junior
+  // restart it can land in a brand-new conversation with none of that context —
+  // junior B re-explored 7 files from scratch, wasting tokens. Every task
+  // prompt now (a) opens with a stable per-task handle line, and (b) for the
+  // continuation prompts states the prompt is self-contained and FORBIDS the
+  // redundant re-exploration/re-planning. Junior-agnostic (A carries it too).
+  it('F2: prompts open with the per-task handle; the implementation prompt is a self-contained continuation that forbids re-exploration', () => {
+    const task = { id: 'task-f2-01', title: 'Build a clicker' } as any;
+    const p = buildImplementationPrompt(task, 'Branch: wt/x');
+    expect(p.startsWith('[bureau-task:task-f2-01] Build a clicker\n')).toBe(true);
+    expect(p).toMatch(/CONTEXT — READ FIRST/);
+    expect(p).toMatch(/may arrive in a NEW conversation/);
+    expect(p).toMatch(/this prompt is self-contained/);
+    expect(p).toMatch(/do NOT re-explore the codebase to re-derive it and do NOT re-plan/);
+
+    const plan1 = buildJuniorPlanPrompt(task);
+    expect(plan1.startsWith('[bureau-task:task-f2-01] Build a clicker\n')).toBe(true);
+  });
+
+  it('F2: a revision-round plan prompt quotes the junior\'s previous plan so a restarted junior revises instead of re-deriving', () => {
+    const task = { id: 'task-f2-02', title: 'Build a clicker' } as any;
+    const priorPlan = '# Implementation Plan\n1. old plan body';
+    const p = buildJuniorPlanPrompt(task, 'name the branch and add tests', undefined, priorPlan);
+    expect(p).toMatch(/may be a NEW conversation/);
+    expect(p).toMatch(/YOUR PREVIOUS PLAN/);
+    expect(p).toContain(priorPlan);
+
+    // Without feedback (first round) there is no continuity block — fresh authoring.
+    const fresh = buildJuniorPlanPrompt(task);
+    expect(fresh).not.toMatch(/YOUR PREVIOUS PLAN/);
+  });
+
   it('APPROVE: records plan + review rows, and CONTINUES the pipeline — dispatch row + junior.dispatch job with the approved plan', async () => {
     const db = createFakeDb();
     seedTask(db);
