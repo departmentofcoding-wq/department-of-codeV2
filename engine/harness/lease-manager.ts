@@ -239,3 +239,76 @@ export function reapExpiredWindowLeases(db: DbConnection, nowMs?: number | strin
     return expiredLeases.length;
   });
 }
+
+export interface LeaseWaitOptions {
+  /** Total budget for waiting on a held window lease. Default 10 minutes. */
+  waitMs?: number;
+  /** Poll interval while the lease is held elsewhere. Default 2s. */
+  pollMs?: number;
+  /** Cancellation (job timeout / runner shutdown), honored between polls. */
+  signal?: AbortSignal;
+  /** Observability hook: called on each poll that found the lease still held. */
+  onWait?: (info: { waitedMs: number; attempt: number }) => void;
+}
+
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error('aborted'));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(signal!.reason ?? new Error('aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * N11 — acquire a window lease, WAITING (bounded) while another cycle holds it.
+ *
+ * `acquireLease` is fail-fast by design (a dispatch must never silently time-share
+ * a window), but plan AUTHORING on the same junior must SERIALIZE, not die: two
+ * same-junior plan cycles that both cold-launched the IDE produced two windows for
+ * one junior and a cold-start attach collision (the RAM waste + dead-cycle scar).
+ * This helper polls `acquireLease` until the window frees (the holder heartbeats,
+ * so a dead holder's lease expires and becomes acquirable) or the wait budget /
+ * abort signal is exhausted, in which case it throws a LeaseError naming the
+ * contention — the cycle fails loudly for operator re-arm exactly as before.
+ */
+export async function waitForWindowLease(
+  db: DbConnection,
+  windowTarget: string,
+  holderId: string,
+  attribution: AttributionTuple,
+  opts: LeaseWaitOptions = {}
+): Promise<BureauWindowLeaseRow> {
+  const waitMs = opts.waitMs ?? 600_000;
+  const pollMs = opts.pollMs ?? 2_000;
+  const deadline = Date.now() + waitMs;
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      return acquireLease(db, windowTarget, holderId, attribution);
+    } catch (err: any) {
+      if (!(err instanceof LeaseError)) throw err;
+      attempt++;
+      if (Date.now() >= deadline) {
+        throw new LeaseError(
+          `Timed out after ${waitMs}ms waiting for window lease '${windowTarget}' (held by another cycle; ${attempt} polls). ` +
+            `The authoring cycle fails loudly for operator re-arm — retry when the other same-junior cycle completes.`,
+          windowTarget,
+          holderId
+        );
+      }
+      opts.onWait?.({ waitedMs: Date.now() - (deadline - waitMs), attempt });
+      await sleepAbortable(Math.min(pollMs, Math.max(0, deadline - Date.now())), opts.signal);
+    }
+  }
+}

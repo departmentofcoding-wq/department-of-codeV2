@@ -5,11 +5,13 @@ import { journal } from '../journal/writer.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
-import { getAntigravityDriver } from '../harness/antigravity-seam.ts';
+import { getAntigravityDriver, type AntigravityRunResult } from '../harness/antigravity-seam.ts';
 import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt } from '../harness/antigravity.ts';
+import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
+import { DEFAULT_AUTHORING_LEASE_WAIT_MS } from '../contract/constants.ts';
 
 /**
  * Plan-review cycle — the department flow for the planning stage, integrating
@@ -57,6 +59,10 @@ export interface PlanCycleOptions {
   folder?: string;
   /** Inactivity (stall) window for the junior, ms — NOT a cap on work time. */
   juniorStallMs?: number;
+  /** N11: how long authoring may WAIT for the per-junior window lease when
+   *  another same-junior cycle holds it (serialization, not collision).
+   *  Default DEFAULT_AUTHORING_LEASE_WAIT_MS (10 min). */
+  juniorLeaseWaitMs?: number;
   /** Cancellation (job timeout / runner shutdown), honored by the waits. */
   signal?: AbortSignal;
   /** The job invoking this cycle, for span attribution. */
@@ -311,18 +317,61 @@ export async function runPlanReviewCycle(
 
   const ag = getAntigravityDriver();
   const juniorPrompt = buildJuniorPlanPrompt(task, opts.priorFeedback, projectInfo);
-  const jr = await ag.runCommand(juniorPrompt, {
-    junior: juniorId,
-    model: opts.juniorModel,
-    folder: effectiveOpts.folder,
-    stallMs: opts.juniorStallMs ?? 120000,
-    // Round 1 must start fresh (no other task's context). A REVISE round
-    // (priorFeedback present) is the SAME task continuing: stay in the junior's
-    // existing conversation so it sees its prior plan + the senior's required
-    // changes — and so we don't depend on a reset control the IDE may not expose.
-    freshConversation: !opts.priorFeedback,
-    signal: opts.signal
+
+  // N11: plan authoring serializes on the per-junior window lease, exactly like
+  // junior.dispatch (`window-${juniorId}`). Two same-junior cycles that both
+  // cold-launched the IDE produced TWO windows for one junior and a cold-start
+  // attach collision — the operator-observed RAM waste and the dead-cycle scar.
+  // WAIT for the window (bounded; the holder heartbeats, and a dead holder's
+  // lease expires and becomes acquirable), then hold it with a heartbeat for
+  // the whole authoring run.
+  const authoringWindow = `window-${juniorId}`;
+  let waitedForLease = false;
+  const authoringLease = await waitForWindowLease(
+    db,
+    authoringWindow,
+    `plan.cycle:${task.id}`,
+    juniorAttribution,
+    {
+      waitMs: opts.juniorLeaseWaitMs ?? DEFAULT_AUTHORING_LEASE_WAIT_MS,
+      pollMs: 250,
+      signal: opts.signal,
+      onWait: () => { waitedForLease = true; }
+    }
+  );
+  const authoringHeartbeat = startWindowLeaseHeartbeat(db, authoringLease.id);
+  journal(db, {
+    kind: 'system',
+    attribution: juniorAttribution,
+    taskId: task.id,
+    workUuid: task.work_uuid,
+    jobId: opts.jobId ?? null,
+    detail: {
+      action: 'plan_authoring_window_lease_acquired',
+      windowTarget: authoringWindow,
+      leaseId: authoringLease.id,
+      waited: waitedForLease
+    }
   });
+
+  let jr: AntigravityRunResult;
+  try {
+    jr = await ag.runCommand(juniorPrompt, {
+      junior: juniorId,
+      model: opts.juniorModel,
+      folder: effectiveOpts.folder,
+      stallMs: opts.juniorStallMs ?? 120000,
+      // Round 1 must start fresh (no other task's context). A REVISE round
+      // (priorFeedback present) is the SAME task continuing: stay in the junior's
+      // existing conversation so it sees its prior plan + the senior's required
+      // changes — and so we don't depend on a reset control the IDE may not expose.
+      freshConversation: !opts.priorFeedback,
+      signal: opts.signal
+    });
+  } finally {
+    authoringHeartbeat.stop();
+    releaseLease(db, authoringLease.id);
+  }
   // Choose the richest plan text. This junior often emits "Key Plan Highlights"
   // inline and the full plan in an artifact file, so a narrow marker block can
   // miss the branch/scope/tests the rubric checks for. Prefer, in order: a

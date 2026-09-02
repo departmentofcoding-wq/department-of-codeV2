@@ -186,6 +186,12 @@ export const DEFAULT_PR_BASE_BRANCH = 'main';
 // approval is walkthrough-phase is "flow-complete", not "diff-verified".
 export const WORK_REVIEW_DIFF_PHASE = 'phase4';
 
+// N11: plan authoring waits (bounded) on the per-junior window lease rather than
+// colliding with another same-junior cycle — the wait budget before the cycle
+// fails loudly for operator re-arm. Authoring itself can run many minutes, so
+// this is deliberately generous.
+export const DEFAULT_AUTHORING_LEASE_WAIT_MS = 600_000;
+
 export const DEFAULT_LEASE_MS = 120_000;
 
 export const VACUOUS_VERIFY_COMMANDS = [

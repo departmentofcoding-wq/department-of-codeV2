@@ -601,3 +601,27 @@ Executed 2026-09-02 on branch `wt/n2-delivery-phase-gate` by the acting senior
 
 Executed 2026-09-02 on branch `wt/n16-primary-contamination-guard` by the acting
 senior (zai/GLM-5.3).
+
+---
+
+## M-N11 — plan authoring serializes on the per-junior window lease
+
+- **Feature (N11):** plan authoring (`runPlanReviewCycle` step 1) acquires the SAME
+  `window-${juniorId}` lease `junior.dispatch` uses — via a new bounded
+  `waitForWindowLease` (polls `acquireLease`; holder heartbeats keep live runs held,
+  dead holders' leases expire and free the window; default budget
+  `DEFAULT_AUTHORING_LEASE_WAIT_MS` = 10 min) — then heartbeats and releases around
+  the authoring `runCommand`. Two same-junior cycles now SERIALIZE on one window
+  instead of each cold-launching the IDE (two windows for one junior, the RAM waste +
+  cold-start collision scar). Requires dropping the `dispatch_id` FK on
+  `bureau_window_leases` (a holder can be `plan.cycle:<taskId>`, not only a dispatch) —
+  schema change + guarded idempotent boot-migration rebuild.
+- **M-N11 (lease bypass):**
+  - **Mutation:** the acquired lease released IMMEDIATELY (before authoring) — no serialization.
+  - **Catcher:** `tc_plan_authoring_lease.test.ts` — "two concurrent SAME-junior plan
+    cycles SERIALIZE" failed (`maxInFlight` reached 2: both cycles authored
+    simultaneously in the window — the exact scar). 1 failed / 3 passed.
+  - **Restore:** restored → 4/4 green; full suite 703/703 ×127 files ×3, tsc clean.
+
+Executed 2026-09-02 on branch `wt/n11-authoring-window-lease` by the acting senior
+(zai/GLM-5.3).

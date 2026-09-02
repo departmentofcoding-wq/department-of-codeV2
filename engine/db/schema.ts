@@ -238,7 +238,10 @@ export function applySchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS bureau_window_leases (
       id TEXT PRIMARY KEY,
       window_target TEXT NOT NULL,
-      dispatch_id TEXT NOT NULL REFERENCES bureau_dispatches(id),
+      -- Holder id: a dispatch id (junior.dispatch) OR a cycle id
+      -- ('plan.cycle:<taskId>' - N11 authoring holds the window too). Deliberately
+      -- NOT a FK: the holder set legitimately extends beyond dispatches.
+      dispatch_id TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('active','released','expired','reaped')),
       acquired_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
@@ -441,6 +444,56 @@ export function applyBootMigrations(db: DatabaseSync): void {
       const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
       if (fkViolations.length > 0) {
         throw new Error(`Foreign key check failed after bureau_tasks rebuild: ${JSON.stringify(fkViolations)}`);
+      }
+
+      db.exec('COMMIT;');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // Ignored if transaction already aborted
+      }
+      throw err;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON;');
+    }
+  }
+
+  // 2b. Table Rebuild (N11): bureau_window_leases.dispatch_id carried a FK to
+  // bureau_dispatches — but a window holder is not always a dispatch (plan
+  // authoring holds `window-<junior>` as `plan.cycle:<taskId>`). Drop the FK in
+  // place: rebuild only when the live DDL still references dispatches.
+  const leasesMaster = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='bureau_window_leases'`).get() as { sql?: string } | undefined;
+  if (leasesMaster?.sql && leasesMaster.sql.includes('REFERENCES bureau_dispatches')) {
+    db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      db.exec('BEGIN IMMEDIATE;');
+      db.exec(`
+        CREATE TABLE bureau_window_leases_new (
+          id TEXT PRIMARY KEY,
+          window_target TEXT NOT NULL,
+          dispatch_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active','released','expired','reaped')),
+          acquired_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          heartbeats INTEGER NOT NULL DEFAULT 0,
+          actor_role TEXT NOT NULL, provider TEXT NOT NULL,
+          model TEXT NOT NULL, account TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO bureau_window_leases_new
+        SELECT id, window_target, dispatch_id, status, acquired_at, expires_at,
+               heartbeats, actor_role, provider, model, account, created_at, updated_at
+        FROM bureau_window_leases;
+
+        DROP TABLE bureau_window_leases;
+        ALTER TABLE bureau_window_leases_new RENAME TO bureau_window_leases;
+      `);
+
+      const fkViolations = db.prepare('PRAGMA foreign_key_check').all();
+      if (fkViolations.length > 0) {
+        throw new Error(`Foreign key check failed after bureau_window_leases rebuild: ${JSON.stringify(fkViolations)}`);
       }
 
       db.exec('COMMIT;');
