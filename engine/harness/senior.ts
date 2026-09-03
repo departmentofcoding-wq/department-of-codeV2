@@ -30,7 +30,7 @@ export type Verdict = 'approve' | 'revise';
 
 export interface SeniorReviewInput {
   /** What is being reviewed. */
-  kind: 'plan' | 'walkthrough';
+  kind: 'plan' | 'walkthrough' | 'diff';
   /** Task title / spec for context (the senior reviews the artifact against it). */
   taskTitle: string;
   taskSpec?: string;
@@ -45,6 +45,10 @@ export interface SeniorReviewInput {
   plan?: string;
   /** The junior's walkthrough text (required for kind='walkthrough'). */
   walkthrough?: string;
+  /** The actual code diff (git diff base..tip) — required for kind='diff'. This
+   *  is the N2 delivery gate: the senior reviews the REAL diff, not just the
+   *  junior's narrative, before anything merges. */
+  diff?: string;
   /** Model to review with. Claude: passed to `--model`. ZCode: driven in the GUI picker. */
   model?: string;
   /**
@@ -79,8 +83,10 @@ export interface SeniorDriver {
 
 /** Build the review prompt. Seniors REVIEW; they must not write code. */
 export function buildReviewPrompt(input: SeniorReviewInput): { system: string; user: string } {
-  const artifactLabel = input.kind === 'plan' ? 'IMPLEMENTATION PLAN' : 'WALKTHROUGH';
-  const artifact = (input.kind === 'plan' ? input.plan : input.walkthrough) ?? '';
+  const artifactLabel =
+    input.kind === 'plan' ? 'IMPLEMENTATION PLAN' : input.kind === 'diff' ? 'CODE DIFF' : 'WALKTHROUGH';
+  const artifact =
+    (input.kind === 'plan' ? input.plan : input.kind === 'diff' ? input.diff : input.walkthrough) ?? '';
   const system =
     'You are a Senior Engineer performing code review in a software bureau. ' +
     'You do NOT write code. You review the artifact a junior produced and judge it ' +

@@ -97,7 +97,7 @@ describe('A2: Pure State Machine & Task Approval', () => {
     }).toThrow(/CHECK constraint failed/);
   });
 
-  it('approveTask sets approved_at, approved_by, preserves needs-review state, enqueues pr.create, and records human span', () => {
+  it('approveTask sets approved_at, approved_by, preserves needs-review state, enqueues work.diff-review, and records human span', () => {
     const db = openDbConnection(dbPath);
     seedTask('t-approve', 'needs-review', 0); // verifier_exit_code = 0
 
@@ -106,8 +106,9 @@ describe('A2: Pure State Machine & Task Approval', () => {
     expect(updated.approved_at).toBeDefined();
     expect(updated.approved_by).toBe('human-operator:admin');
 
-    // Verify pr.create job enqueued
-    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-approve' AND kind = 'pr.create'").all() as any[];
+    // Verify work.diff-review job enqueued (N2: Approve triggers the code-diff
+    // senior review, which chains to pr.create → pr.merge on APPROVE).
+    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-approve' AND kind = 'work.diff-review'").all() as any[];
     expect(jobs).toHaveLength(1);
 
     // Verify journal span created
@@ -127,8 +128,8 @@ describe('A2: Pure State Machine & Task Approval', () => {
     const second = approveTask(db, 't-dbl-approve', humanAttr);
     expect(second.approved_at).toEqual(first.approved_at);
 
-    // Verify only 1 pr.create job enqueued (no duplicate enqueue on re-approval)
-    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-dbl-approve' AND kind = 'pr.create'").all() as any[];
+    // Verify only 1 work.diff-review job enqueued (no duplicate enqueue on re-approval)
+    const jobs = db.prepare("SELECT * FROM bureau_jobs WHERE task_id = 't-dbl-approve' AND kind = 'work.diff-review'").all() as any[];
     expect(jobs).toHaveLength(1);
   });
 });
