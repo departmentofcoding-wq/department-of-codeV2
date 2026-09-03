@@ -5,6 +5,7 @@ import path from 'node:path';
 import type child_process from 'node:child_process';
 import { HarnessError } from '../../engine/harness/errors.ts';
 import {
+  antigravityUserDataDir,
   isJuniorWedgedWindowError,
   JUNIORS,
   juniorProcessImageName,
@@ -70,7 +71,10 @@ describe('WS2 — recoverJuniorRunning (forced clean relaunch)', () => {
       expect(res).toMatchObject({ launched: true, port: 9334 });
       expect(kill).toHaveBeenCalledTimes(1); // the wedge itself died
       expect(spawn).toHaveBeenCalledTimes(1);
-      expect(spawn).toHaveBeenCalledWith(bin, ['--remote-debugging-port=9334']);
+      expect(spawn).toHaveBeenCalledWith(bin, [
+        '--remote-debugging-port=9334',
+        `--user-data-dir=${antigravityUserDataDir(9334)}`
+      ]);
     });
   });
 
@@ -84,7 +88,10 @@ describe('WS2 — recoverJuniorRunning (forced clean relaunch)', () => {
       });
       expect(res).toMatchObject({ launched: true, port: 9333 });
       expect(kill).toHaveBeenCalledTimes(1);
-      expect(spawn).toHaveBeenCalledWith(bin, ['--remote-debugging-port=9333']);
+      expect(spawn).toHaveBeenCalledWith(bin, [
+        '--remote-debugging-port=9333',
+        `--user-data-dir=${antigravityUserDataDir(9333)}`
+      ]);
     });
   });
 
