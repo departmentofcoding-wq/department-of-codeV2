@@ -109,6 +109,9 @@ describe('T-C2: Console Read Endpoints (Milestone A2)', () => {
     const journalRes = await fetchApi<JournalEntryDTO[]>(handle.port, TEST_TOKEN, '/api/journal');
     expect(journalRes.statusCode).toBe(200);
     expect(Array.isArray(journalRes.body)).toBe(true);
+    expect(journalRes.body.length).toBeGreaterThan(0);
+    expect(typeof journalRes.body[0].narrative).toBe('string');
+    expect(journalRes.body[0].narrative.length).toBeGreaterThan(0);
   });
 
   it('proves zero database table mutations across a full read pass', async () => {

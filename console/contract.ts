@@ -162,6 +162,7 @@ export interface JournalEntryDTO {
   cost_usd: number | null;
   latency_ms: number | null;
   detail: string;
+  narrative: string;
 }
 
 /** Worker/employee roster entry (role + backing model + activity). */
