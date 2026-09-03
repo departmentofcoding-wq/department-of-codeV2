@@ -1,5 +1,7 @@
+import path from 'node:path';
 import type { AttributionTuple, JobContext } from '../contract/types.ts';
 import { getBackupProvider } from '../contract/backup-seam.ts';
+import { getTaskRepoRoot } from '../worktrees/manager.ts';
 import { journal } from '../journal/writer.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
@@ -35,26 +37,16 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
   }
 
   // N9: a task in a non-dept project must be backed up against THAT project's
-  // repo. Resolve it from the task's project (bureau_projects.path_to_repo) and
-  // root the provider there; a dept task (project_id null) or a project with no
-  // recorded path falls back to the default dept repo root — unchanged.
-  let repoRoot: string | undefined;
+  // repo. Resolve the repo root through the shared getTaskRepoRoot helper — the
+  // single "which repo does this job run in" code path that pr.create/pr.merge
+  // already use (N8) — instead of an inline project lookup. Behavior is
+  // unchanged: a project task roots at bureau_projects.path_to_repo; a dept task
+  // (project_id null), a project with no recorded path, or a job with no task_id
+  // falls back to the dept repo root — the same default getBackupProvider() uses
+  // (this file lives at <repoRoot>/engine/durability/, NOT process.cwd()).
+  const deptRoot = path.resolve(import.meta.dirname, '../..');
   const backupTaskId = ctx.job.task_id;
-  if (backupTaskId) {
-    const task = db.get<{ project_id: string | null }>(
-      'SELECT project_id FROM bureau_tasks WHERE id = ?',
-      backupTaskId
-    );
-    if (task?.project_id) {
-      const proj = db.get<{ path_to_repo: string }>(
-        'SELECT path_to_repo FROM bureau_projects WHERE id = ?',
-        task.project_id
-      );
-      if (proj?.path_to_repo) {
-        repoRoot = proj.path_to_repo;
-      }
-    }
-  }
+  const repoRoot = backupTaskId ? getTaskRepoRoot(db, backupTaskId, deptRoot) : deptRoot;
 
   const provider = getBackupProvider(repoRoot);
 
