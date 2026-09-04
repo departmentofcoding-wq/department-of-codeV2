@@ -116,6 +116,8 @@ export interface FlowTaskDTO {
   last_activity_kind: string | null;
   is_stuck: boolean;
   stuck_reason: string | null;
+  is_resumable?: boolean;
+  resumable_reason?: string | null;
   plan_rounds: number;
   verify_fixes: number;
   cycles: number;
@@ -237,11 +239,15 @@ export interface RekickTaskRequest {
 export interface RekickTaskResult {
   ok: boolean;
   task_id: string;
-  /** What was revived: 'plan-cycle-reset' | 'plan-cycle-enqueued' | 'dispatch-reenqueued'. */
+  /** What was revived: 'plan-cycle-reset' | 'plan-cycle-enqueued' | 'dispatch-reset' | 'cycle-reset' | 'already-running'. */
   action: string;
-  /** The job id that is now pending (deterministic plan.cycle id, or the new dispatch uuid). */
+  /** The job id that is now pending (deterministic plan.cycle id, or the dispatch/cycle job id). */
   job_id: string;
+  already_running?: boolean;
 }
+
+export type ResumeTaskRequest = RekickTaskRequest;
+export type ResumeTaskResult = RekickTaskResult;
 
 // --- Conversational Intake DTOs (task creation front door) ---
 
@@ -489,14 +495,14 @@ export interface ConsoleEndpointDef {
   description: string;
 }
 
-// Frozen at 34 endpoints (contract_d0_c asserts the count). Reconciliation with
+// Frozen at 35 endpoints (contract_d0_c asserts the count). Reconciliation with
 // the task text: docs/plan-phase8-entry.md (Stream B) said 30 -> 32, but that
 // baseline predates the agent task-filing door (POST /api/tasks/file, merged
 // 67eb81f) which took the base 30 -> 31. Stream B adds exactly two — GET
 // /api/settings/github and POST /api/projects/provision — so the reconciled
-// freeze was 31 -> 33. The flow-resilience fix pack adds one more —
-// POST /api/tasks/:id/rekick (dead plan.cycle / dispatch recovery door) —
-// 33 -> 34. The stale task number is intentionally superseded.
+// freeze was 31 -> 33. The flow-resilience fix pack adds POST /api/tasks/:id/rekick
+// (33 -> 34). The Workers tab one-click Resume feature adds POST /api/tasks/:id/resume
+// (34 -> 35).
 export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
   {
     method: 'GET',
@@ -610,7 +616,13 @@ export const ENDPOINTS: readonly ConsoleEndpointDef[] = [
     method: 'POST',
     path: '/api/tasks/:id/rekick',
     auth: 'token',
-    description: 'Re-kick a dead plan.cycle (queued task) or dead junior.dispatch (claimed task) — operator recovery door'
+    description: 'Reset a dead plan.cycle or re-enqueue a dead junior.dispatch to recover a stranded flow'
+  },
+  {
+    method: 'POST',
+    path: '/api/tasks/:id/resume',
+    auth: 'token',
+    description: 'Resume a stalled or dead task through the engine tracked path (operator recovery door)'
   },
   {
     method: 'POST',

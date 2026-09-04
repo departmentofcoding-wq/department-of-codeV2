@@ -80,7 +80,7 @@ describe('rekickTaskFlow — plan cycle (queued task)', () => {
       jobId
     );
     expect(span?.actor_role).toBe('human-operator');
-    expect(JSON.parse(span!.detail)).toMatchObject({ action: 'rekick', target: 'plan.cycle', outcome: 'reset' });
+    expect(JSON.parse(span!.detail)).toMatchObject({ action: 'resume', target: 'plan.cycle', outcome: 'reset' });
   });
 
   it('enqueues a fresh plan.cycle when the task has no cycle row at all (the reconciler case)', () => {
@@ -91,13 +91,15 @@ describe('rekickTaskFlow — plan cycle (queued task)', () => {
     expect(row).toMatchObject({ state: 'pending', kind: 'plan.cycle' });
   });
 
-  it('REFUSES to touch a live (pending) plan.cycle — the double-prompt guard', () => {
+  it('harmless double-click returns already-running (200 OK) when plan.cycle is already live', () => {
     insertTask('t3', 'queued');
     insertJob({ id: planCycleJobId('t3'), kind: 'plan.cycle', task_id: 't3', state: 'pending' });
 
     const res = rekickTaskFlow(db, 't3', HUMAN);
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.reason).toContain('not dead');
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error('expected ok');
+    expect(res.action).toBe('already-running');
+    expect(res.alreadyRunning).toBe(true);
     const row = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', planCycleJobId('t3'));
     expect(row?.state).toBe('pending');
   });
@@ -116,7 +118,7 @@ describe('rekickTaskFlow — plan cycle (queued task)', () => {
 });
 
 describe('rekickTaskFlow — junior dispatch (claimed task)', () => {
-  it('re-enqueues the dead dispatch payload verbatim under a new id, leaving the dead row untouched', () => {
+  it('revives the dead dispatch job in-place keeping the exact job id and payload', () => {
     insertTask('t5', 'claimed');
     insertJob({
       id: 'dispatch-1',
@@ -130,47 +132,60 @@ describe('rekickTaskFlow — junior dispatch (claimed task)', () => {
     const res = rekickTaskFlow(db, 't5', HUMAN);
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error('expected ok');
+    expect(res.action).toBe('dispatch-reset');
+    expect(res.jobId).toBe('dispatch-1');
 
-    const reenqueued = db.get<{ payload: string; kind: string; state: string; max_attempts: number }>(
-      'SELECT payload, kind, state, max_attempts FROM bureau_jobs WHERE id = ?',
-      res.jobId
+    const revived = db.get<{ payload: string; kind: string; state: string; max_attempts: number; attempts: number }>(
+      'SELECT payload, kind, state, max_attempts, attempts FROM bureau_jobs WHERE id = ?',
+      'dispatch-1'
     );
-    expect(reenqueued?.kind).toBe('junior.dispatch');
-    expect(reenqueued?.state).toBe('pending');
-    expect(reenqueued?.payload).toBe('{"taskId":"t5","junior":"A","folder":"D:\\\\projects\\\\trading"}');
-    expect(reenqueued?.max_attempts).toBe(3);
+    expect(revived?.kind).toBe('junior.dispatch');
+    expect(revived?.state).toBe('pending');
+    expect(revived?.attempts).toBe(0);
+    expect(revived?.payload).toBe('{"taskId":"t5","junior":"A","folder":"D:\\\\projects\\\\trading"}');
+    expect(revived?.max_attempts).toBe(3);
 
-    const dead = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', 'dispatch-1');
-    expect(dead?.state).toBe('dead');
+    // Exactly one row exists (no orphaned duplicate row)
+    const count = db.get<{ n: number }>(`SELECT COUNT(*) n FROM bureau_jobs WHERE task_id = 't5'`)?.n;
+    expect(count).toBe(1);
   });
 
-  it('REFUSES when the latest dispatch is still running — never double-prompt a GUI agent', () => {
+  it('harmless double-click returns already-running (200 OK) when latest dispatch is still running', () => {
     insertTask('t6', 'claimed');
     insertJob({ id: 'dispatch-2', kind: 'junior.dispatch', task_id: 't6', state: 'running' });
 
     const res = rekickTaskFlow(db, 't6', HUMAN);
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.reason).toContain('not dead');
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error('expected ok');
+    expect(res.action).toBe('already-running');
+    expect(res.alreadyRunning).toBe(true);
+    expect(res.jobId).toBe('dispatch-2');
     const count = db.get<{ n: number }>(`SELECT COUNT(*) n FROM bureau_jobs WHERE task_id = 't6'`)?.n;
     expect(count).toBe(1);
   });
 
-  it('REFUSES a claimed task with no dispatch job', () => {
+  it('REFUSES a claimed task with no dispatch or cycle job', () => {
     insertTask('t7', 'claimed');
     const res = rekickTaskFlow(db, 't7', HUMAN);
     expect(res.ok).toBe(false);
   });
 });
 
-describe('rekickTaskFlow — idempotence under the dead-state predicate', () => {
-  it('a second rekick after a successful reset refuses (job is now pending)', () => {
+describe('rekickTaskFlow — idempotence and double-click harmlessness', () => {
+  it('a second rekick after a successful reset converges harmlessly to already-running', () => {
     insertTask('t8', 'queued');
     insertJob({ id: planCycleJobId('t8'), kind: 'plan.cycle', task_id: 't8', state: 'dead' });
 
-    expect(rekickTaskFlow(db, 't8', HUMAN).ok).toBe(true);
+    const first = rekickTaskFlow(db, 't8', HUMAN);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected ok');
+    expect(first.action).toBe('plan-cycle-reset');
+
     const second = rekickTaskFlow(db, 't8', HUMAN);
-    expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.reason).toContain('not dead');
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected ok');
+    expect(second.action).toBe('already-running');
+    expect(second.alreadyRunning).toBe(true);
   });
 
   it('the reset is fail-closed against a concurrent state change (dead predicate in SQL)', () => {
@@ -181,8 +196,10 @@ describe('rekickTaskFlow — idempotence under the dead-state predicate', () => 
     // Simulate another actor reviving it between our read and our write.
     db.run(`UPDATE bureau_jobs SET state = 'pending' WHERE id = ?`, jobId);
     const res = rekickTaskFlow(db, 't9', HUMAN);
-    // The pre-read sees pending → refused before SQL even runs.
-    expect(res.ok).toBe(false);
+    // Harmless convergence sees pending
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error('expected ok');
+    expect(res.action).toBe('already-running');
     const row = db.get<{ attempts: number }>('SELECT attempts FROM bureau_jobs WHERE id = ?', jobId);
     expect(row?.attempts).toBe(0);
   });
