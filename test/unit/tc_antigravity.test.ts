@@ -48,14 +48,19 @@ describe('Antigravity integration — deterministic surface', () => {
 
   describe('antigravityUserDataDir — stable per-junior profile keyed by port', () => {
     const A = 'ANTIGRAVITY_USER_DATA_DIR_9334';
+    const A9333 = 'ANTIGRAVITY_USER_DATA_DIR_9333';
     const saved = process.env[A];
+    const saved9333 = process.env[A9333];
     afterEach(() => {
       if (saved === undefined) delete process.env[A];
       else process.env[A] = saved;
+      if (saved9333 === undefined) delete process.env[A9333];
+      else process.env[A9333] = saved9333;
     });
 
     it('is a stable, per-port path (A=9333 and B=9334 differ)', () => {
       delete process.env[A];
+      delete process.env[A9333];
       const a = antigravityUserDataDir(9333);
       const b = antigravityUserDataDir(9334);
       expect(a).not.toBe(b);
