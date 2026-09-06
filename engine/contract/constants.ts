@@ -241,3 +241,9 @@ export const WATCHDOG_ATTRIBUTION = {
   ...DETERMINISTIC_ATTRIBUTION
 } as const;
 
+export const JUNIOR_HEALTH_META_KEYS = {
+  COOLDOWN_PREFIX: 'junior:cooldown:'
+} as const;
+
+export const DEFAULT_JUNIOR_COOLDOWN_MS = 60_000;
+

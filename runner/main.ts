@@ -15,6 +15,9 @@ import {
   FOREMAN_ATTRIBUTION
 } from '../engine/jobs/jobs.ts';
 import { reconcileQueuedTasks } from '../engine/flow/reconcile.ts';
+import { isJuniorWedgedWindowError, resolveJunior } from '../engine/harness/antigravity.ts';
+import { setJuniorUnhealthy } from '../engine/flow/junior-health.ts';
+import { DEFAULT_JUNIOR_COOLDOWN_MS } from '../engine/contract/constants.ts';
 // Importing the registry registers the job handlers as a module side effect.
 import { getJobDefinition } from '../engine/jobs/registry.ts';
 
@@ -183,7 +186,7 @@ export class Runner {
     while (!this.isStopping) {
       try {
         // Reconcile queued tasks that have no cycle behind them
-        this.reconcileQueuedTasks();
+        await this.reconcileQueuedTasks();
 
         // Watchdog & Reaper tick
         this.runReaperAndWatchdog();
@@ -215,8 +218,8 @@ export class Runner {
    * logic is unit-testable without constructing a full Runner. See
    * engine/flow/reconcile.ts for why it is bounded and idempotent.
    */
-  public reconcileQueuedTasks(): void {
-    for (const taskId of reconcileQueuedTasks(this.db)) {
+  public async reconcileQueuedTasks(): Promise<void> {
+    for (const taskId of await reconcileQueuedTasks(this.db)) {
       log('INFO', 'reconciler_enqueued_plan_cycle', { taskId });
     }
   }
@@ -326,6 +329,28 @@ export class Runner {
 
       if (terminal) {
         this.notifier.notifyOperator(job.id, `Terminal failure: ${errMsg}`);
+        if (job.kind === 'junior.dispatch' && isJuniorWedgedWindowError(err)) {
+          let targetJunior: string | null = null;
+          try {
+            const payload = JSON.parse(job.payload || '{}');
+            if (payload.junior) {
+              targetJunior = resolveJunior(payload.junior).id;
+            } else if (job.task_id) {
+              const task = this.db.get<{ assigned_junior: string | null }>(
+                'SELECT assigned_junior FROM bureau_tasks WHERE id = ?',
+                job.task_id
+              );
+              if (task?.assigned_junior) {
+                targetJunior = resolveJunior(task.assigned_junior).id;
+              }
+            }
+          } catch {
+            // ignore JSON parse error
+          }
+          if (targetJunior) {
+            setJuniorUnhealthy(this.db, targetJunior, DEFAULT_JUNIOR_COOLDOWN_MS, errMsg);
+          }
+        }
       }
     } finally {
       clearTimeout(timeoutTimer);

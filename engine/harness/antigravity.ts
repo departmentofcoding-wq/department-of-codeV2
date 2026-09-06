@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import type { DbConnection } from '../contract/types.ts';
+import { clearJuniorUnhealthy } from '../flow/junior-health.ts';
 import { HarnessError } from './errors.ts';
 import { AGENT_PROGRESS_LABEL_RE, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 import { killProcessesByImageName, processImageName } from './process-control.ts';
@@ -315,10 +317,13 @@ export const JUNIOR_PORT_WAIT_MS = 90000;
  */
 export async function ensureJuniorRunning(
   cfg: JuniorConfig,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; db?: DbConnection } = {}
 ): Promise<EnsureResult> {
   const port = cfg.cdpPort;
-  if (await isDebugPortLive(port)) return { launched: false, port };
+  if (await isDebugPortLive(port)) {
+    if (opts.db) clearJuniorUnhealthy(opts.db, cfg.id);
+    return { launched: false, port };
+  }
   const binary = findJuniorBinary(cfg);
   // Launch on the junior's OWN profile so the single-instance lock can never
   // absorb this launch into a stale/other Antigravity (the "no CDP endpoint" scar).
@@ -331,7 +336,10 @@ export async function ensureJuniorRunning(
   child.unref();
   const deadline = Date.now() + (opts.timeoutMs ?? JUNIOR_PORT_WAIT_MS);
   while (Date.now() < deadline) {
-    if (await isDebugPortLive(port)) return { launched: true, port, child };
+    if (await isDebugPortLive(port)) {
+      if (opts.db) clearJuniorUnhealthy(opts.db, cfg.id);
+      return { launched: true, port, child };
+    }
     await new Promise(r => setTimeout(r, 500));
   }
   throw new HarnessError(`${cfg.label} launched but no CDP endpoint on port ${port} within timeout`);
@@ -380,7 +388,7 @@ export interface JuniorRecoveryDeps {
  */
 export async function recoverJuniorRunning(
   cfg: JuniorConfig,
-  opts: { timeoutMs?: number; windowTimeoutMs?: number; deps?: JuniorRecoveryDeps } = {}
+  opts: { timeoutMs?: number; windowTimeoutMs?: number; db?: DbConnection; deps?: JuniorRecoveryDeps } = {}
 ): Promise<EnsureResult> {
   const port = cfg.cdpPort;
   const deps = {
@@ -434,6 +442,7 @@ export async function recoverJuniorRunning(
       await deps.sleep(1000);
     }
   }
+  if (opts.db) clearJuniorUnhealthy(opts.db, cfg.id);
   return { launched: true, port, child };
 }
 
@@ -461,8 +470,110 @@ export function isJuniorWedgedWindowError(err: unknown): boolean {
   return (
     /no CDP window titled .+ appeared within timeout/i.test(msg) ||
     /workbench (?:window did not become available|did not become available)/i.test(msg) ||
-    /launched but no CDP endpoint on port \d+ within timeout/i.test(msg)
+    /launched but no CDP endpoint on port \d+ within timeout/i.test(msg) ||
+    /CDP timeout/i.test(msg)
   );
+}
+
+export const JUNIOR_HEALTH_PROBE_TIMEOUT_MS = 2500;
+
+export interface JuniorHealthProbeDeps {
+  getWebSocketUrl?: (port: number, timeoutMs?: number) => Promise<string | null>;
+  evaluate?: (wsUrl: string, expression: string, timeoutMs?: number) => Promise<any>;
+}
+
+/**
+ * Probe a junior's CDP endpoint with a real Runtime.evaluate round-trip.
+ * A bare TCP / HTTP GET /json/version check is insufficient: the incident topology
+ * was a port-open-but-CDP-dead wedge. Returns true ONLY on an authentic echo (1 + 1 === 2).
+ */
+export async function probeJuniorCdpHealth(
+  cfg: JuniorConfig,
+  opts: { timeoutMs?: number; deps?: JuniorHealthProbeDeps } = {}
+): Promise<boolean> {
+  const timeoutMs = opts.timeoutMs ?? JUNIOR_HEALTH_PROBE_TIMEOUT_MS;
+  const port = cfg.cdpPort;
+
+  try {
+    let wsUrl: string | null = null;
+    if (opts.deps?.getWebSocketUrl) {
+      wsUrl = await opts.deps.getWebSocketUrl(port, timeoutMs);
+    } else {
+      const v = await cdpGet(port, '/json/version', timeoutMs);
+      wsUrl = typeof v?.webSocketDebuggerUrl === 'string' ? v.webSocketDebuggerUrl : null;
+    }
+
+    if (!wsUrl) return false;
+
+    if (opts.deps?.evaluate) {
+      const val = await opts.deps.evaluate(wsUrl, '1 + 1', timeoutMs);
+      return val === 2;
+    }
+
+    return await new Promise<boolean>(resolve => {
+      let settled = false;
+      let timer: NodeJS.Timeout | null = null;
+      let ws: WebSocket | null = null;
+
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (ws) {
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+        }
+        resolve(result);
+      };
+
+      timer = setTimeout(() => {
+        finish(false);
+      }, timeoutMs);
+
+      try {
+        ws = new WebSocket(wsUrl!);
+
+        ws.onopen = () => {
+          try {
+            ws!.send(
+              JSON.stringify({
+                id: 1,
+                method: 'Runtime.evaluate',
+                params: { expression: '1 + 1', returnByValue: true }
+              })
+            );
+          } catch {
+            finish(false);
+          }
+        };
+
+        ws.onerror = () => finish(false);
+
+        ws.addEventListener('message', ev => {
+          try {
+            const data = JSON.parse(String((ev as MessageEvent).data));
+            if (data.id === 1) {
+              if (data.error) {
+                finish(false);
+              } else {
+                const val = data.result?.result?.value;
+                finish(val === 2);
+              }
+            }
+          } catch {
+            finish(false);
+          }
+        });
+      } catch {
+        finish(false);
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 function cdpGet(port: number, urlPath: string, timeoutMs = 2000): Promise<any> {

@@ -2,6 +2,7 @@ import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/
 import { journal } from '../journal/writer.ts';
 import { JUNIORS, assignJunior, resolveJunior } from '../harness/antigravity.ts';
 import { assignSeniorForTask } from '../harness/senior.ts';
+import { isJuniorHealthy } from './junior-health.ts';
 
 /**
  * N17 — claim-time flow assignment + junior capacity.
@@ -150,6 +151,8 @@ export function ensureTaskAssignment(
 
   const roster = (opts.__rosterForTest ?? freeJuniors()).slice().sort();
   const busy: string[] = roster.filter(j => juniorIsOccupied(db, j));
+  const unhealthy: string[] = roster.filter(j => !isJuniorHealthy(db, j));
+  const unavailable: string[] = Array.from(new Set([...busy, ...unhealthy]));
 
   let picked: string | undefined;
   let basis: string;
@@ -160,18 +163,18 @@ export function ensureTaskAssignment(
     basis = 'explicit-pin';
   } else {
     const policy = assignJunior({ taskId });
-    const free = roster.filter(j => !busy.includes(j));
-    if (free.includes(policy)) {
+    const available = roster.filter(j => !unavailable.includes(j));
+    if (available.includes(policy)) {
       picked = policy;
       basis = 'policy-free';
-    } else if (free.length > 0) {
-      picked = free[0]!;
+    } else if (available.length > 0) {
+      picked = available[0]!;
       basis = 'first-free';
     } else if (opts.allowBusyPick) {
       picked = policy;
       basis = 'policy-busy-legacy-pick';
     } else {
-      return { status: 'unavailable', reason: 'no_free_junior', busy };
+      return { status: 'unavailable', reason: 'no_free_junior', busy: unavailable };
     }
   }
 

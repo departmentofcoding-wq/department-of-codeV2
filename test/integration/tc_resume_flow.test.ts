@@ -5,7 +5,6 @@ import path from 'node:path';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
 import { rekickTaskFlow } from '../../engine/flow/rekick.ts';
 import { ensureTaskAssignment } from '../../engine/flow/assignment.ts';
-import { reconcileQueuedTasks } from '../../engine/flow/reconcile.ts';
 import { planCycleJobId } from '../../engine/jobs/ids.ts';
 import type { DbConnection } from '../../engine/contract/types.ts';
 
@@ -163,6 +162,7 @@ describe('Integration: Resume flow and N17 concurrency / assignment discipline',
     // Operator resumes task-q3 -> plan.cycle reset to pending
     const res = rekickTaskFlow(db, 'task-q3', HUMAN);
     expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error('expected ok');
     expect(res.action).toBe('plan-cycle-reset');
 
     // Capacity check: attempt to assign under full roster -> returns unavailable (no_free_junior)

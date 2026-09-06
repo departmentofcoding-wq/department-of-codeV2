@@ -1,3 +1,4 @@
+import type { DbConnection } from '../contract/types.ts';
 import { ensureCompleted } from './agent-wait.ts';
 import {
   ANTIGRAVITY_DEFAULT_PORT,
@@ -13,7 +14,10 @@ import {
   findMainWindowWs,
   resolveJunior,
   resolveDeliveryStrategy,
-  buildWorktreeDirective
+  buildWorktreeDirective,
+  probeJuniorCdpHealth,
+  type JuniorConfig,
+  type JuniorHealthProbeDeps
 } from './antigravity.ts';
 import { HarnessError } from './errors.ts';
 
@@ -69,10 +73,13 @@ export interface AntigravityRunOptions {
   freshConversation?: boolean;
   /** Cancellation (job timeout / runner shutdown), honored every poll. */
   signal?: AbortSignal;
+  /** Optional DB connection so successful junior launch clears any pending cooldown. */
+  db?: DbConnection;
 }
 
 export interface AntigravityDriver {
   runCommand(prompt: string, opts?: AntigravityRunOptions): Promise<AntigravityRunResult>;
+  probeJuniorHealth?(cfg: JuniorConfig, opts?: { timeoutMs?: number; deps?: JuniorHealthProbeDeps }): Promise<boolean>;
 }
 
 class RealAntigravityDriver implements AntigravityDriver {
@@ -83,7 +90,7 @@ class RealAntigravityDriver implements AntigravityDriver {
     const ensured =
       opts.port !== undefined && !opts.junior
         ? await ensureAntigravityRunning(opts.port)
-        : await ensureJuniorRunning(cfg);
+        : await ensureJuniorRunning(cfg, { db: opts.db });
     const port = opts.port ?? cfg.cdpPort;
 
     // Choose HOW to point this junior at the task's worktree — the two juniors
@@ -229,6 +236,10 @@ class RealAntigravityDriver implements AntigravityDriver {
       }
     }
   }
+
+  async probeJuniorHealth(cfg: JuniorConfig, opts?: { timeoutMs?: number; deps?: JuniorHealthProbeDeps }): Promise<boolean> {
+    return probeJuniorCdpHealth(cfg, opts);
+  }
 }
 
 let override: AntigravityDriver | null = null;
@@ -240,3 +251,26 @@ export function setAntigravityDriverOverride(driver: AntigravityDriver | null): 
 export function getAntigravityDriver(): AntigravityDriver {
   return override ?? new RealAntigravityDriver();
 }
+
+/**
+ * Probe a junior's CDP health through the driver seam.
+ * When a test override driver is set without an explicit probeJuniorHealth implementation,
+ * defaults to true so mocked test environments treat juniors as healthy.
+ */
+export async function probeJuniorHealth(
+  cfg: JuniorConfig,
+  opts?: { timeoutMs?: number; deps?: JuniorHealthProbeDeps }
+): Promise<boolean> {
+  const driver = getAntigravityDriver();
+  if (override) {
+    if (override.probeJuniorHealth) {
+      return override.probeJuniorHealth(cfg, opts);
+    }
+    return true;
+  }
+  if (driver.probeJuniorHealth) {
+    return driver.probeJuniorHealth(cfg, opts);
+  }
+  return probeJuniorCdpHealth(cfg, opts);
+}
+
