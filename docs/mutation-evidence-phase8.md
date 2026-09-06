@@ -886,3 +886,70 @@ Feature: In-console one-click Resume button on Workers tab flow cards to recover
   - **Restore:** `is_resumable` ternary button rendering restored in `console/public/render.js`; test passed green (20/20).
 
 Executed 2026-09-04 on branch `bureau-wt-81b5a1ee-3f1a-4888-aadd-d9cf80cea6ed`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
+
+---
+
+## M-C4-1 to M-C4-4 — Plan Path Discipline & Primary-Tree Guard on Failed Dispatches (C4)
+
+Branch `bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6`.
+Fixes the P1 that let the 2026-09-04 junior leak 9 files into main's tracked tree undetected during dying dispatches.
+Changes:
+1. `evaluatePlanRubric` rejects plans whose file paths resolve outside the task worktree (token-boundary anchored path extraction with normalization and space-bearing path support).
+2. Primary-tree contamination guard runs on the dispatch FAILURE path too (when drive throws / attempts exhausted), not only on success.
+3. `PrimaryTreeContaminatedError` declares `nonRetryable = true`, preventing runner retry loops from laundering the contamination.
+4. `buildImplementationPrompt` adds the explicit scoping instruction: `Edit ONLY files under <worktreePath>`.
+
+- **M-C4-1 (Drop rubric path discipline check):**
+  - **Guard:** `engine/review/plan_review_job.ts` `evaluatePlanRubric(planText, options)` checks candidate paths against `options.worktreePath` and reports missing `'path discipline (file paths must resolve inside task worktree)'` if any candidate resolves outside.
+  - **Mutation:** Disabled path containment check: `if (false && options?.worktreePath)`.
+  - **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `rejects plans with file paths resolving outside the worktree (primary checkout)`:
+    ```
+    FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > C4: Plan path discipline & prompt scoping > rejects plans with file paths resolving outside the worktree (primary checkout)
+    AssertionError: expected true to be false // Object.is equality
+
+    - Expected
+    + Received
+
+    - false
+    + true
+    ```
+  - **Restore:** Check restored to `if (options?.worktreePath)`; test passed green.
+
+- **M-C4-2 (Drop failure-path primary contamination guard):**
+  - **Guard:** `engine/harness/dispatch-job.ts` catch block runs `checkPrimaryTreeContamination` on dying dispatches (`deliveryWorktreePath && !(err instanceof PrimaryTreeContaminatedError)`).
+  - **Mutation:** Disabled catch block contamination check: `if (false && deliveryWorktreePath && ...)`.
+  - **Catcher:** `test/integration/tc_primary_contamination_guard.test.ts` → `C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span`:
+    ```
+    FAIL test/integration/tc_primary_contamination_guard.test.ts > N16: primary-checkout contamination guard > C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span
+    AssertionError: expected Error: CDP timeout / junior process wedged to be an instance of PrimaryTreeContaminatedError
+    ```
+  - **Restore:** Check restored in `engine/harness/dispatch-job.ts`; test passed green.
+
+- **M-C4-3 (Drop nonRetryable flag from PrimaryTreeContaminatedError):**
+  - **Guard:** `engine/worktrees/primary_guard.ts` defines `public readonly nonRetryable = true;` on `PrimaryTreeContaminatedError` to prevent runner retry loops from taking a new baseline and laundering the leak.
+  - **Mutation:** Removed `public readonly nonRetryable = true;` from `PrimaryTreeContaminatedError`.
+  - **Catcher:** `test/integration/tc_primary_contamination_guard.test.ts` → `C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span`:
+    ```
+    FAIL test/integration/tc_primary_contamination_guard.test.ts > N16: primary-checkout contamination guard > C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span
+    AssertionError: expected undefined to be true // Object.is equality
+
+    - Expected: 
+    true
+
+    + Received: 
+    undefined
+    ```
+  - **Restore:** `nonRetryable = true` restored in `engine/worktrees/primary_guard.ts`; test passed green.
+
+- **M-C4-4 (Drop prompt scoping instruction):**
+  - **Guard:** `engine/flow/plan_review_cycle.ts` `buildImplementationPrompt` inserts `Edit ONLY files under ${worktreePath ?? 'the checked-out worktree'}; `.
+  - **Mutation:** Removed `Edit ONLY files under ...; ` from `buildImplementationPrompt`.
+  - **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `buildImplementationPrompt includes Edit ONLY files under <worktreePath> and retains F2 preamble`:
+    ```
+    FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > C4: Plan path discipline & prompt scoping > buildImplementationPrompt includes Edit ONLY files under <worktreePath> and retains F2 preamble
+    AssertionError: expected '[bureau-task:task-c4] C4 Task\n\nCONT…' to contain 'Edit ONLY files under D:\Dept of code…'
+    ```
+  - **Restore:** Scoping instruction restored in `engine/flow/plan_review_cycle.ts`; test passed green.
+
+Executed 2026-09-06 on branch `bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
+

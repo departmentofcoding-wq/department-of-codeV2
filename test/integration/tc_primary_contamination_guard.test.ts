@@ -380,4 +380,116 @@ describe('N16: primary-checkout contamination guard', () => {
     const span = db.get(`SELECT * FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-n9-c'`);
     expect(JSON.parse(span.detail as string).dirtyPaths).toEqual(['engine.ts']);
   });
+
+  // =========================================================================
+  // C4: Primary-tree contamination guard on FAILED dispatches
+  // =========================================================================
+  it('C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span', async () => {
+    const provider = new GitWorkspaceProvider(repoPath);
+    setWorkspaceProvider(provider);
+
+    setAntigravityDriverOverride({
+      async runCommand(_prompt, opts) {
+        const wt = opts?.folder ?? '';
+        fs.writeFileSync(path.join(wt, 'feature.txt'), 'partial work\n');
+        // Junior leaked a tracked file into primary BEFORE crashing/timing out:
+        fs.writeFileSync(path.join(repoPath, 'engine.ts'), 'export const x = 99; // LEAK FROM DYING DISPATCH\n');
+        throw new Error('CDP timeout / junior process wedged');
+      }
+    } as AntigravityDriver);
+
+    await seedDispatch(path.join(tmpDir, 'test-c4-dying.db'), 'task-c4-dying', 'disp-c4-dying', 'job-c4-dying');
+
+    let caughtErr: any;
+    try {
+      await handleJuniorDispatch({
+        db,
+        job: { id: 'job-c4-dying', task_id: 'task-c4-dying' },
+        payload: { dispatchId: 'disp-c4-dying', prompt: 'implement the fix', chainWorkReview: true },
+        signal: new AbortController().signal
+      } as any);
+    } catch (err: any) {
+      caughtErr = err;
+    }
+
+    expect(caughtErr).toBeInstanceOf(PrimaryTreeContaminatedError);
+    expect(caughtErr.nonRetryable).toBe(true);
+    expect(caughtErr.dirtyPaths).toEqual(['engine.ts']);
+
+    // Guardrail span logged
+    const guardrailSpan = db.get(
+      `SELECT * FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-c4-dying'`
+    );
+    expect(guardrailSpan).toBeDefined();
+    const detail = JSON.parse(guardrailSpan.detail as string);
+    expect(detail.action).toBe('primary_checkout_contaminated');
+    expect(detail.dirtyPaths).toEqual(['engine.ts']);
+
+    // Dispatch failure span captures the original error context
+    const dispatchSpan = db.get(
+      `SELECT * FROM bureau_journal WHERE kind = 'dispatch' AND task_id = 'task-c4-dying' AND detail LIKE '%failed%'`
+    );
+    expect(dispatchSpan).toBeDefined();
+    const dispatchDetail = JSON.parse(dispatchSpan.detail as string);
+    expect(dispatchDetail.originalError).toContain('CDP timeout / junior process wedged');
+  });
+
+  it('C4: a failing dispatch with a CLEAN primary tree rethrows the original error without false guardrail span', async () => {
+    const provider = new GitWorkspaceProvider(repoPath);
+    setWorkspaceProvider(provider);
+
+    setAntigravityDriverOverride({
+      async runCommand(_prompt, opts) {
+        const wt = opts?.folder ?? '';
+        fs.writeFileSync(path.join(wt, 'feature.txt'), 'partial work\n');
+        throw new Error('CDP timeout / clean dispatch crash');
+      }
+    } as AntigravityDriver);
+
+    await seedDispatch(path.join(tmpDir, 'test-c4-clean-fail.db'), 'task-c4-clean-fail', 'disp-c4-clean-fail', 'job-c4-clean-fail');
+
+    await expect(
+      handleJuniorDispatch({
+        db,
+        job: { id: 'job-c4-clean-fail', task_id: 'task-c4-clean-fail' },
+        payload: { dispatchId: 'disp-c4-clean-fail', prompt: 'implement the fix', chainWorkReview: true },
+        signal: new AbortController().signal
+      } as any)
+    ).rejects.toThrow('CDP timeout / clean dispatch crash');
+
+    // No primary_checkout_contaminated guardrail span
+    const guardrailSpan = db.get(
+      `SELECT * FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-c4-clean-fail' AND detail LIKE '%primary_checkout_contaminated%'`
+    );
+    expect(guardrailSpan).toBeUndefined();
+  });
+
+  it('C4: success-path contamination does not double-fire in catch block', async () => {
+    const provider = new GitWorkspaceProvider(repoPath);
+    setWorkspaceProvider(provider);
+
+    setAntigravityDriverOverride({
+      async runCommand(_prompt, opts) {
+        fs.writeFileSync(path.join(repoPath, 'engine.ts'), 'export const x = 77; // leak on success\n');
+        return { transcript: 'agent: finished', launched: false };
+      }
+    } as AntigravityDriver);
+
+    await seedDispatch(path.join(tmpDir, 'test-c4-dedup.db'), 'task-c4-dedup', 'disp-c4-dedup', 'job-c4-dedup');
+
+    await expect(
+      handleJuniorDispatch({
+        db,
+        job: { id: 'job-c4-dedup', task_id: 'task-c4-dedup' },
+        payload: { dispatchId: 'disp-c4-dedup', prompt: 'implement the fix', chainWorkReview: true },
+        signal: new AbortController().signal
+      } as any)
+    ).rejects.toThrow(PrimaryTreeContaminatedError);
+
+    // Exactly 1 guardrail span logged
+    const spans = db.all(
+      `SELECT * FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-c4-dedup' AND detail LIKE '%primary_checkout_contaminated%'`
+    );
+    expect(spans).toHaveLength(1);
+  });
 });
