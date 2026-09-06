@@ -416,6 +416,7 @@ export async function runWorkReviewCycle(
       detail: {
         stage: 'work-review',
         senior: seniorId,
+        model,
         verdict,
         reviewId,
         round: roundsUsed,

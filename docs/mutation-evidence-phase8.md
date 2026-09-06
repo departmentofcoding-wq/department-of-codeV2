@@ -825,3 +825,29 @@ Executed 2026-09-02 on branch `wt/junior-b-run-fixpack`; full suite
 735/735 ×2 across 128 files, `tsc --noEmit` clean (two earlier runs' t38/T4b
 failures were this real strip-types bug plus the documented parallel-load
 flake, both resolved/passing before the two clean runs).
+
+## Task 05c6edc0-d91c-46fb-9bb1-0f8e1703542d: Journal Completeness (Full Flow Reconstructable from Journal Alone)
+
+### Mutations Executed & Validated
+
+1. **M-JOURNAL-PROMPT (Verbatim Prompts in Observation Spans)**
+   - **Guard:** Every prompt sent to a junior (plan authoring, junior implementation dispatch, verify-fix, work-review fix) must be persisted verbatim in the journal so the complete conversation history can be reconstructed from the journal alone without the filesystem artifacts directory.
+   - **Mutation:** Omit `prompt: juniorPrompt` / `prompt: payload.prompt` from the observation journal span detail.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion C` and `Assertion E` (`expect(d.prompt).toContain(...)`).
+
+2. **M-JOURNAL-VERIFY (Verify Command & Stage Breakdown & Output Excerpt)**
+   - **Guard:** `verify_run_completed` tool span must carry the executed `verify_cmd`, the stage breakdown array (with exit codes and skipped flags), pass counts, and stdout/stderr tail excerpts.
+   - **Mutation:** Remove `verify_cmd` and `stdout_tail` from the tool span detail in `engine/verify/job.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion G` (`expect(verifyDetail.verify_cmd).toBe('node --version')`).
+
+3. **M-JOURNAL-SECRET (Secret Scrubbing at the Journal Write Door)**
+   - **Guard:** Every string written into `bureau_journal` must be sanitized through `redactOutput` via a recursive leaf walk over nested detail objects and arrays, ensuring no API keys or environment secrets enter the journal.
+   - **Mutation:** Bypass `redactOutput` in `sanitizeLeaf` in `engine/journal/writer.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion J` (`expect(row.detail).not.toContain(SECRET_KEY_1)`).
+
+4. **M-JOURNAL-TRUNC (Payload Truncation Bounds)**
+   - **Guard:** Oversized strings (>50,000 characters) written into journal span detail must be bounded with an explicit truncation marker `[TRUNCATED: original length N characters]`.
+   - **Mutation:** Remove length check in `sanitizeLeaf` in `engine/journal/writer.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion K` (`expect(parsedTrunc.oversized).toContain('[TRUNCATED: original length ...]')`).
+
+Executed 2026-09-04 on branch `bureau-wt-05c6edc0-d91c-46fb-9bb1-0f8e1703542d`.

@@ -281,7 +281,7 @@ export async function runDiffReviewCycle(
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: opts.jobId ?? null,
-      detail: { stage: 'diff-review', senior: seniorId, verdict, reviewId, reviewed_commit: tip, feedback: review.feedback }
+      detail: { stage: 'diff-review', senior: seniorId, model: attribution.model, verdict, reviewId, reviewed_commit: tip, feedback: review.feedback }
     });
   });
 

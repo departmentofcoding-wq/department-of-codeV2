@@ -99,11 +99,15 @@ export class CdpIdeDriver implements IdeDriver {
 
     while (Date.now() - startMs < 10000) {
       if (fs.existsSync(activePortPath)) {
-        const content = fs.readFileSync(activePortPath, 'utf8').trim();
-        const lines = content.split('\n');
-        if (lines.length > 0 && lines[0].trim().length > 0) {
-          portStr = lines[0].trim();
-          break;
+        try {
+          const content = fs.readFileSync(activePortPath, 'utf8').trim();
+          const lines = content.split('\n');
+          if (lines.length > 0 && lines[0].trim().length > 0) {
+            portStr = lines[0].trim();
+            break;
+          }
+        } catch {
+          // On Windows, Chrome may temporarily hold an exclusive write lock on DevToolsActivePort
         }
       }
       await new Promise(res => setTimeout(res, 50));

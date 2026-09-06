@@ -133,6 +133,19 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
       'done'
     );
 
+    journal(db, {
+      kind: 'system',
+      attribution: SYSTEM_ATTRIBUTION,
+      taskId,
+      detail: {
+        action: 'pr.merge',
+        status: 'merged',
+        prNumber,
+        mergedBy,
+        reviewedCommit: currentTip
+      }
+    });
+
     // Enqueue backup.push job after successful merge (Milestone B1) — keyed to merge commit hash for deduplication.
     // `commit` threads the tip through so the backup can PROVE the remote
     // already contains it (pr.merge merges on GitHub; pushing local main

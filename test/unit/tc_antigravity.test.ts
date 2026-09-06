@@ -47,15 +47,20 @@ describe('Antigravity integration — deterministic surface', () => {
   });
 
   describe('antigravityUserDataDir — stable per-junior profile keyed by port', () => {
-    const A = 'ANTIGRAVITY_USER_DATA_DIR_9334';
-    const saved = process.env[A];
+    const A33 = 'ANTIGRAVITY_USER_DATA_DIR_9333';
+    const A34 = 'ANTIGRAVITY_USER_DATA_DIR_9334';
+    const saved33 = process.env[A33];
+    const saved34 = process.env[A34];
     afterEach(() => {
-      if (saved === undefined) delete process.env[A];
-      else process.env[A] = saved;
+      if (saved33 === undefined) delete process.env[A33];
+      else process.env[A33] = saved33;
+      if (saved34 === undefined) delete process.env[A34];
+      else process.env[A34] = saved34;
     });
 
     it('is a stable, per-port path (A=9333 and B=9334 differ)', () => {
-      delete process.env[A];
+      delete process.env[A33];
+      delete process.env[A34];
       const a = antigravityUserDataDir(9333);
       const b = antigravityUserDataDir(9334);
       expect(a).not.toBe(b);
@@ -66,7 +71,7 @@ describe('Antigravity integration — deterministic surface', () => {
     });
 
     it('honors the ANTIGRAVITY_USER_DATA_DIR_<port> override', () => {
-      process.env[A] = 'D:/signed-in-profile';
+      process.env[A34] = 'D:/signed-in-profile';
       expect(antigravityUserDataDir(9334)).toBe('D:/signed-in-profile');
     });
   });

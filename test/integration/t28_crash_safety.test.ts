@@ -46,9 +46,9 @@ describe('T28: Crash Safety Mid-Verify Integration Test', () => {
 
       const wsHandle = await provider.prepare(db, taskId);
 
-      // Write helper script inside workspace handle path (sleeps 400ms)
+      // Write helper script inside workspace handle path (sleeps 3000ms to guarantee kill occurs mid-execution)
       const verifyScriptPath = path.join(wsHandle.path, 'slow_pass.js');
-      fs.writeFileSync(verifyScriptPath, 'setTimeout(() => { process.exit(0); }, 400);');
+      fs.writeFileSync(verifyScriptPath, 'setTimeout(() => { process.exit(0); }, 3000);');
 
       const job = enqueueJob(db, {
         kind: 'verify.run',

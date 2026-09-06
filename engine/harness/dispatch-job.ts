@@ -383,6 +383,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           conversationMode: payload.freshConversation === false ? 'continue' : 'fresh',
           model: result.model ?? payload.model ?? null,
           folder: payload.folder ?? null,
+          worktreePath: deliveryWorktreePath ?? null,
           folderSelected: result.folderSelected ?? null,
           launched: result.launched,
           transcriptTail: result.transcript,
