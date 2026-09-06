@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { BureauTaskRow, DbConnection, VerifyStageResult } from '../contract/index.ts';
-import { BUDGET_META_KEYS, VACUOUS_VERIFY_COMMANDS, VERIFY_STAGES, type VerifyStage } from '../contract/constants.ts';
+import { BUDGET_META_KEYS, DEFAULT_VERIFY_TIMEOUT_MS, VACUOUS_VERIFY_COMMANDS, VERIFY_STAGES, type VerifyStage } from '../contract/constants.ts';
 import { redactOutput, scrubEnv } from '../contract/tools.ts';
 import { killTree } from './tree_kill.ts';
 
@@ -40,8 +40,8 @@ function resolveTimeout(db: DbConnection, override?: number): number {
     'SELECT value FROM bureau_meta WHERE key = ?',
     BUDGET_META_KEYS.VERIFY_TIMEOUT_MS
   );
-  const rawTimeout = metaRow ? parseInt(metaRow.value, 10) : 120000;
-  return Number.isFinite(rawTimeout) ? rawTimeout : 120000;
+  const rawTimeout = metaRow ? parseInt(metaRow.value, 10) : DEFAULT_VERIFY_TIMEOUT_MS;
+  return Number.isFinite(rawTimeout) ? rawTimeout : DEFAULT_VERIFY_TIMEOUT_MS;
 }
 
 function isVacuous(cmd: string): boolean {

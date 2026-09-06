@@ -174,7 +174,7 @@ describe('Integration: Junior Health Gate Admission (Socket-Layer Wedged Endpoin
     insertTask('occupant-b', 'claimed', 'B');
     insertTask('task-wedged-1', 'queued');
 
-    const admitted = await reconcileQueuedTasks(db);
+    const admitted = await reconcileQueuedTasks(db, { probeTimeoutMs: 300 });
 
     // 1. Task was NOT admitted
     expect(admitted).toEqual([]);
@@ -241,7 +241,7 @@ describe('Integration: Junior Health Gate Admission (Socket-Layer Wedged Endpoin
     // Both A and B are free in capacity, but A is wedged
     insertTask('task-fallthrough-1', 'queued');
 
-    const admitted = await reconcileQueuedTasks(db);
+    const admitted = await reconcileQueuedTasks(db, { probeTimeoutMs: 300 });
 
     // Task falls through from wedged A to healthy B and is admitted!
     expect(admitted).toEqual(['task-fallthrough-1']);

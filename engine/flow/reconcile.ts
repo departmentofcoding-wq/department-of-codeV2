@@ -32,6 +32,7 @@ import { evaluateAdmissionGate } from './admission_predicate.ts';
  */
 export interface ReconcileOptions {
   probe?: (cfg: JuniorConfig) => Promise<boolean>;
+  probeTimeoutMs?: number;
 }
 
 export async function reconcileQueuedTasks(
@@ -60,7 +61,7 @@ export async function reconcileQueuedTasks(
   );
 
   const admitted: string[] = [];
-  const probeFn = opts.probe ?? probeJuniorHealth;
+  const probeFn = opts.probe ?? ((cfg: JuniorConfig) => probeJuniorHealth(cfg, { timeoutMs: opts.probeTimeoutMs }));
 
   for (const { id: taskId } of candidates) {
     // Stage 1: Capacity check first. Stop at first task no junior is free for.
