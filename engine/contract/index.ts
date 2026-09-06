@@ -8,4 +8,5 @@ export * from './harness-pure.ts';
 export * from './llm-seam.ts';
 export * from './pr-seam.ts';
 export * from './backup-seam.ts';
+export * from './junior-seam.ts';
 

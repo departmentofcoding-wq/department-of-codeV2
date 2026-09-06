@@ -61,6 +61,8 @@ describe('A2: Pure State Machine & Task Approval', () => {
     expect(canTransition('intake', 'queued', 'senior-engineer')).toBe(true);
     expect(canTransition('queued', 'claimed', 'junior-engineer')).toBe(true);
     expect(canTransition('claimed', 'verifying', 'junior-engineer')).toBe(true);
+    expect(canTransition('claimed', 'blocked', 'senior-engineer')).toBe(true);
+    expect(canTransition('claimed', 'blocked', 'system')).toBe(true);
     expect(canTransition('verifying', 'needs-review', 'verifier')).toBe(true);
 
     // needs-review -> done for human-operator or system

@@ -69,6 +69,7 @@ import { getIdeDriverOverride, setIdeDriverOverride } from '../engine/contract/i
 import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
 import { GatedIdeDriver } from '../engine/selectors/gate.ts';
 import { reapExpiredWindowLeases } from '../engine/harness/lease-manager.ts';
+import { reconcileDeadDispatchWork } from '../engine/harness/salvage-detector.ts';
 
 function getSelectorCss(db: DbConnection, key: string): string {
   const row = db.get<{ css: string }>('SELECT css FROM bureau_selectors WHERE key = ?', key);
@@ -325,6 +326,17 @@ export class Runner {
       const { terminal } = failJob(this.db, job.id, errMsg, backoffMs, { forceTerminal: nonRetryable });
 
       if (terminal) {
+        if (job.kind === 'junior.dispatch' && job.task_id) {
+          try {
+            await reconcileDeadDispatchWork(this.db, job, errMsg);
+          } catch (recErr: any) {
+            log('ERROR', 'dead_dispatch_reconcile_error', {
+              jobId: job.id,
+              taskId: job.task_id,
+              error: recErr?.message || String(recErr)
+            });
+          }
+        }
         this.notifier.notifyOperator(job.id, `Terminal failure: ${errMsg}`);
       }
     } finally {

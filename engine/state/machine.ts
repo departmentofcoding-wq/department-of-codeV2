@@ -7,7 +7,7 @@ import { notifyTaskStateChange } from './notifications.ts';
 import { NOTIFYING_TASK_STATES } from '../notifications/events.ts';
 
 const ROLE_GATED_TRANSITIONS: Record<string, readonly ActorRole[]> = {
-  'claimed->blocked': ['senior-engineer'],
+  'claimed->blocked': ['senior-engineer', 'system'],
   'verifying->claimed': ['verifier'],
   'verifying->blocked': ['verifier'],
   'blocked->claimed': ['human-operator'],

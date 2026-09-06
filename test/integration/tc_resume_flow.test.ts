@@ -163,6 +163,7 @@ describe('Integration: Resume flow and N17 concurrency / assignment discipline',
     // Operator resumes task-q3 -> plan.cycle reset to pending
     const res = rekickTaskFlow(db, 'task-q3', HUMAN);
     expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error(res.reason);
     expect(res.action).toBe('plan-cycle-reset');
 
     // Capacity check: attempt to assign under full roster -> returns unavailable (no_free_junior)
