@@ -154,6 +154,7 @@ async function loadWorkersView() {
     ]);
     if (flowContainer && flowRes.status === 'fulfilled') {
       flowContainer.innerHTML = renderFlowPipeline(flowRes.value);
+      attachFlowActionListeners();
     }
     if (workersRes.status === 'fulfilled') {
       container.innerHTML = renderWorkers(workersRes.value);
@@ -432,6 +433,29 @@ function attachArchivedActionListeners() {
           }
         }
       );
+    });
+  });
+}
+
+function attachFlowActionListeners() {
+  document.querySelectorAll('.btn-resume-flow').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      const taskId = e.currentTarget.getAttribute('data-task-id');
+      if (!taskId) return;
+      try {
+        const res = await apiFetch(`/api/tasks/${taskId}/resume`, {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+        if (res.already_running) {
+          showToast(`<div class="toast"><span class="toast-icon">ℹ️</span> Task ${taskId} is already running</div>`);
+        } else {
+          showToast(`<div class="toast"><span class="toast-icon">⚡</span> Task ${taskId} resumed</div>`);
+        }
+        await refreshActiveView();
+      } catch (err) {
+        // Error toast handled by apiFetch
+      }
     });
   });
 }

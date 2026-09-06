@@ -134,8 +134,15 @@ export function approveTask(
       throw new Error(`Task ${taskId} changed state or was approved concurrently; refusing to approve twice`);
     }
 
+    // N2 delivery gate: Approve triggers the CODE-DIFF (phase4) senior review
+    // FIRST, not pr.create directly. `work.diff-review` drives the task's assigned
+    // senior over the real git diff and, on APPROVE, chains to pr.create → pr.merge
+    // (on AMEND it holds the task here at the human gate — nothing merges). This is
+    // what makes the real diff senior-reviewed before delivery; pr.create/pr.merge
+    // still re-check the phase4 gate as defense-in-depth. See
+    // engine/flow/diff_review_cycle.ts.
     enqueueJob(db, {
-      kind: 'pr.create',
+      kind: 'work.diff-review',
       task_id: taskId,
       payload: { taskId }
     });

@@ -87,8 +87,9 @@ describe('T42: Approval Door CLI & approveTask Integration Test', () => {
     expect(approved.approved_by).toBe('human-operator:operator-1');
     expect(approved.state).toBe('needs-review');
 
-    // Verify pr.create job enqueued
-    const jobs = db.all("SELECT * FROM bureau_jobs WHERE task_id = 'task-42b' AND kind = 'pr.create'");
+    // Verify work.diff-review job enqueued (N2: Approve triggers the code-diff
+    // senior review, which chains to pr.create → pr.merge on APPROVE).
+    const jobs = db.all("SELECT * FROM bureau_jobs WHERE task_id = 'task-42b' AND kind = 'work.diff-review'");
     expect(jobs).toHaveLength(1);
 
     // Verify human journal span created
@@ -114,7 +115,7 @@ describe('T42: Approval Door CLI & approveTask Integration Test', () => {
 
     expect(second.approved_at).toEqual(first.approved_at);
 
-    const jobs = db.all("SELECT * FROM bureau_jobs WHERE task_id = 'task-42d' AND kind = 'pr.create'");
+    const jobs = db.all("SELECT * FROM bureau_jobs WHERE task_id = 'task-42d' AND kind = 'work.diff-review'");
     expect(jobs).toHaveLength(1);
   });
 });

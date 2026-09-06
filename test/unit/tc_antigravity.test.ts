@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   buildAntigravityArgs,
+  antigravityUserDataDir,
   findAntigravityBinary,
   findJuniorBinary,
   assignJunior,
@@ -34,6 +35,45 @@ describe('Antigravity integration — deterministic surface', () => {
   it('buildAntigravityArgs exposes the debug port', () => {
     expect(buildAntigravityArgs(9333)).toEqual(['--remote-debugging-port=9333']);
     expect(ANTIGRAVITY_DEFAULT_PORT).toBe(9333);
+  });
+
+  it('buildAntigravityArgs pins a per-junior --user-data-dir when given (defeats the single-instance lock)', () => {
+    expect(buildAntigravityArgs(9334, 'C:/profiles/9334')).toEqual([
+      '--remote-debugging-port=9334',
+      '--user-data-dir=C:/profiles/9334'
+    ]);
+    // Blank/whitespace dir is ignored — legacy args, never an empty flag.
+    expect(buildAntigravityArgs(9334, '   ')).toEqual(['--remote-debugging-port=9334']);
+  });
+
+  describe('antigravityUserDataDir — stable per-junior profile keyed by port', () => {
+    const A = 'ANTIGRAVITY_USER_DATA_DIR_9334';
+    const A9333 = 'ANTIGRAVITY_USER_DATA_DIR_9333';
+    const saved = process.env[A];
+    const saved9333 = process.env[A9333];
+    afterEach(() => {
+      if (saved === undefined) delete process.env[A];
+      else process.env[A] = saved;
+      if (saved9333 === undefined) delete process.env[A9333];
+      else process.env[A9333] = saved9333;
+    });
+
+    it('is a stable, per-port path (A=9333 and B=9334 differ)', () => {
+      delete process.env[A];
+      delete process.env[A9333];
+      const a = antigravityUserDataDir(9333);
+      const b = antigravityUserDataDir(9334);
+      expect(a).not.toBe(b);
+      expect(a.endsWith(path.join('antigravity-profiles', '9333'))).toBe(true);
+      expect(b.endsWith(path.join('antigravity-profiles', '9334'))).toBe(true);
+      // Stable across calls (persistent, never a random temp).
+      expect(antigravityUserDataDir(9334)).toBe(b);
+    });
+
+    it('honors the ANTIGRAVITY_USER_DATA_DIR_<port> override', () => {
+      process.env[A] = 'D:/signed-in-profile';
+      expect(antigravityUserDataDir(9334)).toBe('D:/signed-in-profile');
+    });
   });
 
   it('pickFolderWindow matches the window opened ON a worktree by its title', () => {

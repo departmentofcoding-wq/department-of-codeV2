@@ -825,3 +825,64 @@ Executed 2026-09-02 on branch `wt/junior-b-run-fixpack`; full suite
 735/735 ×2 across 128 files, `tsc --noEmit` clean (two earlier runs' t38/T4b
 failures were this real strip-types bug plus the documented parallel-load
 flake, both resolved/passing before the two clean runs).
+
+---
+
+## M-RESUME-1 to M-RESUME-4 — Console Workers Tab One-Click Resume for Stalled Tasks
+
+Branch `bureau-wt-81b5a1ee-3f1a-4888-aadd-d9cf80cea6ed`.
+Feature: In-console one-click Resume button on Workers tab flow cards to recover dead/stalled tasks through the engine's tracked path with single-row deterministic identity revival, harmless double-click convergence (200 OK), fail-closed refusals on done/archived tasks, and full journal/notification attribution.
+
+- **M-RESUME-1 (Endpoint manifest freeze):**
+  - **Guard:** `console/contract.ts` `ENDPOINTS` manifest includes `POST /api/tasks/:id/resume` and length is frozen at 35.
+  - **Mutation:** Removed `POST /api/tasks/:id/resume` from `ENDPOINTS` manifest.
+  - **Catcher:** `test/unit/contract_d0_c.test.ts` → `2. Endpoint Manifest`:
+    ```
+    FAIL test/unit/contract_d0_c.test.ts > Milestone D0-C — Console Contract Freeze > 2. Endpoint Manifest: every endpoint declares method, path, description, and token auth
+    AssertionError: expected 34 to be 35 // Object.is equality
+
+    - Expected
+    + Received
+
+    - 35
+    + 34
+    ```
+  - **Restore:** Endpoint restored in `console/contract.ts`; test passed green (4/4).
+
+- **M-RESUME-2 (In-place revival / single-row deterministic identity):**
+  - **Guard:** `engine/flow/rekick.ts` revives dead jobs in-place via atomic `UPDATE bureau_jobs ... WHERE id = ? AND state = 'dead'` and resets `attempts = 0` rather than generating new UUIDs / duplicating job rows.
+  - **Mutation:** Inserted a new random UUID row instead of in-place `UPDATE`.
+  - **Catcher:** `test/unit/tc_resume_api.test.ts` → `revives dead junior.dispatch in-place for claimed task without minting new UUID`:
+    ```
+    FAIL test/unit/tc_resume_api.test.ts > POST /api/tasks/:id/resume (one-click Workers tab resume) > revives dead junior.dispatch in-place for claimed task without minting new UUID
+    AssertionError: expected 2 to be 1 // Object.is equality
+
+    - Expected
+    + Received
+
+    - 1
+    + 2
+    ```
+  - **Restore:** Atomic in-place `UPDATE` restored in `engine/flow/rekick.ts`; test passed green (7/7).
+
+- **M-RESUME-3 (Fail-closed refusal for done & archived tasks):**
+  - **Guard:** `engine/flow/rekick.ts` refuses done tasks (`task.state === 'done'`) with 400 + `guardrail` journal span.
+  - **Mutation:** Bypassed done task check with `if (false && task.state === 'done')`.
+  - **Catcher:** `test/unit/tc_resume_api.test.ts` → `refuses done tasks with 400 and records a guardrail journal span`:
+    ```
+    FAIL test/unit/tc_resume_api.test.ts > POST /api/tasks/:id/resume (one-click Workers tab resume) > refuses done tasks with 400 and records a guardrail journal span
+    AssertionError: expected '{"action":"resume_refused","taskId":"…' to contain 'done tasks cannot be resumed'
+    ```
+  - **Restore:** Check restored in `engine/flow/rekick.ts`; test passed green (7/7).
+
+- **M-RESUME-4 (UI Flow Card Resume Button rendering):**
+  - **Guard:** `console/public/render.js` renders `<button class="btn btn-secondary btn-sm btn-resume-flow" data-task-id="...">Resume</button>` if and only if `t.is_resumable === true`.
+  - **Mutation:** Mutated `renderFlowPipeline` to always omit the Resume button (`const resumeBtn = ''`).
+  - **Catcher:** `test/unit/tCONSOLE_b1_render.test.ts` → `3e. renderFlowPipeline: renders Resume button when is_resumable is true and omits it otherwise`:
+    ```
+    FAIL test/unit/tCONSOLE_b1_render.test.ts > Milestone B1 — UI Shell & Testable Render Core (T-C4) > 3e. renderFlowPipeline: renders Resume button when is_resumable is true and omits it otherwise
+    AssertionError: expected '<div class="flow-pipeline"><div class…' to contain 'btn-resume-flow'
+    ```
+  - **Restore:** `is_resumable` ternary button rendering restored in `console/public/render.js`; test passed green (20/20).
+
+Executed 2026-09-04 on branch `bureau-wt-81b5a1ee-3f1a-4888-aadd-d9cf80cea6ed`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.

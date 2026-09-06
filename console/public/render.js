@@ -319,11 +319,18 @@ export function renderFlowPipeline(snapshot) {
       ? `${escapeHtml(t.last_activity_kind || 'act')} by ${escapeHtml(t.last_actor_role || '—')} @ ${escapeHtml(t.last_activity_ts)}`
       : 'no activity yet';
 
+    const resumeBtn = t.is_resumable
+      ? `<button class="btn btn-secondary btn-sm btn-resume-flow" data-task-id="${escapeHtml(t.task_id)}">Resume</button>`
+      : '';
+
     return `
       <div class="flow-card ${t.is_stuck ? 'is-stuck' : ''}" data-task-id="${escapeHtml(t.task_id)}">
         <div class="flow-card-head">
           <span class="flow-card-title">${escapeHtml(t.title)}</span>
-          <span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span>
+          <div class="flow-card-head-actions">
+            ${resumeBtn}
+            <span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span>
+          </div>
         </div>
         <div class="flow-steps">${steps}</div>
         ${stuckBanner}
@@ -651,7 +658,10 @@ export function renderJournalTimeline(journal) {
   // System group always sorts last.
   order.sort((a, b) => (a === UNATTRIBUTED ? 1 : 0) - (b === UNATTRIBUTED ? 1 : 0));
 
-  const renderEntry = (j) => `
+  const renderEntry = (j) => {
+    const rawStr = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? null, null, 2);
+    const narrativeText = j.narrative || rawStr;
+    return `
     <div class="timeline-item kind-${escapeHtml(j.kind)}">
       <div class="timeline-meta">
         <span class="timeline-ts">${escapeHtml(j.ts)}</span>
@@ -659,10 +669,15 @@ export function renderJournalTimeline(journal) {
         <span class="actor">${escapeHtml(j.actor_role)} (${escapeHtml(j.provider)})</span>
       </div>
       <div class="timeline-body">
-        <div class="timeline-detail">${escapeHtml(j.detail)}</div>
+        <div class="timeline-narrative">${escapeHtml(narrativeText)}</div>
+        <details class="timeline-raw-detail">
+          <summary>raw</summary>
+          <pre class="timeline-raw-json">${escapeHtml(rawStr)}</pre>
+        </details>
       </div>
     </div>
   `;
+  };
 
   const sections = order.map((key) => {
     const g = groups.get(key);

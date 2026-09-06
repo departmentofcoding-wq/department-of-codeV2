@@ -453,3 +453,26 @@ defineJob(
   { maxAttempts: 3, timeoutMs: 60000 }
 );
 
+// 22. work.diff-review — the CODE-DIFF (phase4) senior review that gates delivery
+// (N2). The operator's Approve enqueues THIS instead of pr.create; the task's
+// assigned senior reviews the real git diff, and on APPROVE it chains to
+// pr.create → pr.merge (on AMEND it holds the task at the human gate). Long
+// timeout because it drives a live GUI/CLI senior; one attempt (a stall surfaces
+// to the operator rather than re-driving the agent).
+const workDiffReviewSchema = z.object({
+  taskId: z.string(),
+  seniorId: z.string().optional(),
+  seniorModel: z.string().optional()
+});
+
+defineJob(
+  'work.diff-review',
+  workDiffReviewSchema,
+  async (ctx) => {
+    const payload = workDiffReviewSchema.parse(ctx.payload ?? {});
+    const { runDiffReviewCycle } = await import('../flow/diff_review_cycle.ts');
+    await runDiffReviewCycle(ctx.db, { ...payload, signal: ctx.signal, jobId: ctx.job.id });
+  },
+  { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
+);
+

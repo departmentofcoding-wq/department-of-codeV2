@@ -62,6 +62,11 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
     taskState: 'done'
   },
   {
+    key: 'task.resumed',
+    label: 'Task resumed',
+    description: 'A stalled or dead task was resumed by the operator.'
+  },
+  {
     key: 'ntfy.test',
     label: 'Test notification',
     description: 'A manual test push sent from Settings to confirm delivery.'

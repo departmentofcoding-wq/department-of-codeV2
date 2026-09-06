@@ -8,6 +8,7 @@ import { redactOutput } from '../engine/contract/tools.ts';
 import { journal } from '../engine/journal/writer.ts';
 import { dashboardSnapshot, workerRoster, taskFlow, FLOW_STAGES } from '../engine/dashboards/views.ts';
 import { timeline } from '../engine/journal/queries.ts';
+import { narrateEntry } from '../engine/journal/narrate.ts';
 import { approveTask } from '../engine/state/machine.ts';
 import { archiveTask, unarchiveTask } from '../engine/state/archive.ts';
 import { markTaskCompleted, reopenTask } from '../engine/state/completion.ts';
@@ -469,6 +470,8 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             last_activity_kind: f.last_activity_kind,
             is_stuck: f.is_stuck,
             stuck_reason: f.stuck_reason,
+            is_resumable: f.is_resumable,
+            resumable_reason: f.resumable_reason ? redactOutput(f.resumable_reason) : null,
             plan_rounds: f.plan_rounds,
             verify_fixes: f.verify_fixes,
             cycles: f.cycles,
@@ -524,7 +527,8 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
           tokens_out: r.tokens_out,
           cost_usd: r.cost_usd,
           latency_ms: r.latency_ms,
-          detail: redactOutput(r.detail)
+          detail: redactOutput(r.detail),
+          narrative: narrateEntry(r)
         }));
         sendJson(res, 200, dtos);
         return;
@@ -876,7 +880,8 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
         return;
       }
 
-      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && pathname.endsWith('/rekick')) {
+      if (req.method === 'POST' && pathname.startsWith('/api/tasks/') && (pathname.endsWith('/rekick') || pathname.endsWith('/resume'))) {
+        const isRekick = pathname.endsWith('/rekick');
         const taskId = pathname.split('/')[3];
         if (!taskId) {
           sendError(res, 400, 'BAD_REQUEST', 'Missing task ID in path');
@@ -902,19 +907,20 @@ export async function createConsoleServer(options: ConsoleServerOptions): Promis
             ok: true,
             task_id: taskId,
             action: result.action,
-            job_id: result.jobId
+            job_id: result.jobId,
+            ...(result.alreadyRunning ? { already_running: true } : {})
           };
           sendJson(res, 200, payload);
         } else {
-          // Refusals are guardrails too: a live target job or a wrong task
-          // state is the double-prompt guard doing its job. No taskId on the
-          // span when the task itself is unknown (journal FK).
+          // Refusals are guardrails: a done task or an archived task is refused fail-closed.
+          const taskRow = db.get<{ id: string }>('SELECT id FROM bureau_tasks WHERE id = ?', taskId);
           journal(db, {
             kind: 'guardrail',
             attribution,
-            detail: { action: 'rekick_refused', taskId, reason: result.reason }
+            taskId: taskRow ? taskId : undefined,
+            detail: { action: isRekick ? 'rekick_refused' : 'resume_refused', taskId, reason: result.reason }
           });
-          sendError(res, 400, 'REKICK_REFUSED', result.reason);
+          sendError(res, 400, isRekick ? 'REKICK_REFUSED' : 'RESUME_REFUSED', result.reason);
         }
         return;
       }

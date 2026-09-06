@@ -90,7 +90,7 @@ describe('T-C3: Console Action Endpoints & Approval Core (Milestone A3)', () => 
     expect(guardrail?.count).toBe(1);
   });
 
-  it('approves a verified task: sets approval columns, retains state needs-review, enqueues pr.create, and journals human span', async () => {
+  it('approves a verified task: sets approval columns, retains state needs-review, enqueues work.diff-review, and journals human span', async () => {
     // Seed verified task (verifier_exit_code = 0, state = 'needs-review')
     db.run(`
       INSERT INTO bureau_tasks (id, title, state, verifier_exit_code, priority, work_uuid, created_at, updated_at)
@@ -120,8 +120,9 @@ describe('T-C3: Console Action Endpoints & Approval Core (Milestone A3)', () => 
     expect(task.approved_by).toContain('alice-operator');
     expect(task.approved_at).not.toBeNull();
 
-    // Check pr.create job enqueued
-    const job = db.get<BureauJobRow>("SELECT * FROM bureau_jobs WHERE kind = 'pr.create' AND task_id = 'task-verified-1'");
+    // Check work.diff-review job enqueued (N2: Approve triggers the code-diff
+    // senior review, which chains to pr.create → pr.merge on APPROVE).
+    const job = db.get<BureauJobRow>("SELECT * FROM bureau_jobs WHERE kind = 'work.diff-review' AND task_id = 'task-verified-1'");
     expect(job).not.toBeNull();
     expect(job?.state).toBe('pending');
 

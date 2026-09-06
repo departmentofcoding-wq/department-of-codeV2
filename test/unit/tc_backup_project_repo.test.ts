@@ -112,4 +112,46 @@ describe('N9: backup.push targets the task\'s project repo', () => {
     expect(spans.length).toBe(1);
     expect(spans[0].detail).toContain(mergeCommit);
   });
+
+  it('fallback: a dept task (no project_id) roots the backup provider at the dept repo via getTaskRepoRoot', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bureau-n9dept-'));
+    const db: DbConnection = openDbConnection(path.join(tempDir, 'test.db'));
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO bureau_tasks (id, title, state, project_id, work_uuid, created_at, updated_at)
+       VALUES ('task-dept-n9', 'dept task', 'needs-review', NULL, 'wuuid-dept-n9', ?, ?)`,
+      now, now
+    );
+
+    // Spy the seam to capture the repoRoot handleBackupPush resolved through
+    // getTaskRepoRoot, and stay SAFE (a no-op provider that never touches git).
+    let seenRepoRoot: string | undefined = 'UNCALLED';
+    const spy = vi.spyOn(backupSeam, 'getBackupProvider').mockImplementation((repoRoot?: string) => {
+      seenRepoRoot = repoRoot;
+      return {
+        fetch: async () => {},
+        fastForwardLocal: async () => {},
+        remoteContains: async () => true,
+        getRemoteTip: async () => 'deadbeef'
+      } as any;
+    });
+
+    try {
+      await handleBackupPush({
+        db,
+        job: { id: 'job-dept-n9', task_id: 'task-dept-n9', kind: 'backup.push' },
+        payload: { target: 'origin/main', commit: 'deadbeef' }
+      } as any);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Threaded through getTaskRepoRoot's fallback: a real dept-root path — NOT
+    // undefined (the old inline code left it unset), NOT a project path, and NOT
+    // the engine subdir this source file lives in.
+    expect(typeof seenRepoRoot).toBe('string');
+    expect(seenRepoRoot).not.toContain('projects');
+    expect(path.basename(seenRepoRoot as string)).not.toBe('durability');
+    expect(path.basename(seenRepoRoot as string)).not.toBe('engine');
+  });
 });

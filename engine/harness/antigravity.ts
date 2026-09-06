@@ -86,9 +86,44 @@ export function findAntigravityBinary(): string {
   );
 }
 
-/** CDP launch args: expose the DevTools endpoint on a fixed port. */
-export function buildAntigravityArgs(port: number): string[] {
-  return [`--remote-debugging-port=${port}`];
+/**
+ * The per-junior Antigravity profile directory (Electron `--user-data-dir`).
+ *
+ * The single-instance lock is keyed to the user-data-dir. A launch that reuses
+ * the DEFAULT profile is ABSORBED by any Antigravity already running on it — a
+ * stale/wedged leftover, or the operator's own window — and the new process
+ * exits WITHOUT binding its debug port, so the port never opens and the launch
+ * dies with "no CDP endpoint on port N within timeout" (the 2026-09-03 N9 scar).
+ *
+ * A STABLE, per-junior profile dir gives each junior its own lockable instance
+ * that always binds its own debug port, coexisting with any other Antigravity
+ * (the operator's, or the sibling junior). It is PERSISTENT (never a temp) so
+ * the profile's state — crucially, the junior's one-time Antigravity sign-in —
+ * survives across launches. Keyed by PORT so the cfg-based and bare-port launch
+ * paths resolve the SAME profile for the same junior (A=9333, B=9334).
+ *
+ * NOTE (operator): a fresh profile dir starts SIGNED OUT — sign the junior's
+ * Antigravity in ONCE in that profile, or point `ANTIGRAVITY_USER_DATA_DIR_<port>`
+ * at an already-signed-in profile to reuse it.
+ */
+export function antigravityUserDataDir(port: number): string {
+  const override = process.env[`ANTIGRAVITY_USER_DATA_DIR_${port}`];
+  if (override && override.trim()) return override.trim();
+  return path.join(localAppData(), 'bureau', 'antigravity-profiles', String(port));
+}
+
+/**
+ * CDP launch args: expose the DevTools endpoint on a fixed port, and (when a
+ * profile dir is given) pin the Electron `--user-data-dir` so this launch gets
+ * its OWN single-instance lock and reliably binds the debug port. Callers pass
+ * `antigravityUserDataDir(port)`; omitting it preserves the legacy args.
+ */
+export function buildAntigravityArgs(port: number, userDataDir?: string): string[] {
+  const args = [`--remote-debugging-port=${port}`];
+  if (userDataDir && userDataDir.trim()) {
+    args.push(`--user-data-dir=${userDataDir}`);
+  }
+  return args;
 }
 
 /**
@@ -285,7 +320,11 @@ export async function ensureJuniorRunning(
   const port = cfg.cdpPort;
   if (await isDebugPortLive(port)) return { launched: false, port };
   const binary = findJuniorBinary(cfg);
-  const child = child_process.spawn(binary, buildAntigravityArgs(port), {
+  // Launch on the junior's OWN profile so the single-instance lock can never
+  // absorb this launch into a stale/other Antigravity (the "no CDP endpoint" scar).
+  const userDataDir = antigravityUserDataDir(port);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const child = child_process.spawn(binary, buildAntigravityArgs(port, userDataDir), {
     detached: true,
     stdio: 'ignore'
   });
@@ -356,7 +395,9 @@ export async function recoverJuniorRunning(
   // Unconditional: a wedged instance has a LIVE port, so reuse is exactly wrong.
   await deps.killProcesses(cfg);
   const binary = findJuniorBinary(cfg);
-  const child = deps.spawn(binary, buildAntigravityArgs(port));
+  const userDataDir = antigravityUserDataDir(port);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const child = deps.spawn(binary, buildAntigravityArgs(port, userDataDir));
   child.unref?.();
   const timeoutMs = opts.timeoutMs ?? 30000;
   const deadline = Date.now() + timeoutMs;
@@ -471,7 +512,9 @@ export async function ensureAntigravityRunning(
     return { launched: false, port };
   }
   const binary = findAntigravityBinary();
-  const child = child_process.spawn(binary, buildAntigravityArgs(port), {
+  const userDataDir = antigravityUserDataDir(port);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const child = child_process.spawn(binary, buildAntigravityArgs(port, userDataDir), {
     detached: true,
     stdio: 'ignore'
   });
