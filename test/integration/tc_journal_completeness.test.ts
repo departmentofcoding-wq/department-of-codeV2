@@ -65,6 +65,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     git(['config', 'user.name', 'Bureau Tester'], repoPath);
     git(['config', 'user.email', 'tester@bureau.local'], repoPath);
     fs.writeFileSync(path.join(repoPath, 'README.md'), '# Complete Flow Repo\n');
+    fs.writeFileSync(path.join(repoPath, 'check.js'), "const fs = require('fs'); process.exit(fs.existsSync('verify_pass.txt') ? 0 : 1);\n");
     git(['add', '.'], repoPath);
     git(['commit', '-m', 'initial commit'], repoPath);
     git(['branch', '-M', 'main'], repoPath);
@@ -91,6 +92,9 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     const SECRET_ENV_ASSIGN = 'GOOGLE_API_KEY=supersecretkey999';
 
     let planRoundCount = 0;
+    let workFixCount = 0;
+    let verifyFixCount = 0;
+
     setAntigravityDriverOverride({
       async runCommand(prompt: string, opts: any) {
         if (prompt.includes('Here is a task for you to plan')) {
@@ -112,7 +116,35 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
             plan: `# Implementation Plan\n## Branch: bureau-wt-task\n## Scope\nEdit index.ts\n## Tests and Mutation Evidence\nAdd test/feature.test.ts with mutation tests\n## Walkthrough Plan\nRun test suite and verify clean exit.\n[Secret: ${SECRET_KEY_2}]`
           };
         }
-        // Junior implementation dispatch
+
+        if (prompt.includes('A senior reviewed your walkthrough and is requesting changes')) {
+          workFixCount++;
+          return {
+            launched: true,
+            junior: 'A',
+            model: 'gemini-2.5-flash',
+            transcript: `Addressed work review feedback.\nWalkthrough:\nUpdated walkthrough details.\nBUREAU-JUNIOR-COMPLETE`,
+            walkthrough: `## Walkthrough (Revised)\nAddressed senior feedback on walkthrough details.\n${SECRET_KEY_3}`
+          };
+        }
+
+        if (prompt.includes('The verifier failed on your worktree')) {
+          verifyFixCount++;
+          // Fix verification by creating verify_pass.txt in the worktree
+          const targetDir = opts.worktreePath || opts.folder;
+          if (targetDir && fs.existsSync(targetDir)) {
+            fs.writeFileSync(path.join(targetDir, 'verify_pass.txt'), 'passed\n');
+          }
+          return {
+            launched: true,
+            junior: 'A',
+            model: 'gemini-2.5-flash',
+            transcript: `Fixed verification failure by creating verify_pass.txt.\nWalkthrough:\nVerification pass file added.\nBUREAU-JUNIOR-COMPLETE`,
+            walkthrough: `## Walkthrough (Post-Verify-Fix)\nAdded verify_pass.txt and verified pass.\nBUREAU-JUNIOR-COMPLETE`
+          };
+        }
+
+        // Initial Junior implementation dispatch
         return {
           launched: true,
           junior: 'A',
@@ -123,12 +155,14 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
       }
     } as any);
 
-    let reviewRoundCount = 0;
+    let planReviewCount = 0;
+    let walkthroughReviewCount = 0;
+
     setSeniorDriverOverride({
       async review(input: any) {
         if (input.kind === 'plan') {
-          reviewRoundCount++;
-          if (reviewRoundCount === 1) {
+          planReviewCount++;
+          if (planReviewCount === 1) {
             return {
               senior: 'claude',
               verdict: 'revise',
@@ -145,6 +179,27 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
             model: 'claude-3-7-sonnet'
           };
         }
+
+        if (input.kind === 'walkthrough') {
+          walkthroughReviewCount++;
+          if (walkthroughReviewCount === 1) {
+            return {
+              senior: 'claude',
+              verdict: 'revise',
+              feedback: 'Please refine walkthrough documentation on test outcomes.',
+              raw: 'VERDICT: REVISE',
+              model: 'claude-3-7-sonnet'
+            };
+          }
+          return {
+            senior: 'claude',
+            verdict: 'approve',
+            feedback: 'Walkthrough verified: all tests pass and implementation is complete.',
+            raw: 'VERDICT: APPROVE',
+            model: 'claude-3-7-sonnet'
+          };
+        }
+
         if (input.kind === 'diff') {
           return {
             senior: 'zai',
@@ -154,11 +209,11 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
             model: 'glm-4-plus'
           };
         }
-        // Walkthrough review
+
         return {
           senior: 'claude',
           verdict: 'approve',
-          feedback: 'Walkthrough verified: all tests pass and implementation is complete.',
+          feedback: 'Default approved',
           raw: 'VERDICT: APPROVE',
           model: 'claude-3-7-sonnet'
         };
@@ -185,7 +240,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
       intent: 'Prove complete flow reconstructability from journal alone',
       spec: 'Audit and record all prompts, senior feedbacks, verifier details, and delivery events',
       acceptance: 'Journal captures entire pipeline journey with zero secrets',
-      verify_cmd: 'node --version'
+      verify_cmd: 'node check.js'
     });
 
     confirmVerify(db, session.id, {
@@ -206,8 +261,8 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     // 4. Drain Plan Cycle (Round 1: Revise, Round 2: Approve -> Dispatches junior.dispatch)
     await drainAllJobs(db);
 
-    // 5. Drain Implementation (junior.dispatch -> chains work.cycle -> chains worktree.prepare & verify.run -> lands in needs-review)
-    await drainAllJobs(db);
+    // 5. Drain Implementation (junior.dispatch -> chains work.cycle -> round 1 revise -> junior work-review-fix -> round 2 approve -> worktree.prepare & verify.run -> fail exit 1 -> junior verify-fix -> work.cycle round 3 approve -> verify.run pass exit 0 -> lands in needs-review)
+    await drainAllJobs(db, 80);
 
     const midTask = db.get<{ state: string }>('SELECT state FROM bureau_tasks WHERE id = ?', task.id);
     expect(midTask?.state).toBe('needs-review');
@@ -242,7 +297,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
       detail: string;
     }>('SELECT * FROM bureau_journal WHERE task_id = ? ORDER BY id ASC', task.id);
 
-    expect(journalRows.length).toBeGreaterThan(10);
+    expect(journalRows.length).toBeGreaterThan(15);
 
     // Assertion A: task-filed span carries title, intent, spec, acceptance, verify_cmd
     const filedSpan = journalRows.find(r => r.kind === 'task-filed');
@@ -250,7 +305,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     const filedDetail = JSON.parse(filedSpan!.detail);
     expect(filedDetail.title).toBe('Complete Journal Task');
     expect(filedDetail.intent).toBe('Prove complete flow reconstructability from journal alone');
-    expect(filedDetail.verify_cmd).toBe('node --version');
+    expect(filedDetail.verify_cmd).toBe('node check.js');
 
     // Assertion B: assignment span records junior and senior
     const assignmentSpan = journalRows.find(r => r.kind === 'assignment');
@@ -260,17 +315,18 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     expect(assignmentDetail.senior).toBeTruthy();
 
     // Assertion C: Plan authoring observation spans contain verbatim prompt delivered
-    const planAuthoringSpans = journalRows.filter(r => r.kind === 'observation' && r.detail.includes('plan-authoring'));
+    const planAuthoringSpans = journalRows.filter(r => r.kind === 'observation' && JSON.parse(r.detail).stage === 'plan-authoring');
     expect(planAuthoringSpans.length).toBe(2); // Round 1 and Round 2
     for (const span of planAuthoringSpans) {
       const d = JSON.parse(span.detail);
+      expect(d.stage).toBe('plan-authoring');
       expect(d.prompt).toContain('Here is a task for you to plan');
       expect(d.prompt).toContain('Complete Journal Task');
       expect(d.model).toBeTruthy();
     }
 
-    // Assertion D: Review rounds carry senior's full feedback
-    const planReviewSpans = journalRows.filter(r => r.kind === 'review' && r.detail.includes('plan-review'));
+    // Assertion D: Plan review rounds carry senior's full feedback
+    const planReviewSpans = journalRows.filter(r => r.kind === 'review' && JSON.parse(r.detail).stage === 'plan-review');
     expect(planReviewSpans.length).toBe(2);
     const round1Review = JSON.parse(planReviewSpans[0].detail);
     expect(round1Review.verdict).toBe('amend');
@@ -279,37 +335,59 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     expect(round2Review.verdict).toBe('approved');
     expect(round2Review.feedback).toContain('Plan is comprehensive and approved');
 
-    // Assertion E: Junior implementation dispatch carries verbatim implementation prompt
-    const implObservation = journalRows.find(r => r.kind === 'observation' && !r.detail.includes('plan-authoring'));
+    // Assertion E: Junior implementation dispatch carries stage and verbatim implementation prompt
+    const implObservation = journalRows.find(r => r.kind === 'observation' && JSON.parse(r.detail).stage === 'junior-implementation');
     expect(implObservation).toBeDefined();
     const implDetail = JSON.parse(implObservation!.detail);
+    expect(implDetail.stage).toBe('junior-implementation');
     expect(implDetail.prompt).toContain('Your implementation plan was reviewed and APPROVED by a senior');
     expect(implDetail.conversationMode).toBe('continue');
 
-    // Assertion F: Walkthrough review carries senior feedback
-    const workReviewSpan = journalRows.find(r => r.kind === 'review' && r.detail.includes('work-review'));
-    expect(workReviewSpan).toBeDefined();
-    const workReviewDetail = JSON.parse(workReviewSpan!.detail);
-    expect(workReviewDetail.verdict).toBe('approved');
-    expect(workReviewDetail.feedback).toContain('Walkthrough verified');
+    // Assertion F: Work review fix dispatch carries stage 'work-review-fix' and verbatim fix prompt
+    const workFixObservation = journalRows.find(r => r.kind === 'observation' && JSON.parse(r.detail).stage === 'work-review-fix');
+    expect(workFixObservation).toBeDefined();
+    const workFixDetail = JSON.parse(workFixObservation!.detail);
+    expect(workFixDetail.stage).toBe('work-review-fix');
+    expect(workFixDetail.prompt).toContain('A senior reviewed your walkthrough and is requesting changes');
+    expect(workFixDetail.conversationMode).toBe('continue');
 
-    // Assertion G: Verify run tool span carries verify command, stage breakdown, pass counts, and stdout/stderr tail
-    const verifySpan = journalRows.find(r => r.kind === 'tool' && r.detail.includes('verify_run_completed'));
-    expect(verifySpan).toBeDefined();
-    const verifyDetail = JSON.parse(verifySpan!.detail);
-    expect(verifyDetail.verify_cmd).toBe('node --version');
-    expect(verifyDetail.exit_code).toBe(0);
-    expect(Array.isArray(verifyDetail.stages)).toBe(true);
-    expect(verifyDetail.stdout_tail).toBeDefined();
+    // Assertion G: Verify fix dispatch carries stage 'verify-fix' and verbatim fix prompt
+    const verifyFixObservation = journalRows.find(r => r.kind === 'observation' && JSON.parse(r.detail).stage === 'verify-fix');
+    expect(verifyFixObservation).toBeDefined();
+    const verifyFixDetail = JSON.parse(verifyFixObservation!.detail);
+    expect(verifyFixDetail.stage).toBe('verify-fix');
+    expect(verifyFixDetail.prompt).toContain('The verifier failed on your worktree');
+    expect(verifyFixDetail.conversationMode).toBe('continue');
 
-    // Assertion H: Diff review carries full feedback and reviewed commit
-    const diffReviewSpan = journalRows.find(r => r.kind === 'review' && r.detail.includes('diff-review'));
+    // Assertion H: Walkthrough reviews carry senior feedbacks across rounds
+    const workReviewSpans = journalRows.filter(r => r.kind === 'review' && JSON.parse(r.detail).stage === 'work-review');
+    expect(workReviewSpans.length).toBe(3); // Round 1: revise, Round 2: approved, Round 3 (post verify-fix): approved
+    const wr1 = JSON.parse(workReviewSpans[0].detail);
+    expect(wr1.verdict).toBe('amend');
+    expect(wr1.feedback).toContain('Please refine walkthrough documentation');
+    const wr2 = JSON.parse(workReviewSpans[1].detail);
+    expect(wr2.verdict).toBe('approved');
+    expect(wr2.feedback).toContain('Walkthrough verified');
+
+    // Assertion I: Verify run tool spans carry both failure (exit 1) and success (exit 0)
+    const verifySpans = journalRows.filter(r => r.kind === 'tool' && JSON.parse(r.detail).action === 'verify_run_completed');
+    expect(verifySpans.length).toBe(2);
+    const failVerifyDetail = JSON.parse(verifySpans[0].detail);
+    expect(failVerifyDetail.verify_cmd).toBe('node check.js');
+    expect(failVerifyDetail.exit_code).toBe(1);
+    const passVerifyDetail = JSON.parse(verifySpans[1].detail);
+    expect(passVerifyDetail.verify_cmd).toBe('node check.js');
+    expect(passVerifyDetail.exit_code).toBe(0);
+    expect(Array.isArray(passVerifyDetail.stages)).toBe(true);
+
+    // Assertion J: Diff review carries full feedback and reviewed commit
+    const diffReviewSpan = journalRows.find(r => r.kind === 'review' && JSON.parse(r.detail).stage === 'diff-review');
     expect(diffReviewSpan).toBeDefined();
     const diffReviewDetail = JSON.parse(diffReviewSpan!.detail);
     expect(diffReviewDetail.verdict).toBe('approved');
     expect(diffReviewDetail.feedback).toContain('Code diff is minimal and well-tested');
 
-    // Assertion I: PR create, PR merge, Backup push, and Operator Archive spans
+    // Assertion K: PR create, PR merge, Backup push, and Operator Archive spans
     const prCreateSpan = journalRows.find(r => r.kind === 'system' && r.detail.includes('"action":"pr.create"'));
     expect(prCreateSpan).toBeDefined();
     const prMergeSpan = journalRows.find(r => r.kind === 'system' && r.detail.includes('"action":"pr.merge"'));
@@ -319,7 +397,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     const archiveSpan = journalRows.find(r => r.kind === 'human' && r.detail.includes('archive'));
     expect(archiveSpan).toBeDefined();
 
-    // Assertion J: Secret hygiene — zero raw secret material in any journal row
+    // Assertion L: Secret hygiene — zero raw secret material in any journal row
     for (const row of journalRows) {
       expect(row.detail).not.toContain(SECRET_KEY_1);
       expect(row.detail).not.toContain(SECRET_KEY_2);
@@ -327,7 +405,7 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
       expect(row.detail).not.toContain('supersecretkey999');
     }
 
-    // Assertion K: Payload truncation bounds
+    // Assertion M: Payload truncation bounds
     const oversizedPayload = 'A'.repeat(MAX_JOURNAL_STRING_CHARS + 5000);
     const truncRow = journal(db, {
       kind: 'system',
@@ -339,12 +417,18 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     expect(parsedTrunc.oversized).toContain(`[TRUNCATED: original length ${MAX_JOURNAL_STRING_CHARS + 5000} characters]`);
     expect(parsedTrunc.oversized.length).toBeLessThan(MAX_JOURNAL_STRING_CHARS + 200);
 
-    // Assertion L: Console timeline narration renders readable English for every span
-    for (const row of journalRows) {
-      const sentence = narrateEntry(row);
+    // Assertion N: Console timeline narration renders distinct and readable English for each span kind
+    const narratedSentences = journalRows.map(r => narrateEntry(r));
+    for (const sentence of narratedSentences) {
       expect(typeof sentence).toBe('string');
       expect(sentence.length).toBeGreaterThan(5);
       expect(sentence.endsWith('.')).toBe(true);
     }
+    expect(narratedSentences).toContain('The junior (A) authored the implementation plan.');
+    expect(narratedSentences).toContain('The junior (A) completed work dispatch.');
+    expect(narratedSentences).toContain('The junior (A) completed work-review fix dispatch.');
+    expect(narratedSentences).toContain('The junior (A) completed verify-fix dispatch.');
+    expect(narratedSentences).toContain('Verification completed with exit code 1.');
+    expect(narratedSentences).toContain('Verification completed successfully (exit code 0).');
   });
 });

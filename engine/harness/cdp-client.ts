@@ -203,6 +203,7 @@ export class CdpIdeDriver implements IdeDriver {
     if (result.errorText) {
       throw new HarnessError(`Page.navigate failed: ${result.errorText}`, url, 'Page.navigate');
     }
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
 
   public async read(selectorKey: string): Promise<IdeDriverReadResult> {

@@ -179,6 +179,7 @@ function enqueueFixDispatch(
     task_id: task.id,
     payload: {
       dispatchId,
+      stage: 'work-review-fix',
       prompt: opts.prompt,
       junior: opts.junior,
       freshConversation: false,

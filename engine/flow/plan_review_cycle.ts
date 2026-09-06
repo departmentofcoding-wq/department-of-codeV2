@@ -828,6 +828,7 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       task_id: task.id,
       payload: {
         dispatchId,
+        stage: 'junior-implementation',
         prompt: implPrompt,
         junior: p.junior,
         // Continue in the planning conversation (see enqueueImplementationDispatch).
@@ -893,6 +894,7 @@ function enqueueImplementationDispatch(
     task_id: task.id,
     payload: {
       dispatchId,
+      stage: 'junior-implementation',
       prompt: implPrompt,
       junior: opts.junior,
       // Continue in the planning conversation: the junior already holds its

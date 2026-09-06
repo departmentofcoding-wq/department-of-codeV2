@@ -191,6 +191,9 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
         if (stage === 'verify-fix') {
           return `The junior (${junior}) completed verify-fix dispatch.`;
         }
+        if (stage === 'work-review-fix') {
+          return `The junior (${junior}) completed work-review fix dispatch.`;
+        }
         if (stage === 'junior-implementation' || detail.dispatchId) {
           return `The junior (${junior}) completed work dispatch.`;
         }

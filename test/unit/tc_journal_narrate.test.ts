@@ -252,6 +252,10 @@ describe('tc_journal_narrate: pure journal narration layer', () => {
         .toBe('The junior (A) authored the implementation plan.');
       expect(narrateEntry({ kind: 'observation', detail: { stage: 'verify-fix', junior: 'B' } }))
         .toBe('The junior (B) completed verify-fix dispatch.');
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'work-review-fix', junior: 'A' } }))
+        .toBe('The junior (A) completed work-review fix dispatch.');
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'junior-implementation', junior: 'A' } }))
+        .toBe('The junior (A) completed work dispatch.');
       expect(narrateEntry({ kind: 'observation', detail: { dispatchId: 'd-123', junior: 'A' } }))
         .toBe('The junior (A) completed work dispatch.');
     });
