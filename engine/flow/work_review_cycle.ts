@@ -413,6 +413,11 @@ export async function runWorkReviewCycle(
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: opts.jobId ?? null,
+      // Record the senior's real token/cost spend so reviews stop showing $0 in
+      // the cost report (the Claude CLI reports usage via stream-json).
+      tokensIn: review.usage?.inputTokens ?? null,
+      tokensOut: review.usage?.outputTokens ?? null,
+      costUsd: review.usage?.costUsd ?? null,
       detail: {
         stage: 'work-review',
         senior: seniorId,

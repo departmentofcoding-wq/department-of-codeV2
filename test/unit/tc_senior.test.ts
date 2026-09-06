@@ -14,7 +14,14 @@ import {
   usageHint,
   SENIORS,
   pickAttachablePage,
-  SENIOR_WINDOW_ATTACH_MS
+  SENIOR_WINDOW_ATTACH_MS,
+  buildClaudeSeniorArgs,
+  resolveClaudeSeniorAllowedTools,
+  resolveClaudeSeniorModel,
+  resolveClaudeSeniorFallbackModel,
+  parseClaudeStreamJson,
+  DEFAULT_CLAUDE_SENIOR_MODEL,
+  DEFAULT_CLAUDE_SENIOR_ALLOWED_TOOLS
 } from '../../engine/harness/senior.ts';
 import { getSeniorDriver, setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
 import { writeJuniorArtifacts, readLatestArtifacts } from '../../engine/harness/junior-artifacts.ts';
@@ -434,5 +441,148 @@ describe('pickAttachablePage — the cold-start attach page selector (Defect A)'
 
   it('exposes a generous cold-start attach budget', () => {
     expect(SENIOR_WINDOW_ATTACH_MS).toBeGreaterThanOrEqual(40000);
+  });
+});
+
+describe('Claude CLI senior — efficiency levers (read-only tools, cheap model, usage capture)', () => {
+  const KEYS = [
+    'CLAUDE_SENIOR_ALLOWED_TOOLS',
+    'CLAUDE_SENIOR_MODEL',
+    'CLAUDE_SENIOR_DIFF_MODEL',
+    'CLAUDE_SENIOR_FALLBACK_MODEL'
+  ];
+  const saved: Record<string, string | undefined> = {};
+  for (const k of KEYS) saved[k] = process.env[k];
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('defaults the allowed toolset to read-only navigation (no Bash, no writes)', () => {
+    delete process.env['CLAUDE_SENIOR_ALLOWED_TOOLS'];
+    const tools = resolveClaudeSeniorAllowedTools();
+    expect(tools).toEqual(DEFAULT_CLAUDE_SENIOR_ALLOWED_TOOLS);
+    expect(tools).not.toContain('Bash');
+    expect(tools).not.toContain('Edit');
+    expect(tools).not.toContain('Write');
+  });
+
+  it('honors a CLAUDE_SENIOR_ALLOWED_TOOLS override (space/comma separated)', () => {
+    expect(resolveClaudeSeniorAllowedTools({ CLAUDE_SENIOR_ALLOWED_TOOLS: 'Read, Bash Grep' } as any)).toEqual([
+      'Read',
+      'Bash',
+      'Grep'
+    ]);
+  });
+
+  it('defaults the review model to Opus 4.8 (operator-pinned quality gate)', () => {
+    delete process.env['CLAUDE_SENIOR_MODEL'];
+    delete process.env['CLAUDE_SENIOR_DIFF_MODEL'];
+    expect(resolveClaudeSeniorModel({ kind: 'plan' }, undefined)).toBe(DEFAULT_CLAUDE_SENIOR_MODEL);
+    expect(DEFAULT_CLAUDE_SENIOR_MODEL).toBe('claude-opus-4-8');
+  });
+
+  it('model precedence: explicit call > per-kind diff override > instance model (= ctor/CLAUDE_SENIOR_MODEL) > default', () => {
+    // The instance model already folds in the constructor arg / CLAUDE_SENIOR_MODEL
+    // (ClaudeCliSenior sets this.model = arg ?? env.CLAUDE_SENIOR_MODEL), so it is
+    // passed in as `instanceModel`. Only the per-kind diff override is read from env here.
+    const env = { CLAUDE_SENIOR_DIFF_MODEL: 'diff-model' } as any;
+    // explicit call model wins everywhere
+    expect(resolveClaudeSeniorModel({ kind: 'diff', model: 'call-model' }, 'inst-model', env)).toBe('call-model');
+    // diff override applies ONLY to the diff/merge gate
+    expect(resolveClaudeSeniorModel({ kind: 'diff' }, 'inst-model', env)).toBe('diff-model');
+    // non-diff kinds ignore the diff override and take the instance model
+    expect(resolveClaudeSeniorModel({ kind: 'plan' }, 'inst-model', env)).toBe('inst-model');
+    // no instance model, no override -> the cheap default
+    expect(resolveClaudeSeniorModel({ kind: 'walkthrough' }, undefined, env)).toBe(DEFAULT_CLAUDE_SENIOR_MODEL);
+  });
+
+  it('resolves an optional fallback model only when set', () => {
+    expect(resolveClaudeSeniorFallbackModel({} as any)).toBeUndefined();
+    expect(resolveClaudeSeniorFallbackModel({ CLAUDE_SENIOR_FALLBACK_MODEL: '  claude-haiku-4-5  ' } as any)).toBe(
+      'claude-haiku-4-5'
+    );
+  });
+
+  it('builds argv with stream-json output, the read-only allowlist, and the model', () => {
+    const args = buildClaudeSeniorArgs({
+      system: 'SYS',
+      model: 'claude-sonnet-5',
+      allowedTools: ['Read', 'Grep', 'Glob'],
+      fallbackModel: 'claude-haiku-4-5'
+    });
+    expect(args).toContain('-p');
+    // structured output so usage is captured and the guard stays fed
+    expect(args.join(' ')).toContain('--output-format stream-json');
+    // read-only allowlist passed as a single token so it can't swallow later flags
+    const ai = args.indexOf('--allowedTools');
+    expect(ai).toBeGreaterThan(-1);
+    expect(args[ai + 1]).toBe('Read Grep Glob');
+    expect(args[ai + 1]).not.toContain('Bash');
+    // model + fallback present
+    expect(args[args.indexOf('--model') + 1]).toBe('claude-sonnet-5');
+    expect(args[args.indexOf('--fallback-model') + 1]).toBe('claude-haiku-4-5');
+    // the appended system prompt is preserved
+    expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('SYS');
+  });
+
+  it('omits the allowlist flag when no tools are allowed, and the fallback flag when unset', () => {
+    const args = buildClaudeSeniorArgs({ system: 'S', model: 'm', allowedTools: [] });
+    expect(args).not.toContain('--allowedTools');
+    expect(args).not.toContain('--fallback-model');
+  });
+
+  it('parses stream-json: final result text + token/cost usage', () => {
+    const stdout = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'looking...' }] } }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'VERDICT: APPROVE\nLooks correct.',
+        session_id: 's1',
+        total_cost_usd: 0.0123,
+        num_turns: 2,
+        usage: { input_tokens: 1500, output_tokens: 300, cache_read_input_tokens: 100 }
+      })
+    ].join('\n');
+    const { text, usage } = parseClaudeStreamJson(stdout);
+    expect(text).toContain('VERDICT: APPROVE');
+    expect(usage?.inputTokens).toBe(1500);
+    expect(usage?.outputTokens).toBe(300);
+    expect(usage?.cacheReadTokens).toBe(100);
+    expect(usage?.costUsd).toBeCloseTo(0.0123);
+    expect(usage?.sessionId).toBe('s1');
+    // the parsed result feeds parseVerdict cleanly
+    expect(parseVerdict(text).verdict).toBe('approve');
+  });
+
+  it('parses stream-json: stitches assistant text when there is no result event', () => {
+    const stdout = [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'VERDICT: REVISE' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'fix the guard.' }] } })
+    ].join('\n');
+    const { text, usage } = parseClaudeStreamJson(stdout);
+    expect(text).toContain('VERDICT: REVISE');
+    expect(usage).toBeUndefined();
+  });
+
+  it('parses stream-json: returns empty text on non-JSON stdout so the caller can fall back to raw', () => {
+    const { text, usage } = parseClaudeStreamJson('plain text VERDICT: APPROVE, no json here');
+    expect(text).toBe('');
+    expect(usage).toBeUndefined();
+  });
+
+  it('is robust to interleaved non-JSON lines', () => {
+    const stdout = [
+      'warning: something on stderr merged in',
+      JSON.stringify({ type: 'result', result: 'VERDICT: APPROVE', usage: { input_tokens: 10, output_tokens: 5 } }),
+      'trailing noise'
+    ].join('\n');
+    const { text, usage } = parseClaudeStreamJson(stdout);
+    expect(text).toBe('VERDICT: APPROVE');
+    expect(usage?.inputTokens).toBe(10);
   });
 });
