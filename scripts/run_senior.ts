@@ -42,6 +42,7 @@ async function main(): Promise<void> {
     if (kind === 'plan') plan = text;
     else walkthrough = text;
   } else if (task) {
+    // Operator-facing CLI entrypoint: explicitly defaults to current repo root / cwd.
     const art = readLatestArtifacts(task);
     plan = art.plan || art.reply;
     walkthrough = art.walkthrough || art.reply;
