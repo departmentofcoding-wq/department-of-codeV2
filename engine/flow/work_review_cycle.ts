@@ -12,6 +12,7 @@ import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigrav
 import { readTaskAssignment, ensureTaskAssignment } from './assignment.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
+import { getRepoRoot, getTaskRepoRoot } from '../worktrees/manager.ts';
 
 /**
  * Work-review cycle — the department flow for the stage AFTER implementation,
@@ -218,7 +219,8 @@ export async function runWorkReviewCycle(
   // the newest captured artifact (walkthrough > reply > transcript).
   let walkthrough = (opts.walkthrough ?? '').trim();
   if (!walkthrough) {
-    const art = readLatestArtifacts(task.id);
+    const taskRepoRoot = getTaskRepoRoot(db, task.id, getRepoRoot());
+    const art = readLatestArtifacts(task.id, taskRepoRoot);
     walkthrough = (art.walkthrough || art.reply || art.transcript || '').trim();
   }
 

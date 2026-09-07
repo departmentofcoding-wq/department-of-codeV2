@@ -6,6 +6,7 @@ import type { BureauJobRow, BureauTaskRow, DbConnection } from '../../engine/con
 import { setWorkspaceProvider } from '../../engine/contract/workspace-seam.ts';
 import { setAntigravityDriverOverride } from '../../engine/harness/antigravity-seam.ts';
 import { setSeniorDriverOverride } from '../../engine/harness/senior-seam.ts';
+import { setArtifactsRootOverride } from '../../engine/harness/junior-artifacts.ts';
 import { enqueueJob } from '../../engine/jobs/jobs.ts';
 import { executeVerifyRunJob } from '../../engine/verify/job.ts';
 import { handleJuniorDispatch } from '../../engine/harness/dispatch-job.ts';
@@ -26,21 +27,17 @@ describe('tc_verify_fix_dispatch_flow: End-to-End Verify Fix Dispatch & Re-Revie
     db = createRealSqliteDb(dbPath);
     provider = new FakeWorkspaceProvider();
     setWorkspaceProvider(provider);
+    setArtifactsRootOverride(path.join(tmpDir, 'docs', 'junior-artifacts'));
   });
 
   afterEach(() => {
+    setArtifactsRootOverride(null);
     setWorkspaceProvider(null);
     setAntigravityDriverOverride(null);
     setSeniorDriverOverride(null);
     provider.cleanup();
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    try {
-      fs.rmSync(path.join(process.cwd(), 'docs', 'junior-artifacts', 'task-verify-fix-flow-1'), {
-        recursive: true,
-        force: true
-      });
-    } catch {}
   });
 
   it('runs complete lifecycle: verify fails -> pre-tx checkpoint -> junior.dispatch (chainWorkReview) -> work.cycle -> worktree.prepare/verify -> pass -> needs-review', async () => {

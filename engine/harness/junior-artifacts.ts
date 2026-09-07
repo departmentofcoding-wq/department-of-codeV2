@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { redactOutput } from '../contract/tools.ts';
+import { getRepoRoot } from '../worktrees/manager.ts';
 
 /**
  * Persist a junior's captured artifacts as department data the Senior can open
@@ -29,9 +30,44 @@ export interface WrittenArtifacts {
   files: Record<string, string>;
 }
 
-/** Root under which per-task artifact folders live. Overridable for tests. */
-export function artifactsRoot(baseDir: string = process.cwd()): string {
-  return path.join(baseDir, 'docs', 'junior-artifacts');
+let artifactsRootOverride: string | null = null;
+
+/**
+ * Set an in-memory override for the artifacts root directory (test seam).
+ * When set, all artifact operations redirect here to isolate test runs.
+ */
+export function setArtifactsRootOverride(dir: string | null): void {
+  artifactsRootOverride = dir;
+}
+
+/**
+ * Get the active override if one is configured (in-memory test override or
+ * BUREAU_ARTIFACTS_ROOT environment variable).
+ */
+export function getArtifactsRootOverride(): string | null {
+  if (artifactsRootOverride !== null) return artifactsRootOverride;
+  if (process.env.BUREAU_ARTIFACTS_ROOT && process.env.BUREAU_ARTIFACTS_ROOT.trim()) {
+    return process.env.BUREAU_ARTIFACTS_ROOT.trim();
+  }
+  return null;
+}
+
+/**
+ * Root under which per-task artifact folders live.
+ *
+ * Resolution order:
+ * 1. Test/environment override seam (if active)
+ * 2. Explicit `baseDir` if passed (`<baseDir>/docs/junior-artifacts`)
+ * 3. Default repository root via `getRepoRoot()` (`<repoRoot>/docs/junior-artifacts`)
+ *
+ * Note: `process.cwd()` is never used as an uncontained default; `getRepoRoot()`
+ * resolves git toplevel and falls back to cwd only as a CLI safety net.
+ */
+export function artifactsRoot(baseDir?: string): string {
+  const override = getArtifactsRootOverride();
+  if (override) return override;
+  if (baseDir) return path.join(baseDir, 'docs', 'junior-artifacts');
+  return path.join(getRepoRoot(), 'docs', 'junior-artifacts');
 }
 
 function safeSeg(s: string): string {
@@ -50,8 +86,11 @@ export interface ReadArtifacts {
  * Read back the MOST RECENT captured artifacts for a task, so a Senior can
  * review them. Returns empty strings for any artifact not present. Looks under
  * `docs/junior-artifacts/<taskId>/` and picks the newest run directory.
+ *
+ * @param taskId Target task ID
+ * @param baseDir Optional explicit base repo directory (defaults to repo root / override)
  */
-export function readLatestArtifacts(taskId: string, baseDir: string = process.cwd()): ReadArtifacts {
+export function readLatestArtifacts(taskId: string, baseDir?: string): ReadArtifacts {
   const taskDir = path.join(artifactsRoot(baseDir), safeSeg(taskId));
   const empty: ReadArtifacts = { dir: '', plan: '', walkthrough: '', transcript: '', reply: '' };
   if (!fs.existsSync(taskDir)) return empty;
@@ -78,12 +117,17 @@ export function readLatestArtifacts(taskId: string, baseDir: string = process.cw
 /**
  * Write whichever artifacts are present. Returns the directory and the map of
  * artifact-name → absolute path actually written (empty artifacts are skipped).
+ *
+ * @param taskId Target task ID
+ * @param dispatchId Dispatch execution ID
+ * @param art Captured artifacts bundle
+ * @param baseDir Optional explicit base repo directory (defaults to repo root / override)
  */
 export function writeJuniorArtifacts(
   taskId: string,
   dispatchId: string,
   art: CapturedArtifacts,
-  baseDir: string = process.cwd()
+  baseDir?: string
 ): WrittenArtifacts {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dir = path.join(
