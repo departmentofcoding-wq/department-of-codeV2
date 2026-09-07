@@ -476,3 +476,23 @@ defineJob(
   { maxAttempts: 1, timeoutMs: 45 * 60 * 1000 }
 );
 
+// 23. delivery.freshen — recovery for a delivery conflict (gh "not mergeable"):
+// merge origin/main into the task branch in its worktree, or report the real
+// conflict with the branch left pristine (never auto-resolved). On a clean,
+// re-verified merge it queues the phase4 diff-review at the new tip, which
+// chains pr.create → pr.merge on APPROVE. Long timeout because it embeds a
+// full staged verification run; retries are safe (each step is idempotent).
+const deliveryFreshenSchema = z.object({
+  taskId: z.string().optional()
+});
+
+defineJob(
+  'delivery.freshen',
+  deliveryFreshenSchema,
+  async (ctx) => {
+    const { handleDeliveryFreshen } = await import('../delivery/freshen.ts');
+    await handleDeliveryFreshen(ctx);
+  },
+  { maxAttempts: 3, timeoutMs: 10 * 60 * 1000 }
+);
+

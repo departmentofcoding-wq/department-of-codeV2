@@ -13,3 +13,9 @@ dist/
 # Resident runner/console runtime logs (local, not tracked)
 resident-*.log
 resident-*.log2
+
+# Junior run artifacts (plans/walkthroughs/transcripts) — kept on disk for
+# seniors to read, never swept onto delivery branches by git add -A (the
+# 2026-09-06 conflict-ballast finding). checkpoint() also excludes them
+# explicitly; existing tracked files are unaffected by this entry.
+/docs/junior-artifacts/

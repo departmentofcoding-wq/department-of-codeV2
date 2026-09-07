@@ -72,6 +72,8 @@ export const JOB_KINDS = [
   'senior.review-work',
   'pr.create',
   'pr.merge',
+  'delivery.freshen',
+  'work.diff-review',
   'watchdog.sweep',
   'watchdog.recover',
   'backup.push',

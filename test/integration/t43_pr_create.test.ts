@@ -167,4 +167,43 @@ describe('T43: pr.create Job Integration Test', () => {
     const spans = db.all("SELECT * FROM bureau_journal WHERE task_id = ? AND kind = 'guardrail'", taskId);
     expect(spans).toHaveLength(1);
   });
+
+  it('idempotent re-delivery: an existing pull_request_url skips gh pr create, pushes the tip, re-enqueues merge for the SAME PR', async () => {
+    const db = openDbConnection(dbPath);
+    const taskId = 'task-43-idempotent-redrive';
+
+    seedTaskRow(db, taskId, { approved: true, exitCode: 0 });
+    // The corpse-redrive shape: a PR already exists (a previous delivery
+    // attempt created one and died at pr.merge).
+    db.run(
+      'UPDATE bureau_tasks SET pull_request_url = ? WHERE id = ?',
+      'https://github.com/bureau-fake/repo/pull/101',
+      taskId
+    );
+    const { handle, tipHash } = await seedTaskWithWorktree(db, taskId);
+    seedWorkReview(db, taskId, 'approved', tipHash);
+
+    const mockCtx: any = {
+      db,
+      job: { id: 'job-43-4', task_id: taskId, kind: 'pr.create' },
+      payload: { taskId }
+    };
+
+    await handlePrCreate(mockCtx);
+
+    // `gh pr create` was NOT called (it would die "already exists"); the
+    // (possibly freshened) tip IS pushed so the open PR advances.
+    expect(fakePrProvider.createdPrs).toHaveLength(0);
+    expect(fakePrProvider.pushedBranches).toContain(`HEAD:refs/heads/bureau-wt-${taskId}`);
+    expect(fakePrProvider.pushCwds[0]).toBe(handle.path);
+
+    // The merge is re-enqueued for the EXISTING PR number.
+    const mergeJobs = db.all<any>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'pr.merge'", taskId);
+    expect(mergeJobs).toHaveLength(1);
+    expect(JSON.parse(mergeJobs[0].payload).prNumber).toBe(101);
+
+    // The skip is journaled.
+    const spans = db.all("SELECT * FROM bureau_journal WHERE task_id = ? AND detail LIKE '%idempotent_skip%'", taskId);
+    expect(spans).toHaveLength(1);
+  });
 });
