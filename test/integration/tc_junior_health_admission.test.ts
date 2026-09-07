@@ -193,15 +193,24 @@ describe('Integration: Junior Health Gate Admission (Socket-Layer Wedged Endpoin
     );
     expect(job).toBeUndefined();
 
-    // 4. Guardrail span junior_unhealthy_hold recorded in journal
+    // 4. Guardrail span junior_unhealthy_hold recorded in journal (selected by
+    //    action — a queue_probe_roster_exhausted span also follows once the whole
+    //    free roster has failed the probe, so don't assume it's the last row).
     const span = db.get<{ kind: string; detail: string }>(
-      "SELECT kind, detail FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-wedged-1' ORDER BY id DESC LIMIT 1"
+      "SELECT kind, detail FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-wedged-1' AND json_extract(detail,'$.action') = 'junior_unhealthy_hold' ORDER BY id DESC LIMIT 1"
     );
     expect(span).toBeTruthy();
     const detail = JSON.parse(span!.detail);
     expect(detail.action).toBe('junior_unhealthy_hold');
     expect(detail.junior).toBe('A');
     expect(detail.reason).toBe('probe_failed');
+
+    // 4b. And the whole-roster-exhausted signal is surfaced loudly (the brick
+    //     visibility — a systematically-wrong probe can no longer stall silently).
+    const exhausted = db.get<{ detail: string }>(
+      "SELECT detail FROM bureau_journal WHERE kind = 'guardrail' AND task_id = 'task-wedged-1' AND json_extract(detail,'$.action') = 'queue_probe_roster_exhausted' ORDER BY id DESC LIMIT 1"
+    );
+    expect(exhausted).toBeTruthy();
 
     // 5. Junior A is marked unhealthy with cooldown in bureau_meta
     expect(isJuniorHealthy(db, 'A')).toBe(false);
