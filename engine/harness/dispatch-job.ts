@@ -12,6 +12,7 @@ import { readTaskAssignment } from '../flow/assignment.ts';
 import { writeJuniorArtifacts } from './junior-artifacts.ts';
 import { getWorkspaceProviderOverride } from '../contract/workspace-seam.ts';
 import { notifyOperator } from '../state/notifications.ts';
+import { getRepoRoot, getTaskRepoRoot } from '../worktrees/manager.ts';
 import {
   changedAgainstBaseline,
   PrimaryTreeContaminatedError,
@@ -359,13 +360,19 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
       // return only `transcript`, never write to the filesystem.
       let artifactFiles: Record<string, string> = {};
       if (result.fullOutput || result.plan || result.walkthrough) {
-        const written = writeJuniorArtifacts(dispatch.task_id, dispatch.id, {
-          junior: result.junior,
-          fullOutput: result.fullOutput,
-          plan: result.plan,
-          walkthrough: result.walkthrough,
-          reply: result.transcript
-        });
+        const taskRepoRoot = getTaskRepoRoot(ctx.db, dispatch.task_id, getRepoRoot());
+        const written = writeJuniorArtifacts(
+          dispatch.task_id,
+          dispatch.id,
+          {
+            junior: result.junior,
+            fullOutput: result.fullOutput,
+            plan: result.plan,
+            walkthrough: result.walkthrough,
+            reply: result.transcript
+          },
+          taskRepoRoot
+        );
         artifactFiles = written.files;
       }
 

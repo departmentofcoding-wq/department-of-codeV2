@@ -632,6 +632,8 @@ body {
   margin-bottom: 0.85rem;
 }
 .flow-card-title { font-weight: 600; }
+.flow-card-head-actions { display: flex; align-items: center; gap: 0.5rem; }
+.btn-resume-flow { font-size: 0.75rem; padding: 0.2rem 0.55rem; }
 
 .flow-steps { display: flex; align-items: center; flex-wrap: wrap; gap: 0.15rem; }
 .flow-step {

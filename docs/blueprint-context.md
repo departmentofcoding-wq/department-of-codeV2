@@ -36,7 +36,7 @@ agents ship — it is *provenance*: nothing is claimed that was not verified.
 | Shipped | **Two real tasks end-to-end**: assets tab (`c7f9b37`), ntfy notifications (`1c14534`) — filed → plan review → ZAI approve → junior implemented+committed → walkthrough review → merge. Plus console projects/mobile/ntfy (`e9a1b7f`), ZCode 3.8.1 senior recalibration (`e8f8097`). |
 | Suite | 435 tests / 94 files, `tsc --noEmit` clean. |
 | Agents drivable | 2 juniors (Antigravity IDE @9333, Antigravity 2.0 @9334), 2 seniors (claude CLI, zai/ZCode GLM @9335) — all driven from code over CDP/subprocess. |
-| Console | 30 token-auth endpoints; tabs: Dashboard, Tasks (Live/Completed/Archived), Findings, Workers/Flow, Projects, Assets, Journal, Settings; intake chat front door. |
+| Console | 35 token-auth endpoints; tabs: Dashboard, Tasks (Live/Completed/Archived), Findings, Workers/Flow, Projects, Assets, Journal, Settings; intake chat front door. |
 | In flight | Nothing (clean handoff). |
 | #1 open gap | **Workspace/worktree reconciliation** — the harness junior writes in its own IDE workspace, not a bureau worktree, so the automatic `verify.run → needs-review → done` tail of the flow can't complete without a hand path. Hand-merges to `main` are PAUSED until this lands. |
 | Next phases | Finish worktree reconciliation, then Phase 8: multi-task / concurrency at scale. |
@@ -352,7 +352,7 @@ built from status codes only — never response bodies.
 
 ### 4.10 The Operator Console (`console/`, `scripts/console.ts`)
 Local control panel: loopback-only bind, per-launch 32-byte token (header or
-`?token=`, exchanged into sessionStorage), **30 endpoints, all token-auth**,
+`?token=`, exchanged into sessionStorage), **35 endpoints, all token-auth**,
 1 MB body cap, path-traversal guard, everything through `redactOutput`, all
 state changes are POST + journaled + attributed `human-operator`; trigger
 buttons enqueue job rows (never inline work). Vanilla-JS frontend (no
@@ -554,7 +554,7 @@ engine/delivery/  engine/durability/  pr.create/merge, backup readback
 engine/watchdog/ engine/secretary/ engine/dashboards/ engine/notifications/
 runner/main.ts                job loop + provider wiring + drainSingleJob
 scripts/                      intake/approve/console/dashboard/run_junior/...
-console/                      node:http server + contract (30 endpoints) + public/
+console/                      node:http server + contract (35 endpoints) + public/
 test/                         unit + integration, helpers/fakes, fixtures
 db/bureau.db (+backups/)      the live store (bureau property)
 secrets/google.env            gitignored keys (env wins)

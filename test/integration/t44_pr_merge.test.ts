@@ -188,4 +188,86 @@ describe('T44: pr.merge Job Integration Test & Real Prune Path (B-7)', () => {
     const task = db.get<any>('SELECT * FROM bureau_tasks WHERE id = ?', taskId);
     expect(task.state).toBe('needs-review');
   });
+
+  it('classifies "not mergeable" as a delivery conflict: non-retryable on the FIRST attempt, queues delivery.freshen, journals delivery_conflict, task held at needs-review', async () => {
+    const db = openDbConnection(dbPath);
+    const taskId = 'task-44-delivery-conflict';
+
+    seedTaskRow(db, taskId, { approved: true, exitCode: 0 });
+    const { tipHash } = await seedTaskWithWorktree(db, taskId);
+    seedWorkReview(db, taskId, 'approved', tipHash);
+
+    // The exact gh failure text from the 2026-09-06 incidents (PRs #9/#11).
+    fakePrProvider.shouldFailMerge = true;
+    fakePrProvider.failReason =
+      'X Pull request departmentofcoding-wq/department-of-codeV2#9 is not mergeable: the merge commit cannot be cleanly created.\n' +
+      'To have the pull request merged after all the requirements have been met, add the `--auto` flag.';
+
+    const mockCtx: any = {
+      db,
+      job: { id: 'job-44-4', task_id: taskId, kind: 'pr.merge' },
+      payload: { taskId, prNumber: 101 }
+    };
+
+    let err: any;
+    try {
+      await handlePrMerge(mockCtx);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    // Non-retryable: the runner's failJob(forceTerminal) keys off this flag.
+    // Before the fix this was a plain DeliveryError and the identical
+    // `gh pr merge` burned all 3 attempts (the zombie loop).
+    expect(err.nonRetryable).toBe(true);
+    expect(err.code).toBe('PR_MERGE_NOT_MERGEABLE');
+
+    // Recovery is queued, exactly once.
+    const freshenJobs = db.all<any>("SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'delivery.freshen'", taskId);
+    expect(freshenJobs).toHaveLength(1);
+    expect(freshenJobs[0].state).toBe('pending');
+
+    // The conflict is journaled with the PR number and the recovery link.
+    const spans = db
+      .all("SELECT * FROM bureau_journal WHERE task_id = ? AND kind = 'guardrail'", taskId)
+      .map((r: any) => JSON.parse(r.detail));
+    const conflictSpan = spans.find((d: any) => d.status === 'delivery_conflict');
+    expect(conflictSpan).toBeDefined();
+    expect(conflictSpan.prNumber).toBe(101);
+
+    // The task stays at the human gate — no state damage.
+    const task = db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', taskId);
+    expect(task.state).toBe('needs-review');
+  });
+
+  it('other provider failures stay retryable and queue NO freshen (only the deterministic conflict class is terminal)', async () => {
+    const db = openDbConnection(dbPath);
+    const taskId = 'task-44-transient-failure';
+
+    seedTaskRow(db, taskId, { approved: true, exitCode: 0 });
+    const { tipHash } = await seedTaskWithWorktree(db, taskId);
+    seedWorkReview(db, taskId, 'approved', tipHash);
+
+    fakePrProvider.shouldFailMerge = true;
+    fakePrProvider.failReason = 'gh: fetch failed: network socket hung up';
+
+    const mockCtx: any = {
+      db,
+      job: { id: 'job-44-5', task_id: taskId, kind: 'pr.merge' },
+      payload: { taskId, prNumber: 101 }
+    };
+
+    let err: any;
+    try {
+      await handlePrMerge(mockCtx);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe('PR_MERGE_PROVIDER_FAILED');
+    expect(err.nonRetryable).toBeUndefined();
+
+    expect(db.get<any>("SELECT COUNT(*) n FROM bureau_jobs WHERE task_id = ? AND kind = 'delivery.freshen'", taskId).n).toBe(0);
+    expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', taskId).state).toBe('needs-review');
+  });
 });

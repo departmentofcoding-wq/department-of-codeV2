@@ -1,50 +1,62 @@
 import type { AttributionTuple, BureauJobRow, DbConnection } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
-import { enqueueJob } from '../jobs/jobs.ts';
+import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 import { planCycleJobId } from '../jobs/ids.ts';
+import { notifyOperator } from '../state/notifications.ts';
 
 /**
  * The operator's recovery door for a stranded flow.
  *
- * When a `plan.cycle` or `junior.dispatch` job dies (harness cold-start races,
- * a downed junior, a reaped-then-dead lease), the task row is left `queued`/
- * `claimed` with no machinery that will ever move it again: the reconciler
- * deliberately does not retry failed cycles, and dispatch payloads have no
- * enqueue-door once their job row is dead. Until now the only recovery was a
- * hand-run node script (the 2026-08-27 resume of task 1429a7de). This helper
- * productizes that runbook as a journaled, attributed, idempotent act.
+ * When a `plan.cycle`, `junior.dispatch`, `work.cycle`, or `work.diff-review` job dies
+ * (harness cold-start races, a downed junior, a reaped-then-dead lease), the task row
+ * is left `queued`, `claimed`, or `blocked` with no machinery that will ever move it again:
+ * the reconciler deliberately does not retry failed cycles, and dispatches/reviews have
+ * no auto-retry once dead. This helper productizes that recovery runbook as a journaled,
+ * attributed, idempotent act through the engine's tracked path.
  *
- * Rules (fail-closed, same spirit as every other door):
- * - `queued` task → the plan cycle may be re-kicked. The deterministic
- *   `plan.cycle:<taskId>` row is RESET (not duplicated) when dead, preserving
- *   the id contract the filing door and reconciler coordinate through; when no
- *   row exists at all a fresh one is enqueued.
- * - `claimed` task → the latest `junior.dispatch` may be re-enqueued with its
- *   stored payload verbatim (a new job id; dispatch ids are not deterministic)
- *   only when that dispatch is dead.
- * - A live (pending/running) target job is NEVER touched — that is the guard
- *   against double-prompting a GUI agent, and it is what the dead-state SQL
- *   predicates enforce atomically.
- * - Any other task state is refused: the door exists to revive dead work, not
- *   to redirect live state machines.
+ * Single-Row Deterministic Identity & Recovery Rules:
+ * - `queued` task → deterministic `plan.cycle:<taskId>` job.
+ *   - Absent row: enqueued via INSERT OR IGNORE.
+ *   - Present dead row: revived in-place via atomic UPDATE ... WHERE state = 'dead'.
+ * - `claimed` task → latest phase job (`junior.dispatch`, `work.cycle`, `work.diff-review`).
+ *   - Present dead row: revived in-place via atomic UPDATE ... WHERE state = 'dead' reusing
+ *     the exact stored payload, preserving task's assigned junior and senior pins.
+ *   - Absent row: enqueued via INSERT OR IGNORE under deterministic ID scheme.
+ * - `blocked` task → revives the exact dead cycle job for the task's phase without mutating
+ *   fix budgets (done-gate & merge law untouched).
+ * - Idempotency / Double-Click Harmlessness:
+ *   - If the target job is already alive (`pending` or `running`), returns `already-running`
+ *     with `{ ok: true, jobId, alreadyRunning: true }` without errors or extra rows.
+ * - Fail-closed: `done` tasks, archived tasks (`archived_at IS NOT NULL`), or tasks in non-resumable
+ *   states are rejected with `{ ok: false, reason }`.
  */
 
 export type RekickResult =
-  | { ok: true; action: 'plan-cycle-reset' | 'plan-cycle-enqueued' | 'dispatch-reenqueued'; jobId: string }
+  | { ok: true; action: 'plan-cycle-reset' | 'plan-cycle-enqueued' | 'dispatch-reset' | 'cycle-reset' | 'already-running'; jobId: string; alreadyRunning?: boolean }
   | { ok: false; reason: string };
 
 export function rekickTaskFlow(db: DbConnection, taskId: string, attribution: AttributionTuple): RekickResult {
-  const task = db.get<{ state: string }>('SELECT state FROM bureau_tasks WHERE id = ?', taskId);
+  const task = db.get<{ id: string; state: string; archived_at: string | null }>(
+    'SELECT id, state, archived_at FROM bureau_tasks WHERE id = ?',
+    taskId
+  );
   if (!task) return { ok: false, reason: `Task ${taskId} not found` };
+
+  if (task.archived_at !== null) {
+    return { ok: false, reason: `Task ${taskId} is archived — archived tasks cannot be resumed` };
+  }
+
+  if (task.state === 'done') {
+    return { ok: false, reason: `Task ${taskId} is already done — done tasks cannot be resumed` };
+  }
 
   if (task.state === 'queued') {
     const jobId = planCycleJobId(taskId);
     const existing = db.get<BureauJobRow>('SELECT * FROM bureau_jobs WHERE id = ?', jobId);
 
     if (!existing) {
-      // No cycle row at all (e.g. the filing door died before kickoff): the
-      // reconciler's own case — enqueue exactly the way it would.
-      const job = enqueueJob(db, {
+      // Absent row: enqueue via INSERT OR IGNORE under the deterministic plan.cycle ID.
+      const res = enqueueJobIfAbsent(db, {
         id: jobId,
         kind: 'plan.cycle',
         task_id: taskId,
@@ -56,19 +68,22 @@ export function rekickTaskFlow(db: DbConnection, taskId: string, attribution: At
         attribution,
         taskId,
         jobId,
-        detail: { action: 'rekick', target: 'plan.cycle', outcome: 'enqueued' }
+        detail: { action: 'resume', target: 'plan.cycle', outcome: 'enqueued' }
       });
-      return { ok: true, action: 'plan-cycle-enqueued', jobId: job.id };
+      notifyOperator('task.resumed', `Task ${taskId} resumed: plan.cycle enqueued (${jobId})`);
+      return { ok: true, action: 'plan-cycle-enqueued', jobId };
+    }
+
+    if (existing.state === 'pending' || existing.state === 'running') {
+      // Harmless double-click idempotency: job already alive
+      return { ok: true, action: 'already-running', jobId, alreadyRunning: true };
     }
 
     if (existing.state !== 'dead') {
-      return { ok: false, reason: `plan.cycle job ${jobId} is ${existing.state}, not dead — nothing to re-kick` };
+      return { ok: false, reason: `plan.cycle job ${jobId} is in state '${existing.state}', not dead — cannot resume` };
     }
 
-    // RESET the dead row, keeping the deterministic id (the filing door and
-    // reconciler coordinate through it) and the audit trail (the journal keeps
-    // the original failure spans; this reset is itself journaled below).
-    const now = new Date().toISOString();
+    // Atomic in-place revival of the dead job row
     const reset = db.execTransaction(() => {
       const res = db.run(
         `UPDATE bureau_jobs
@@ -91,7 +106,7 @@ export function rekickTaskFlow(db: DbConnection, taskId: string, attribution: At
         taskId,
         jobId,
         detail: {
-          action: 'rekick',
+          action: 'resume',
           target: 'plan.cycle',
           outcome: 'reset',
           prior_attempts: existing.attempts,
@@ -100,52 +115,90 @@ export function rekickTaskFlow(db: DbConnection, taskId: string, attribution: At
       });
       return true;
     });
+
     if (!reset) {
-      return { ok: false, reason: `plan.cycle job ${jobId} was not dead at reset time — nothing re-kicked` };
+      const current = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', jobId);
+      if (current && (current.state === 'pending' || current.state === 'running')) {
+        return { ok: true, action: 'already-running', jobId, alreadyRunning: true };
+      }
+      return { ok: false, reason: `plan.cycle job ${jobId} was not dead at reset time — nothing resumed` };
     }
+
+    notifyOperator('task.resumed', `Task ${taskId} resumed: plan.cycle reset to pending (${jobId})`);
     return { ok: true, action: 'plan-cycle-reset', jobId };
   }
 
-  if (task.state === 'claimed') {
-    const dispatch = db.get<BureauJobRow>(
-      `SELECT * FROM bureau_jobs WHERE task_id = ? AND kind = 'junior.dispatch'
+  if (task.state === 'claimed' || task.state === 'blocked') {
+    // Find the latest phase job for this task (plan.cycle, junior.dispatch, work.cycle, work.diff-review, or verify.run)
+    const latestJob = db.get<BureauJobRow>(
+      `SELECT * FROM bureau_jobs
+       WHERE task_id = ? AND kind IN ('plan.cycle', 'junior.dispatch', 'work.cycle', 'work.diff-review', 'verify.run')
        ORDER BY created_at DESC, rowid DESC LIMIT 1`,
       taskId
     );
-    if (!dispatch) {
-      return { ok: false, reason: `No junior.dispatch job exists for task ${taskId}` };
-    }
-    if (dispatch.state !== 'dead') {
-      return { ok: false, reason: `Latest junior.dispatch job is ${dispatch.state}, not dead — nothing to re-kick` };
+
+    if (!latestJob) {
+      return { ok: false, reason: `No dispatch or cycle job exists for task ${taskId}` };
     }
 
-    // Re-enqueue the IDENTICAL payload under a new id (dispatch ids are uuids,
-    // so there is no id contract to preserve) — the exact manual path the
-    // operator used on 2026-08-27, now journaled as a door.
-    let payload: Record<string, unknown>;
-    try {
-      payload = dispatch.payload ? JSON.parse(dispatch.payload) : {};
-    } catch {
-      return { ok: false, reason: `Dead dispatch ${dispatch.id} payload is not valid JSON — cannot re-enqueue` };
+    if (latestJob.state === 'pending' || latestJob.state === 'running') {
+      return { ok: true, action: 'already-running', jobId: latestJob.id, alreadyRunning: true };
     }
-    const job = enqueueJob(db, {
-      kind: 'junior.dispatch',
-      task_id: taskId,
-      payload,
-      max_attempts: dispatch.max_attempts
+
+    if (latestJob.state !== 'dead') {
+      return { ok: false, reason: `Latest job ${latestJob.id} (${latestJob.kind}) is in state '${latestJob.state}', not dead — cannot resume` };
+    }
+
+    // Revive the exact dead job row in-place with its existing deterministic/persisted ID
+    const reset = db.execTransaction(() => {
+      const res = db.run(
+        `UPDATE bureau_jobs
+         SET state = 'pending',
+             attempts = 0,
+             reaped_count = 0,
+             last_error = NULL,
+             run_after = NULL,
+             lease_owner = NULL,
+             lease_expires_at = NULL,
+             started_at = NULL,
+             finished_at = NULL
+         WHERE id = ? AND state = 'dead'`,
+        latestJob.id
+      );
+      if (res.changes === 0) return false;
+      journal(db, {
+        kind: 'human',
+        attribution,
+        taskId,
+        jobId: latestJob.id,
+        detail: {
+          action: 'resume',
+          target: latestJob.kind,
+          outcome: 'reset',
+          prior_attempts: latestJob.attempts,
+          prior_error: latestJob.last_error
+        }
+      });
+      return true;
     });
-    journal(db, {
-      kind: 'human',
-      attribution,
-      taskId,
-      jobId: job.id,
-      detail: { action: 'rekick', target: 'junior.dispatch', outcome: 'reenqueued', fromJobId: dispatch.id }
-    });
-    return { ok: true, action: 'dispatch-reenqueued', jobId: job.id };
+
+    if (!reset) {
+      const current = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', latestJob.id);
+      if (current && (current.state === 'pending' || current.state === 'running')) {
+        return { ok: true, action: 'already-running', jobId: latestJob.id, alreadyRunning: true };
+      }
+      return { ok: false, reason: `Job ${latestJob.id} was not dead at reset time — nothing resumed` };
+    }
+
+    const action = latestJob.kind === 'junior.dispatch'
+      ? 'dispatch-reset'
+      : (latestJob.kind === 'plan.cycle' ? 'plan-cycle-reset' : 'cycle-reset');
+    notifyOperator('task.resumed', `Task ${taskId} resumed: ${latestJob.kind} reset to pending (${latestJob.id})`);
+    return { ok: true, action, jobId: latestJob.id };
   }
 
   return {
     ok: false,
-    reason: `Task ${taskId} is in state ${task.state} — re-kick applies to queued (plan cycle) or claimed (dispatch) tasks only`
+    reason: `Task ${taskId} is in state '${task.state}' — resume applies to queued, claimed, or blocked tasks only`
   };
 }

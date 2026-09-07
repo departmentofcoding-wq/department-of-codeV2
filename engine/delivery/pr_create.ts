@@ -113,6 +113,38 @@ export async function handlePrCreate(ctx: JobContext): Promise<void> {
     taskId
   );
 
+  // Idempotent re-delivery (the 2026-09-06 corpse redrive): when a PR already
+  // exists for this task, `gh pr create` would die "a pull request for branch
+  // … already exists". Push the (possibly freshened) tip and re-enqueue the
+  // merge for the EXISTING PR number instead.
+  const existingUrl = task.pull_request_url;
+  const existingMatch = existingUrl?.match(/\/pull\/(\d+)$/);
+  if (existingUrl && existingMatch) {
+    const existingNumber = parseInt(existingMatch[1], 10);
+    await prProvider.pushBranch(refspec, wtRow?.path);
+    db.execTransaction(() => {
+      journal(db, {
+        kind: 'system',
+        attribution: SYSTEM_ATTRIBUTION,
+        taskId,
+        detail: {
+          action: 'pr.create',
+          status: 'idempotent_skip',
+          url: existingUrl,
+          number: existingNumber,
+          branch: branchName,
+          reviewedCommit: currentTip
+        }
+      });
+      enqueueJob(db, {
+        kind: 'pr.merge',
+        task_id: taskId,
+        payload: { taskId, prNumber: existingNumber }
+      });
+    });
+    return;
+  }
+
   await prProvider.pushBranch(refspec, wtRow?.path);
 
   const title = `feat(${taskId}): ${task.title}`;

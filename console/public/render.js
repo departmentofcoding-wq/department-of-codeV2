@@ -319,11 +319,18 @@ export function renderFlowPipeline(snapshot) {
       ? `${escapeHtml(t.last_activity_kind || 'act')} by ${escapeHtml(t.last_actor_role || '—')} @ ${escapeHtml(t.last_activity_ts)}`
       : 'no activity yet';
 
+    const resumeBtn = t.is_resumable
+      ? `<button class="btn btn-secondary btn-sm btn-resume-flow" data-task-id="${escapeHtml(t.task_id)}">Resume</button>`
+      : '';
+
     return `
       <div class="flow-card ${t.is_stuck ? 'is-stuck' : ''}" data-task-id="${escapeHtml(t.task_id)}">
         <div class="flow-card-head">
           <span class="flow-card-title">${escapeHtml(t.title)}</span>
-          <span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span>
+          <div class="flow-card-head-actions">
+            ${resumeBtn}
+            <span class="badge state-${escapeHtml(t.state)}">${escapeHtml(t.state)}</span>
+          </div>
         </div>
         <div class="flow-steps">${steps}</div>
         ${stuckBanner}

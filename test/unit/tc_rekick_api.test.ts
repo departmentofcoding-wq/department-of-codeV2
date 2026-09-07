@@ -91,12 +91,12 @@ describe('POST /api/tasks/:id/rekick (operator recovery door)', () => {
     expect(row?.state).toBe('pending');
 
     const span = db.get<{ kind: string; actor_role: string }>(
-      `SELECT kind, actor_role FROM bureau_journal WHERE kind = 'human' AND detail LIKE '%rekick%' ORDER BY id DESC LIMIT 1`
+      `SELECT kind, actor_role FROM bureau_journal WHERE kind = 'human' AND task_id = 'task-dead-cycle' ORDER BY id DESC LIMIT 1`
     );
     expect(span?.actor_role).toBe('human-operator');
   });
 
-  it('refuses (400 + guardrail span) when the cycle job is live', async () => {
+  it('harmless double-click: returns 200 already-running when the cycle job is live', async () => {
     insertTask(db, 'task-live-cycle', 'queued');
     db.run(
       `INSERT INTO bureau_jobs (id, kind, task_id, payload, state, attempts, max_attempts, reaped_count, created_at)
@@ -104,14 +104,10 @@ describe('POST /api/tasks/:id/rekick (operator recovery door)', () => {
       planCycleJobId('task-live-cycle')
     );
 
-    const res = await api<ApiErrorResponse>(port, token, 'POST', '/api/tasks/task-live-cycle/rekick', {});
-    expect(res.statusCode).toBe(400);
-    expect(res.body.code).toBe('REKICK_REFUSED');
-
-    const span = db.get<{ kind: string }>(
-      `SELECT kind FROM bureau_journal WHERE kind = 'guardrail' AND detail LIKE '%rekick_refused%' ORDER BY id DESC LIMIT 1`
-    );
-    expect(span).toBeTruthy();
+    const res = await api<RekickTaskResult>(port, token, 'POST', '/api/tasks/task-live-cycle/rekick', {});
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.already_running).toBe(true);
   });
 
   it('refuses an unknown task id with 400 (no crash, no task row invented)', async () => {

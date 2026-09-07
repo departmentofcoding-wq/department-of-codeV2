@@ -1,0 +1,9 @@
+# The mutation-evidence ledgers are append-only: every task appends its
+# evidence block at the EOF, so two sibling delivery branches always textually
+# conflict there even when their code is disjoint (the PR #9 / PR #11 class,
+# 2026-09-06). The built-in `union` driver auto-resolves both-append conflicts
+# by keeping BOTH sides — safe precisely because these files are append-only
+# evidence records, never edited in place. Scoped tightly: no other file gets
+# this treatment (DEPARTMENT_STATUS.md has structural edits and stays on the
+# default merge).
+docs/mutation-evidence-phase*.md merge=union

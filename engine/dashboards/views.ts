@@ -263,6 +263,8 @@ export interface FlowTask {
   last_activity_kind: string | null;
   is_stuck: boolean;
   stuck_reason: string | null;
+  is_resumable: boolean;
+  resumable_reason: string | null;
   plan_rounds: number;
   verify_fixes: number;
   cycles: number;
@@ -272,8 +274,8 @@ export interface FlowTask {
 /**
  * Every in-flight task (not archived, not done) projected onto the department
  * pipeline: which stage it is on, who owns that stage, the last act recorded
- * against it, and whether it is stuck (blocked, failed, or stalled with no
- * recent activity). Read-only. Newest-touched first.
+ * against it, whether it is stuck (blocked, failed, or stalled with no
+ * recent activity), and whether it is resumable. Read-only. Newest-touched first.
  */
 export function taskFlow(db: DbConnection, nowMs: number = Date.now()): FlowTask[] {
   const tasks = db.all<{
@@ -309,6 +311,35 @@ export function taskFlow(db: DbConnection, nowMs: number = Date.now()): FlowTask
       }
     }
 
+    // Resumability derivation: state + dead/absent job
+    let isResumable = false;
+    let resumableReason: string | null = null;
+
+    if (t.state === 'queued') {
+      const cycle = db.get<{ state: string }>(
+        `SELECT state FROM bureau_jobs WHERE id = ?`,
+        `plan.cycle:${t.id}`
+      );
+      if (!cycle) {
+        isResumable = true;
+        resumableReason = 'plan.cycle absent — ready to resume';
+      } else if (cycle.state === 'dead') {
+        isResumable = true;
+        resumableReason = 'plan.cycle dead — ready to resume';
+      }
+    } else if (t.state === 'claimed' || t.state === 'blocked') {
+      const latestJob = db.get<{ kind: string; state: string }>(
+        `SELECT kind, state FROM bureau_jobs
+         WHERE task_id = ? AND kind IN ('plan.cycle', 'junior.dispatch', 'work.cycle', 'work.diff-review', 'verify.run')
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+        t.id
+      );
+      if (latestJob && latestJob.state === 'dead') {
+        isResumable = true;
+        resumableReason = `${latestJob.kind} dead — ready to resume`;
+      }
+    }
+
     return {
       task_id: t.id,
       title: t.title,
@@ -321,6 +352,8 @@ export function taskFlow(db: DbConnection, nowMs: number = Date.now()): FlowTask
       last_activity_kind: last?.kind ?? null,
       is_stuck: isStuck,
       stuck_reason: stuckReason,
+      is_resumable: isResumable,
+      resumable_reason: resumableReason,
       plan_rounds: t.plan_rounds,
       verify_fixes: t.verify_fixes,
       cycles: t.cycles,

@@ -105,6 +105,19 @@ describe.each(testImplementations)('engine/jobs ($name)', ({ create }) => {
     expect(claimed3).toBeNull();
   });
 
+  it('claimJob prefers regular-flow kinds over delivery kinds (lane isolation), FIFO within a lane', async () => {
+    // A delivery job enqueued FIRST must NOT be claimed before a later regular
+    // job — regular flow (planning/impl/review) is not starved by delivery.
+    const deliveryFirst = enqueueJob(db, { kind: 'delivery.freshen', payload: {} });
+    await new Promise((res) => setTimeout(res, 5));
+    const regularLater = enqueueJob(db, { kind: 'work.cycle', payload: {} });
+
+    const first = claimJob(db, 'runner-a', 5000);
+    expect(first?.id).toBe(regularLater.id); // regular claimed first despite being newer
+    const second = claimJob(db, 'runner-a', 5000);
+    expect(second?.id).toBe(deliveryFirst.id); // delivery only after regular flow is served
+  });
+
   it('claimJob skips excluded kinds so an inline-drained kind is left for its owner', async () => {
     // intake.turn is console-owned (drained inline via claimJobById); a
     // background loop passing excludeKinds must step over it and claim the next.

@@ -111,6 +111,35 @@ describe('Milestone B1 — UI Shell & Testable Render Core (T-C4)', () => {
     expect(html).toContain('junior-engineer');
   });
 
+  it('3e. renderFlowPipeline: renders Resume button when is_resumable is true and omits it otherwise', () => {
+    const htmlResumable = renderFlowPipeline({
+      stages: ['Intake', 'Queued', 'In progress', 'Verify', 'Review', 'Done'],
+      tasks: [
+        { task_id: 'task-dead-1', title: 'Stalled work cycle', state: 'claimed', stage_index: 2, stage_label: 'In progress', responsible_role: 'junior-engineer', is_stuck: true, stuck_reason: 'Dead job', is_resumable: true, resumable_reason: 'Job work.cycle is dead (state = dead, attempts = 3)' }
+      ]
+    } as any);
+    expect(htmlResumable).toContain('btn-resume-flow');
+    expect(htmlResumable).toContain('data-task-id="task-dead-1"');
+    expect(htmlResumable).toContain('Resume');
+
+    const htmlNotResumable = renderFlowPipeline({
+      stages: ['Intake', 'Queued', 'In progress', 'Verify', 'Review', 'Done'],
+      tasks: [
+        { task_id: 'task-live-1', title: 'Healthy task', state: 'claimed', stage_index: 2, stage_label: 'In progress', responsible_role: 'junior-engineer', is_stuck: false, is_resumable: false }
+      ]
+    } as any);
+    expect(htmlNotResumable).not.toContain('btn-resume-flow');
+
+    const htmlBlockedResumable = renderFlowPipeline({
+      stages: ['Intake', 'Queued', 'In progress', 'Verify', 'Review', 'Done'],
+      tasks: [
+        { task_id: 'task-blocked-1', title: 'Blocked review', state: 'blocked', stage_index: 2, stage_label: 'In progress', responsible_role: 'junior-engineer', is_stuck: true, stuck_reason: 'Blocked', is_resumable: true, resumable_reason: 'work.cycle dead — ready to resume' }
+      ]
+    } as any);
+    expect(htmlBlockedResumable).toContain('btn-resume-flow');
+    expect(htmlBlockedResumable).toContain('data-task-id="task-blocked-1"');
+  });
+
   it('4. renderFindingsList: renders watchdog findings with subject_kind and subject_id', () => {
     const html = renderFindingsList(findingsFixture);
     expect(html).toContain('lease_stale');

@@ -10,6 +10,7 @@ import { JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowEr
 import { ensureTaskAssignment } from './assignment.ts';
 import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
+import type { SeniorUsage } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 import { DEFAULT_AUTHORING_LEASE_WAIT_MS } from '../contract/constants.ts';
 
@@ -704,7 +705,8 @@ export async function runPlanReviewCycle(
       juniorProvider: juniorAttribution.provider,
       juniorModel: juniorAttribution.model,
       ceiling,
-      carry: effectiveOpts
+      carry: effectiveOpts,
+      usage: review.usage
     });
   }
 
@@ -715,6 +717,7 @@ export async function runPlanReviewCycle(
     by: 'senior',
     seniorId,
     feedback: review.feedback,
+    usage: review.usage,
     reviewAttribution: {
       actor_role: 'senior-engineer',
       provider: seniorId,
@@ -747,6 +750,8 @@ interface ApproveParams {
   juniorModel: string;
   ceiling: number;
   carry: PlanCycleOptions;
+  /** Senior token/cost usage for this review, when known (Claude CLI). */
+  usage?: SeniorUsage;
 }
 
 function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApproveParams): PlanCycleResult {
@@ -798,6 +803,9 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.carry.jobId ?? null,
+      tokensIn: p.usage?.inputTokens ?? null,
+      tokensOut: p.usage?.outputTokens ?? null,
+      costUsd: p.usage?.costUsd ?? null,
       detail: {
         stage: 'plan-review',
         senior: p.seniorId,
@@ -925,6 +933,9 @@ interface ReviseParams {
   ceiling: number;
   carry: CycleCarry & { jobId?: string };
   jobId?: string;
+  /** Senior token/cost usage for this review, when known (Claude CLI). Absent on
+   *  the deterministic rubric path. */
+  usage?: SeniorUsage;
 }
 
 function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParams): PlanCycleResult {
@@ -958,6 +969,9 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.jobId ?? null,
+      tokensIn: p.usage?.inputTokens ?? null,
+      tokensOut: p.usage?.outputTokens ?? null,
+      costUsd: p.usage?.costUsd ?? null,
       detail: {
         stage: 'plan-review',
         by: p.by,

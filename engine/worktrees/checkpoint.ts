@@ -22,9 +22,17 @@ export async function checkpoint(
     return;
   }
 
-  execFileSync('git', ['add', '-A'], {
+  // Stage everything EXCEPT junior artifacts. `git add -A` swept
+  // docs/junior-artifacts/** onto delivery branches too (2026-09-06: branch
+  // bureau-wt-05c6edc0 carried artifacts belonging to OTHER dispatch ids),
+  // where they are pure conflict ballast between sibling tasks. The explicit
+  // pathspec exclusion — not a .gitignore — is the enforcement, so non-dept
+  // project repos (which do not inherit this repo's ignore file) are covered
+  // as well. Artifacts stay on disk for seniors to read; they are just never
+  // committed by a checkpoint. Existing tracked artifact files are untouched.
+  execFileSync('git', ['add', '-A', '--', ':(exclude)docs/junior-artifacts'], {
     cwd: handle.path,
-    encoding: 'utf8',
+    encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
