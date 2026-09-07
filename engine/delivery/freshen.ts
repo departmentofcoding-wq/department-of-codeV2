@@ -23,7 +23,10 @@ const SYSTEM_ATTRIBUTION: AttributionTuple = {
  * an automatic conflict→freshen→conflict loop when main keeps moving under a
  * task. The count reads the job rows themselves — every async step is a row,
  * so the rows ARE the budget record. Exhaustion is a journal span + operator
- * notification, never a silent refusal.
+ * notification, never a silent refusal. NOTE: every terminal outcome consumes a
+ * cycle — clean, real-conflict, and semantic-conflict all return normally (job
+ * `done`) — so a task gets at most this many freshen attempts total, however each
+ * one ended.
  */
 export const FRESHEN_CYCLE_BUDGET = 2;
 
@@ -147,8 +150,15 @@ export async function handleDeliveryFreshen(ctx: JobContext): Promise<void> {
   const tipBefore = await git(['rev-parse', 'HEAD']);
 
   // Refuse to merge into a dirty tree: uncommitted junior edits must never be
-  // tangled into a merge commit (the non-destruction law).
-  const porcelainBefore = await git(['status', '--porcelain']);
+  // tangled into a merge commit (the non-destruction law). `--untracked-files=no`
+  // (mirroring engine/worktrees/primary_guard.ts): untracked files are NOT the
+  // leak class, and the engine itself writes untracked docs/junior-artifacts/**
+  // into worktrees (non-dept repos don't inherit this repo's .gitignore), so a
+  // full porcelain would false-fail freshen on artifacts in exactly the
+  // multi-project scenario it exists to recover. git merge tolerates
+  // non-colliding untracked files; a real untracked collision surfaces as a
+  // merge conflict (handled below), never a spurious FRESHEN_DIRTY_TREE.
+  const porcelainBefore = await git(['status', '--porcelain', '--untracked-files=no']);
   if (porcelainBefore !== '') {
     journal(db, {
       kind: 'guardrail',
@@ -199,7 +209,11 @@ export async function handleDeliveryFreshen(ctx: JobContext): Promise<void> {
     }
 
     const tipAfterAbort = await git(['rev-parse', 'HEAD']);
-    const porcelainAfterAbort = await git(['status', '--porcelain']);
+    // `--untracked-files=no` for the same reason as the entry check: pre-existing
+    // untracked artifacts are irrelevant to whether the ABORT restored the branch
+    // (tip + tracked tree). A full porcelain here would false-trip
+    // FRESHEN_ABORT_UNCLEAN on artifacts that were present before the merge.
+    const porcelainAfterAbort = await git(['status', '--porcelain', '--untracked-files=no']);
     if (tipAfterAbort !== tipBefore || porcelainAfterAbort !== '') {
       journal(db, {
         kind: 'guardrail',

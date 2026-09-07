@@ -198,6 +198,34 @@ describe('tc: delivery.freshen (delivery-conflict recovery)', () => {
     expect(db.get<any>('SELECT state FROM bureau_tasks WHERE id = ?', taskId).state).toBe('needs-review');
   });
 
+  it('UNTRACKED artifacts present: freshen still proceeds (does NOT false-fail FRESHEN_DIRTY_TREE)', async () => {
+    const db = openDbConnection(dbPath);
+    const taskId = 'freshen-untracked-1';
+    seedTask(db, taskId);
+    const wtPath = await prepareWorktree(db, taskId);
+
+    commitInWorktree(wtPath, 'task-file.txt', 'task work\n', 'task work');
+    advanceMainOnOrigin('main-file.txt', 'main moved\n');
+
+    // The engine writes untracked docs/junior-artifacts/** into worktrees, and
+    // non-dept repos don't inherit this repo's .gitignore — so an untracked
+    // artifact must NOT trip the dirty-tree guard (git merge tolerates it).
+    fs.mkdirSync(path.join(wtPath, 'docs', 'junior-artifacts', 'x'), { recursive: true });
+    fs.writeFileSync(path.join(wtPath, 'docs', 'junior-artifacts', 'x', 'walkthrough.md'), 'untracked artifact\n');
+    // Sanity: a full porcelain WOULD see it (proving the guard would have tripped).
+    expect(git(wtPath, ['status', '--porcelain'])).not.toBe('');
+
+    const tipBefore = git(wtPath, ['rev-parse', 'HEAD']);
+    await handleDeliveryFreshen(makeCtx(db, taskId));
+
+    // Freshen proceeded (clean path), NOT refused: tip advanced, no DIRTY_TREE span.
+    expect(git(wtPath, ['rev-parse', 'HEAD'])).not.toBe(tipBefore);
+    expect(guardrailSpans(db, taskId).find((s) => s.detail.reason === 'worktree dirty at freshen start')).toBeUndefined();
+    expect(db.get<any>('SELECT * FROM bureau_verify_runs WHERE task_id = ?', taskId).exit_code).toBe(0);
+    // The untracked artifact is still there, untouched.
+    expect(fs.existsSync(path.join(wtPath, 'docs', 'junior-artifacts', 'x', 'walkthrough.md'))).toBe(true);
+  });
+
   it('SEMANTIC conflict: clean git merge but failing verify — reported, merge commit kept, delivery tail NOT entered', async () => {
     const db = openDbConnection(dbPath);
     const taskId = 'freshen-semantic-1';
@@ -265,13 +293,16 @@ describe('tc: delivery.freshen (delivery-conflict recovery)', () => {
     expect(git(wtPath, ['rev-parse', 'HEAD'])).toBe(tipBefore);
   });
 
-  it('dirty tree: uncommitted edits are refused protection — freshen never merges over them', async () => {
+  it('dirty tree: uncommitted TRACKED edits are refused protection — freshen never merges over them', async () => {
     const db = openDbConnection(dbPath);
     const taskId = 'freshen-dirty-1';
     seedTask(db, taskId);
     const wtPath = await prepareWorktree(db, taskId);
 
-    fs.writeFileSync(path.join(wtPath, 'uncommitted.txt'), 'junior WIP\n');
+    // A TRACKED modification is the real dirty class the guard protects against
+    // (untracked files no longer count — see the untracked-artifacts test). README
+    // is tracked from the seed repo, so an uncommitted edit to it is a dirty tree.
+    fs.appendFileSync(path.join(wtPath, 'README.md'), 'junior WIP edit\n');
     const tipBefore = git(wtPath, ['rev-parse', 'HEAD']);
 
     let err: any;
@@ -284,7 +315,7 @@ describe('tc: delivery.freshen (delivery-conflict recovery)', () => {
     expect(err.code).toBe('FRESHEN_DIRTY_TREE');
 
     // The junior's uncommitted work is untouched on disk.
-    expect(fs.readFileSync(path.join(wtPath, 'uncommitted.txt'), 'utf-8')).toBe('junior WIP\n');
+    expect(fs.readFileSync(path.join(wtPath, 'README.md'), 'utf-8')).toContain('junior WIP edit');
     expect(git(wtPath, ['rev-parse', 'HEAD'])).toBe(tipBefore);
   });
 });
