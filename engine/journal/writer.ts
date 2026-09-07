@@ -1,5 +1,8 @@
 import { SPAN_KINDS } from '../contract/constants.ts';
 import type { AttributionTuple, BureauJournalRow, DbConnection, SpanKind } from '../contract/index.ts';
+import { redactOutput } from '../contract/tools.ts';
+
+export const MAX_JOURNAL_STRING_CHARS = 50_000;
 
 export interface JournalSpanInput {
   kind: SpanKind;
@@ -13,6 +16,63 @@ export interface JournalSpanInput {
   costUsd?: number | null;
   latencyMs?: number | null;
   detail?: Record<string, unknown> | string;
+}
+
+/**
+ * Recursively walk object/array leaves to truncate oversized strings and scrub secrets.
+ */
+function sanitizeLeaf(val: unknown, maxChars: number = MAX_JOURNAL_STRING_CHARS, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof val === 'string') {
+    let str = val;
+    if (str.length > maxChars) {
+      str = str.slice(0, maxChars) + `\n[TRUNCATED: original length ${val.length} characters]`;
+    }
+    return redactOutput(str);
+  }
+  if (val === null || typeof val !== 'object') {
+    return val;
+  }
+  if (seen.has(val)) {
+    return '[Circular]';
+  }
+  seen.add(val);
+
+  if (Array.isArray(val)) {
+    return val.map(item => sanitizeLeaf(item, maxChars, seen));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(val)) {
+    result[k] = sanitizeLeaf(v, maxChars, seen);
+  }
+  return result;
+}
+
+/**
+ * Format and sanitize the journal detail column into clean JSON string.
+ */
+function serializeDetail(detail: unknown): string {
+  if (detail === undefined || detail === null) {
+    return JSON.stringify({});
+  }
+
+  if (typeof detail === 'string') {
+    const trimmed = detail.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const sanitized = sanitizeLeaf(parsed);
+        return JSON.stringify(sanitized);
+      } catch {
+        // Fall through to plain string handling
+      }
+    }
+    const sanitizedStr = sanitizeLeaf(detail);
+    return typeof sanitizedStr === 'string' ? sanitizedStr : JSON.stringify(sanitizedStr);
+  }
+
+  const sanitized = sanitizeLeaf(detail);
+  return JSON.stringify(sanitized ?? {});
 }
 
 /**
@@ -52,9 +112,7 @@ export function journal(db: DbConnection, span: JournalSpanInput): BureauJournal
   }
 
   const ts = new Date().toISOString();
-  const detailJson = typeof span.detail === 'string'
-    ? span.detail
-    : JSON.stringify(span.detail ?? {});
+  const detailJson = serializeDetail(span.detail);
 
   const row = db.get<BureauJournalRow>(`
     INSERT INTO bureau_journal (

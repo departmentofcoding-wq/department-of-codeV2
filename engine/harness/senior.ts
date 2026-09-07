@@ -9,6 +9,7 @@ import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentA
 import { killProcessesByImageName, processImageName } from './process-control.ts';
 import { makeInactivityGuard } from './inactivity-guard.ts';
 import { acquireZCodeLock, type ZCodeLockOptions } from './zcode-lock.ts';
+import { withSeniorReviewLock } from './senior-review-lock.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -62,6 +63,23 @@ export interface SeniorReviewInput {
   freshConversation?: boolean;
 }
 
+/**
+ * Token/cost usage for one senior review, when the driver can read it. The
+ * Claude CLI reports this via `--output-format stream-json` (the final `result`
+ * event); without it the department's cost accounting recorded ZERO for its
+ * single biggest quota consumer — the senior's spend was invisible. ZCode has no
+ * machine-readable readout, so its reviews leave this undefined.
+ */
+export interface SeniorUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  costUsd?: number;
+  sessionId?: string;
+  numTurns?: number;
+}
+
 export interface SeniorVerdict {
   senior: string;
   verdict: Verdict;
@@ -71,6 +89,8 @@ export interface SeniorVerdict {
   /** The model label actually in effect (CLI --model / GUI picker read-back),
    *  when known — used for honest attribution. */
   model?: string;
+  /** Token/cost usage for this review, when the driver can read it (Claude CLI). */
+  usage?: SeniorUsage;
 }
 
 export interface SeniorDriver {
@@ -347,6 +367,148 @@ export function resolveClaudeSeniorTimeoutMs(env: NodeJS.ProcessEnv = process.en
   return Number(env['CLAUDE_SENIOR_TIMEOUT_MS'] || DEFAULT_CLAUDE_SENIOR_TIMEOUT_MS);
 }
 
+/**
+ * Default review model — pinned to Opus 4.8 (operator decision, 2026-09-06): the
+ * senior is the department's quality gate, so review runs on the strongest model.
+ * The quota win now comes from the READ-ONLY tool cap below (no more re-running
+ * the whole suite/build per review), NOT from downgrading the model — so pinning
+ * Opus here is cheap relative to the old behavior. Drop to a cheaper model for all
+ * reviews with `CLAUDE_SENIOR_MODEL` (e.g. claude-sonnet-5), or keep Opus only for
+ * the diff/merge gate and go cheaper elsewhere via `CLAUDE_SENIOR_DIFF_MODEL`.
+ */
+export const DEFAULT_CLAUDE_SENIOR_MODEL = 'claude-opus-4-8';
+
+/**
+ * Tools the Claude CLI senior may use while reviewing. THE efficiency fix: a
+ * review is read-the-artifact-and-judge, but `claude -p` was spawned with the
+ * full toolbelt and a prompt inviting it to "reason as fully as the review
+ * needs", so each review re-read the repo and re-ran the ENTIRE test suite +
+ * build + mutations — duplicating the junior's own `verify.run` and costing as
+ * much as (often more than) the implementation itself. The plan/diff/walkthrough
+ * are already inlined in the prompt, so the senior needs only read-only
+ * navigation (Read/Grep/Glob) for extra context — never Bash (test/build runs)
+ * and never the write tools (a senior does NOT write code). Everything not listed
+ * is denied by the CLI in headless print mode, so this is a hard cap, not a hint.
+ * Override with `CLAUDE_SENIOR_ALLOWED_TOOLS` (space/comma-separated) — set it to
+ * include `Bash` to restore the old full-verification behavior.
+ */
+export const DEFAULT_CLAUDE_SENIOR_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob'];
+
+export function resolveClaudeSeniorAllowedTools(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env['CLAUDE_SENIOR_ALLOWED_TOOLS'];
+  if (raw === undefined) return [...DEFAULT_CLAUDE_SENIOR_ALLOWED_TOOLS];
+  const tools = raw
+    .split(/[\s,]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+  return tools;
+}
+
+/** Optional fallback model(s) when the primary is overloaded/unavailable, so an
+ *  overload doesn't burn the attempt for nothing. `CLAUDE_SENIOR_FALLBACK_MODEL`. */
+export function resolveClaudeSeniorFallbackModel(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const v = env['CLAUDE_SENIOR_FALLBACK_MODEL'];
+  return v && v.trim() ? v.trim() : undefined;
+}
+
+/**
+ * Pick the review model: an explicit per-call model wins, then the per-kind diff
+ * override (only for the delivery gate), then the instance/env model, then the
+ * cheap default. Pure.
+ */
+export function resolveClaudeSeniorModel(
+  input: Pick<SeniorReviewInput, 'kind' | 'model'>,
+  instanceModel: string | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const diffOverride = input.kind === 'diff' ? env['CLAUDE_SENIOR_DIFF_MODEL'] : undefined;
+  return input.model ?? diffOverride ?? instanceModel ?? DEFAULT_CLAUDE_SENIOR_MODEL;
+}
+
+/**
+ * Build the `claude -p` argv for a review. Pure, so the flags are unit-tested
+ * without spawning the CLI. Uses `stream-json` output (realtime events keep the
+ * inactivity guard fed AND carry the final token/cost usage) and caps the
+ * toolset to read-only navigation.
+ */
+export function buildClaudeSeniorArgs(opts: {
+  system: string;
+  model: string;
+  allowedTools: string[];
+  fallbackModel?: string;
+}): string[] {
+  const args = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose', // required for stream-json in print mode
+    '--exclude-dynamic-system-prompt-sections', // better prompt-cache reuse across rounds
+    '--append-system-prompt',
+    opts.system
+  ];
+  if (opts.allowedTools.length > 0) {
+    // A single space-joined token — the CLI splits on space/comma, and this keeps
+    // the variadic option from greedily swallowing the flags that follow.
+    args.push('--allowedTools', opts.allowedTools.join(' '));
+  }
+  args.push('--model', opts.model);
+  if (opts.fallbackModel) args.push('--fallback-model', opts.fallbackModel);
+  return args;
+}
+
+function toNumber(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Parse the Claude CLI's `--output-format stream-json` stdout: newline-delimited
+ * JSON events. Returns the final result text (the assistant's review, incl. the
+ * VERDICT line) and the token/cost usage from the terminal `result` event. Robust
+ * to interleaved non-JSON lines; when no `result` event is present it stitches
+ * the streamed assistant text blocks as a fallback. Returns an empty `text` when
+ * nothing parses (e.g. the CLI ignored the flag) so the caller can fall back to
+ * the raw stdout. Pure — unit-tested without the CLI.
+ */
+export function parseClaudeStreamJson(stdout: string): { text: string; usage?: SeniorUsage } {
+  const lines = (stdout || '').split(/\r?\n/);
+  let resultText = '';
+  let usage: SeniorUsage | undefined;
+  const assistantChunks: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    let obj: any;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (obj?.type === 'result') {
+      if (typeof obj.result === 'string') resultText = obj.result;
+      const u = obj.usage ?? {};
+      usage = {
+        inputTokens: toNumber(u.input_tokens),
+        outputTokens: toNumber(u.output_tokens),
+        cacheReadTokens: toNumber(u.cache_read_input_tokens),
+        cacheCreationTokens: toNumber(u.cache_creation_input_tokens),
+        costUsd: toNumber(obj.total_cost_usd),
+        sessionId: typeof obj.session_id === 'string' ? obj.session_id : undefined,
+        numTurns: toNumber(obj.num_turns)
+      };
+    } else if (obj?.type === 'assistant') {
+      const content = obj.message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block?.type === 'text' && typeof block.text === 'string') assistantChunks.push(block.text);
+        }
+      }
+    }
+  }
+  const text = resultText || assistantChunks.join('\n');
+  return { text, usage };
+}
+
 export class ClaudeCliSenior implements SeniorDriver {
   private readonly cfg: SeniorConfig;
   private readonly model?: string;
@@ -356,14 +518,27 @@ export class ClaudeCliSenior implements SeniorDriver {
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    const { system, user } = buildReviewPrompt(input);
-    const bin = findSeniorBinary(this.cfg);
-    const args = ['-p', '--append-system-prompt', system];
-    const model = input.model ?? this.model;
-    if (model) args.push('--model', model);
-    const raw = await this.spawnClaude(bin, args, user);
-    const { verdict, feedback } = parseVerdict(raw);
-    return { senior: this.cfg.id, verdict, feedback, raw, model };
+    // Department-wide senior-review mutex: never run two senior reviews at once
+    // (delivery re-review vs regular review — the N15 contention scar).
+    return withSeniorReviewLock(async () => {
+      const { system, user } = buildReviewPrompt(input);
+      const bin = findSeniorBinary(this.cfg);
+      const model = resolveClaudeSeniorModel(input, this.model);
+      const args = buildClaudeSeniorArgs({
+        system,
+        model,
+        allowedTools: resolveClaudeSeniorAllowedTools(),
+        fallbackModel: resolveClaudeSeniorFallbackModel()
+      });
+      const stdout = await this.spawnClaude(bin, args, user);
+      // stream-json stdout is newline-delimited events; pull the final review text
+      // + usage. Fall back to the raw stdout if nothing parsed (the VERDICT marker
+      // survives JSON escaping, so parseVerdict still works on either).
+      const parsed = parseClaudeStreamJson(stdout);
+      const raw = parsed.text || stdout;
+      const { verdict, feedback } = parseVerdict(raw);
+      return { senior: this.cfg.id, verdict, feedback, raw, model, usage: parsed.usage };
+    });
   }
 
   private spawnClaude(bin: string, args: string[], stdin: string): Promise<string> {
@@ -1007,19 +1182,23 @@ export class ZCodeSenior implements SeniorDriver {
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    // Single-instance mutex (scar 2026-08-28): a second driver attaching to the
-    // ONE ZCode instance resets the first's in-flight review with its
-    // newConversation(). Hold the lock for the whole review — including the
-    // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
-    // holder keeps it.
-    const lock = await acquireZCodeLock(this.lockOpts);
-    try {
-      // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
-      // went down), and if it dies MID-review, relaunch once and retry.
-      return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
-    } finally {
-      lock.release();
-    }
+    // Department-wide senior-review mutex (outer): never run two senior reviews
+    // at once, regardless of senior — delivery re-review vs regular review.
+    return withSeniorReviewLock(async () => {
+      // Single-instance mutex (scar 2026-08-28, inner): a second driver attaching
+      // to the ONE ZCode instance resets the first's in-flight review with its
+      // newConversation(). Hold the lock for the whole review — including the
+      // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
+      // holder keeps it. Acquisition order is always senior-review → zcode.
+      const lock = await acquireZCodeLock(this.lockOpts);
+      try {
+        // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
+        // went down), and if it dies MID-review, relaunch once and retry.
+        return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
+      } finally {
+        lock.release();
+      }
+    });
   }
 
   private async reviewOnce(input: SeniorReviewInput): Promise<SeniorVerdict> {

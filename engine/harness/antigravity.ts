@@ -8,6 +8,7 @@ import { clearJuniorUnhealthy } from '../flow/junior-health.ts';
 import { HarnessError } from './errors.ts';
 import { AGENT_PROGRESS_LABEL_RE, waitForAgentIdle, type AgentActivity, type WaitOptions, type WaitResult } from './agent-wait.ts';
 import { killProcessesByImageName, processImageName } from './process-control.ts';
+import { registerDefaultBrainResolver } from '../contract/junior-seam.ts';
 
 /**
  * Antigravity IDE integration — "run the junior with code."
@@ -1307,3 +1308,42 @@ export class AntigravitySession {
     this.ws = null;
   }
 }
+
+/**
+ * Resolves the brain directory for an Antigravity junior.
+ * - Junior A: ~/.gemini/antigravity-ide/brain (overridable via ANTIGRAVITY_IDE_BRAIN_DIR or ANTIGRAVITY_BRAIN_DIR_A)
+ * - Junior B: ~/.gemini/antigravity/brain (overridable via ANTIGRAVITY_2_BRAIN_DIR or ANTIGRAVITY_BRAIN_DIR_B)
+ * Returns null if the directory does not exist or is not a directory.
+ */
+export function antigravityBrainDir(junior?: string): string | null {
+  const norm = junior?.toUpperCase();
+  let dir: string | undefined;
+  if (norm === 'A') {
+    dir = process.env.ANTIGRAVITY_IDE_BRAIN_DIR || process.env.ANTIGRAVITY_BRAIN_DIR_A;
+    if (!dir) {
+      dir = path.join(os.homedir(), '.gemini', 'antigravity-ide', 'brain');
+    }
+  } else if (norm === 'B') {
+    dir = process.env.ANTIGRAVITY_2_BRAIN_DIR || process.env.ANTIGRAVITY_BRAIN_DIR_B;
+    if (!dir) {
+      dir = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+    }
+  } else {
+    dir = process.env.ANTIGRAVITY_BRAIN_DIR || process.env.ANTIGRAVITY_IDE_BRAIN_DIR;
+    if (!dir) {
+      dir = path.join(os.homedir(), '.gemini', 'antigravity-ide', 'brain');
+    }
+  }
+  if (dir && fs.existsSync(dir)) {
+    try {
+      if (fs.statSync(dir).isDirectory()) {
+        return dir;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+registerDefaultBrainResolver(antigravityBrainDir);

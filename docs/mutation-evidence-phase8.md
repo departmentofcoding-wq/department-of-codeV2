@@ -826,6 +826,31 @@ Executed 2026-09-02 on branch `wt/junior-b-run-fixpack`; full suite
 failures were this real strip-types bug plus the documented parallel-load
 flake, both resolved/passing before the two clean runs).
 
+## Task 05c6edc0-d91c-46fb-9bb1-0f8e1703542d: Journal Completeness (Full Flow Reconstructable from Journal Alone)
+
+### Mutations Executed & Validated
+
+1. **M-JOURNAL-PROMPT (Verbatim Prompts in Observation Spans)**
+   - **Guard:** Every prompt sent to a junior (plan authoring, junior implementation dispatch, verify-fix, work-review fix) must be persisted verbatim in the journal so the complete conversation history can be reconstructed from the journal alone without the filesystem artifacts directory.
+   - **Mutation:** Omit `prompt: juniorPrompt` / `prompt: payload.prompt` from the observation journal span detail.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion C` and `Assertion E` (`expect(d.prompt).toContain(...)`).
+
+2. **M-JOURNAL-VERIFY (Verify Command & Stage Breakdown & Output Excerpt)**
+   - **Guard:** `verify_run_completed` tool span must carry the executed `verify_cmd`, the stage breakdown array (with exit codes and skipped flags), pass counts, and stdout/stderr tail excerpts.
+   - **Mutation:** Remove `verify_cmd` and `stdout_tail` from the tool span detail in `engine/verify/job.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion G` (`expect(verifyDetail.verify_cmd).toBe('node --version')`).
+
+3. **M-JOURNAL-SECRET (Secret Scrubbing at the Journal Write Door)**
+   - **Guard:** Every string written into `bureau_journal` must be sanitized through `redactOutput` via a recursive leaf walk over nested detail objects and arrays, ensuring no API keys or environment secrets enter the journal.
+   - **Mutation:** Bypass `redactOutput` in `sanitizeLeaf` in `engine/journal/writer.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion J` (`expect(row.detail).not.toContain(SECRET_KEY_1)`).
+
+4. **M-JOURNAL-TRUNC (Payload Truncation Bounds)**
+   - **Guard:** Oversized strings (>50,000 characters) written into journal span detail must be bounded with an explicit truncation marker `[TRUNCATED: original length N characters]`.
+   - **Mutation:** Remove length check in `sanitizeLeaf` in `engine/journal/writer.ts`.
+   - **Catching Test:** `test/integration/tc_journal_completeness.test.ts` fails on `Assertion K` (`expect(parsedTrunc.oversized).toContain('[TRUNCATED: original length ...]')`).
+
+Executed 2026-09-04 on branch `bureau-wt-05c6edc0-d91c-46fb-9bb1-0f8e1703542d`.
 ---
 
 ## M-RESUME-1 to M-RESUME-4 — Console Workers Tab One-Click Resume for Stalled Tasks
@@ -886,3 +911,158 @@ Feature: In-console one-click Resume button on Workers tab flow cards to recover
   - **Restore:** `is_resumable` ternary button rendering restored in `console/public/render.js`; test passed green (20/20).
 
 Executed 2026-09-04 on branch `bureau-wt-81b5a1ee-3f1a-4888-aadd-d9cf80cea6ed`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
+
+## Delivery-conflict handling — M-DC1 to M-DC5 (2026-09-06)
+
+Branch `wt/delivery-conflict-handling`. Context: gh "not mergeable" refusals
+killed PRs #9/#11 after 3 identical retries (deterministic conflict retried as
+if transient), and checkpoints swept junior artifacts onto delivery branches
+(conflict ballast). Guards below are the fix pack's five load-bearing
+behaviors; each mutation was applied, the named catcher failed with the
+captured output, the edit was reverted, and the catcher passed again.
+
+- **M-DC1 (not-mergeable classification → non-retryable + freshen recovery):**
+  - **Guard:** `engine/delivery/pr_merge.ts` — `NOT_MERGEABLE_RE` classifies
+    gh's "is not mergeable / cannot be cleanly created" as a `PrRefusalError`
+    (`PR_MERGE_NOT_MERGEABLE`, `nonRetryable = true`), journals a
+    `delivery_conflict` span, notifies, and queues `delivery.freshen`.
+  - **Mutation:** regex gutted to never match (`/$a^/`) — conflicts fall back
+    to the plain retryable `PR_MERGE_PROVIDER_FAILED` (the old zombie loop).
+  - **Catcher:** `test/integration/t44_pr_merge.test.ts` → `classifies "not
+    mergeable" as a delivery conflict…`:
+    ```
+    FAIL … > classifies "not mergeable" as a delivery conflict: non-retryable on the FIRST attempt, queues delivery.freshen, journals delivery_conflict, task held at needs-review
+    Tests  1 failed | 4 skipped
+    ```
+  - **Restore:** regex restored; test green (5/5 in file).
+
+- **M-DC2 (conflict is ABORTED, never auto-resolved):**
+  - **Guard:** `engine/delivery/freshen.ts` — on merge conflict the handler
+    runs `git merge --abort` and then a mandatory self-check (tip unchanged +
+    porcelain empty), throwing `FRESHEN_ABORT_UNCLEAN` if the abort failed to
+    restore the pristine state.
+  - **Mutation:** abort branch disabled (`if (false) { … }`) — the conflicted
+    merge state is left in the worktree.
+  - **Catcher:** `test/integration/tc_delivery_freshen.test.ts` → `REAL
+    conflict: merge is aborted, branch tip and worktree stay pristine…`:
+    ```
+    FAIL … > REAL conflict: merge is aborted, branch tip and worktree stay pristine, conflict reported, task held at needs-review
+    Tests  1 failed | 5 skipped
+    ```
+    (The self-check fired `FRESHEN_ABORT_UNCLEAN` — the pristine-state
+    assertion is backed by a second, independent catcher.)
+  - **Restore:** abort restored; test green (6/6 in file).
+  - Process note: the first M-DC2 attempt was a NO-OP mutation (the abort call
+    was accidentally left in place; the catcher rightly passed). The mutation
+    was redone with the call actually disabled and then caught — recorded here
+    so the no-op run is not mistaken for an inert guard.
+
+- **M-DC3 (pr.create idempotent re-delivery):**
+  - **Guard:** `engine/delivery/pr_create.ts` — an existing
+    `pull_request_url` skips `gh pr create` (which would die "already
+    exists"), pushes the tip, and re-enqueues pr.merge for the SAME PR number.
+  - **Mutation:** skip disabled (`if (false && …)`).
+  - **Catcher:** `test/integration/t43_pr_create.test.ts` → `idempotent
+    re-delivery…`:
+    ```
+    FAIL … > idempotent re-delivery: an existing pull_request_url skips gh pr create, pushes the tip, re-enqueues merge for the SAME PR
+    Tests  1 failed | 3 skipped
+    ```
+  - **Restore:** skip restored; test green (4/4 in file).
+
+- **M-DC4 (freshen cycle budget):**
+  - **Guard:** `engine/delivery/freshen.ts` — at `FRESHEN_CYCLE_BUDGET` (2)
+    terminal prior cycles the freshen does NO git work and journals
+    `budget_exhausted` + notifies.
+  - **Mutation:** budget condition extended with `&& false`.
+  - **Catcher:** `test/integration/tc_delivery_freshen.test.ts` → `budget: at
+    the cycle ceiling the freshen does NO git work and exhausts loudly`:
+    ```
+    FAIL … > budget: at the cycle ceiling the freshen does NO git work and exhausts loudly
+    Tests  1 failed | 5 skipped
+    ```
+  - **Restore:** budget restored; test green (6/6 in file).
+
+- **M-DC5 (checkpoint never commits junior artifacts):**
+  - **Guard:** `engine/worktrees/checkpoint.ts` — staging is
+    `git add -A -- ':(exclude)docs/junior-artifacts'`, so artifacts (own OR
+    foreign-task) stay on disk untracked instead of riding delivery branches.
+  - **Mutation:** reverted to plain `git add -A`.
+  - **Catcher:** `test/integration/tc_delivery_hygiene.test.ts` → `checkpoint
+    commits source work but never junior artifacts…`:
+    ```
+    FAIL … > checkpoint commits source work but never junior artifacts, which stay on disk untracked
+    Tests  1 failed | 1 skipped
+    ```
+  - **Restore:** exclusion restored; test green (2/2 in file).
+
+Executed 2026-09-06 on branch `wt/delivery-conflict-handling`; all 5 mutations
+reproduced → restored → re-verified in one sitting, failure output captured
+from `npx vitest run` (file-scoped `-t` filters; the full suite ×2 was run
+clean separately).
+---
+
+## M-C4-1 to M-C4-4 — Plan Path Discipline & Primary-Tree Guard on Failed Dispatches (C4)
+
+Branch `bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6`.
+Fixes the P1 that let the 2026-09-04 junior leak 9 files into main's tracked tree undetected during dying dispatches.
+Changes:
+1. `evaluatePlanRubric` rejects plans whose file paths resolve outside the task worktree (token-boundary anchored path extraction with normalization and space-bearing path support).
+2. Primary-tree contamination guard runs on the dispatch FAILURE path too (when drive throws / attempts exhausted), not only on success.
+3. `PrimaryTreeContaminatedError` declares `nonRetryable = true`, preventing runner retry loops from laundering the contamination.
+4. `buildImplementationPrompt` adds the explicit scoping instruction: `Edit ONLY files under <worktreePath>`.
+
+- **M-C4-1 (Drop rubric path discipline check):**
+  - **Guard:** `engine/review/plan_review_job.ts` `evaluatePlanRubric(planText, options)` checks candidate paths against `options.worktreePath` and reports missing `'path discipline (file paths must resolve inside task worktree)'` if any candidate resolves outside.
+  - **Mutation:** Disabled path containment check: `if (false && options?.worktreePath)`.
+  - **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `rejects plans with file paths resolving outside the worktree (primary checkout)`:
+    ```
+    FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > C4: Plan path discipline & prompt scoping > rejects plans with file paths resolving outside the worktree (primary checkout)
+    AssertionError: expected true to be false // Object.is equality
+
+    - Expected
+    + Received
+
+    - false
+    + true
+    ```
+  - **Restore:** Check restored to `if (options?.worktreePath)`; test passed green.
+
+- **M-C4-2 (Drop failure-path primary contamination guard):**
+  - **Guard:** `engine/harness/dispatch-job.ts` catch block runs `checkPrimaryTreeContamination` on dying dispatches (`deliveryWorktreePath && !(err instanceof PrimaryTreeContaminatedError)`).
+  - **Mutation:** Disabled catch block contamination check: `if (false && deliveryWorktreePath && ...)`.
+  - **Catcher:** `test/integration/tc_primary_contamination_guard.test.ts` → `C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span`:
+    ```
+    FAIL test/integration/tc_primary_contamination_guard.test.ts > N16: primary-checkout contamination guard > C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span
+    AssertionError: expected Error: CDP timeout / junior process wedged to be an instance of PrimaryTreeContaminatedError
+    ```
+  - **Restore:** Check restored in `engine/harness/dispatch-job.ts`; test passed green.
+
+- **M-C4-3 (Drop nonRetryable flag from PrimaryTreeContaminatedError):**
+  - **Guard:** `engine/worktrees/primary_guard.ts` defines `public readonly nonRetryable = true;` on `PrimaryTreeContaminatedError` to prevent runner retry loops from taking a new baseline and laundering the leak.
+  - **Mutation:** Removed `public readonly nonRetryable = true;` from `PrimaryTreeContaminatedError`.
+  - **Catcher:** `test/integration/tc_primary_contamination_guard.test.ts` → `C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span`:
+    ```
+    FAIL test/integration/tc_primary_contamination_guard.test.ts > N16: primary-checkout contamination guard > C4: a DYING dispatch (drive throws) that dirtied the primary tree FAILS LOUD with nonRetryable guardrail span
+    AssertionError: expected undefined to be true // Object.is equality
+
+    - Expected: 
+    true
+
+    + Received: 
+    undefined
+    ```
+  - **Restore:** `nonRetryable = true` restored in `engine/worktrees/primary_guard.ts`; test passed green.
+
+- **M-C4-4 (Drop prompt scoping instruction):**
+  - **Guard:** `engine/flow/plan_review_cycle.ts` `buildImplementationPrompt` inserts `Edit ONLY files under ${worktreePath ?? 'the checked-out worktree'}; `.
+  - **Mutation:** Removed `Edit ONLY files under ...; ` from `buildImplementationPrompt`.
+  - **Catcher:** `test/unit/tc_tail_fixes.test.ts` → `buildImplementationPrompt includes Edit ONLY files under <worktreePath> and retains F2 preamble`:
+    ```
+    FAIL test/unit/tc_tail_fixes.test.ts > Phase 8 Entry Fix Pack (F1-F6): Delivery-Tail Drill Scar Fixes > C4: Plan path discipline & prompt scoping > buildImplementationPrompt includes Edit ONLY files under <worktreePath> and retains F2 preamble
+    AssertionError: expected '[bureau-task:task-c4] C4 Task\n\nCONT…' to contain 'Edit ONLY files under D:\Dept of code…'
+    ```
+  - **Restore:** Scoping instruction restored in `engine/flow/plan_review_cycle.ts`; test passed green.
+
+Executed 2026-09-06 on branch `bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
+

@@ -10,6 +10,7 @@ import { JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowEr
 import { ensureTaskAssignment } from './assignment.ts';
 import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
+import type { SeniorUsage } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 import { DEFAULT_AUTHORING_LEASE_WAIT_MS } from '../contract/constants.ts';
 
@@ -215,7 +216,8 @@ export function buildImplementationPrompt(
   task: BureauTaskRow,
   planText: string,
   basis: ImplementationBasis = { approved: true },
-  projectInfo?: { name: string; path: string }
+  projectInfo?: { name: string; path: string },
+  worktreePath?: string
 ): string {
   const header = basis.approved
     ? 'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
@@ -246,7 +248,7 @@ export function buildImplementationPrompt(
     'NOT re-explore the codebase to re-derive it and do NOT re-plan — open the ' +
     'files the plan names and implement it directly.\n\n' +
     header +
-    `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; add the tests the plan names; ` +
+    `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; Edit ONLY files under ${worktreePath ?? 'the checked-out worktree'}; add the tests the plan names; ` +
     'when done, finish with a walkthrough section summarizing what changed, the ' +
     'test results, and the verification you ran.\n\n' +
     '===== TASK =====\n' +
@@ -555,12 +557,14 @@ export async function runPlanReviewCycle(
       source: 'antigravity',
       stage: 'plan-authoring',
       junior: jr.junior ?? juniorId,
+      model: juniorAttribution.model,
       planId,
       // N17: the full prompt sent to the junior + the authored reply's head are
       // part of the record — the journal is reviewable without the artifacts dir.
       prompt: juniorPrompt,
       replyHead: planText.slice(0, 400),
-      replyChars: planText.length
+      replyChars: planText.length,
+      artifactFiles: (jr as any).artifactFiles ?? null
     }
   });
 
@@ -568,7 +572,11 @@ export async function runPlanReviewCycle(
   // A plan missing the department standard (branch/scope/tests+mutations/
   // walkthrough) — including a junk fallback transcript — is amended by the
   // rubric, and the cycle loops; the senior is never billed for garbage.
-  const rubric = evaluatePlanRubric(planText);
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
+  const rubric = evaluatePlanRubric(planText, { worktreePath: worktree?.path });
   if (!rubric.ok) {
     const feedback = `Deterministic rubric failure: missing ${rubric.missing.join(', ')}`;
     return finishReviseRound(db, task, {
@@ -702,7 +710,8 @@ export async function runPlanReviewCycle(
       juniorProvider: juniorAttribution.provider,
       juniorModel: juniorAttribution.model,
       ceiling,
-      carry: effectiveOpts
+      carry: effectiveOpts,
+      usage: review.usage
     });
   }
 
@@ -713,6 +722,7 @@ export async function runPlanReviewCycle(
     by: 'senior',
     seniorId,
     feedback: review.feedback,
+    usage: review.usage,
     reviewAttribution: {
       actor_role: 'senior-engineer',
       provider: seniorId,
@@ -745,6 +755,8 @@ interface ApproveParams {
   juniorModel: string;
   ceiling: number;
   carry: PlanCycleOptions;
+  /** Senior token/cost usage for this review, when known (Claude CLI). */
+  usage?: SeniorUsage;
 }
 
 function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApproveParams): PlanCycleResult {
@@ -757,11 +769,21 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
     account: null
   };
 
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, p.planText, {
-    approved: true,
-    feedback: p.feedback
-  });
+  const implPrompt = buildImplementationPrompt(
+    task,
+    p.planText,
+    {
+      approved: true,
+      feedback: p.feedback
+    },
+    undefined,
+    worktree?.path
+  );
 
   const dispatchJob = db.execTransaction(() => {
     db.run(
@@ -796,9 +818,14 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.carry.jobId ?? null,
+      tokensIn: p.usage?.inputTokens ?? null,
+      tokensOut: p.usage?.outputTokens ?? null,
+      costUsd: p.usage?.costUsd ?? null,
       detail: {
         stage: 'plan-review',
         senior: p.seniorId,
+        model: p.seniorModel,
+        round: (task.plan_rounds ?? 0) + 1,
         verdict: dbVerdict,
         planId: p.planId,
         // N17: the senior's full reply is on the journal record, not only in
@@ -824,6 +851,7 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       task_id: task.id,
       payload: {
         dispatchId,
+        stage: 'junior-implementation',
         prompt: implPrompt,
         junior: p.junior,
         // Continue in the planning conversation (see enqueueImplementationDispatch).
@@ -871,9 +899,19 @@ function enqueueImplementationDispatch(
     basis: ImplementationBasis;
   }
 ) {
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
   const nowIso = new Date().toISOString();
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, opts.planText, opts.basis);
+  const implPrompt = buildImplementationPrompt(
+    task,
+    opts.planText,
+    opts.basis,
+    undefined,
+    worktree?.path
+  );
   db.run(
     `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
      VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
@@ -889,6 +927,7 @@ function enqueueImplementationDispatch(
     task_id: task.id,
     payload: {
       dispatchId,
+      stage: 'junior-implementation',
       prompt: implPrompt,
       junior: opts.junior,
       // Continue in the planning conversation: the junior already holds its
@@ -919,6 +958,9 @@ interface ReviseParams {
   ceiling: number;
   carry: CycleCarry & { jobId?: string };
   jobId?: string;
+  /** Senior token/cost usage for this review, when known (Claude CLI). Absent on
+   *  the deterministic rubric path. */
+  usage?: SeniorUsage;
 }
 
 function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParams): PlanCycleResult {
@@ -952,10 +994,15 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
       taskId: task.id,
       workUuid: task.work_uuid,
       jobId: p.jobId ?? null,
+      tokensIn: p.usage?.inputTokens ?? null,
+      tokensOut: p.usage?.outputTokens ?? null,
+      costUsd: p.usage?.costUsd ?? null,
       detail: {
         stage: 'plan-review',
         by: p.by,
         senior: p.seniorId ?? 'rubric',
+        model: p.reviewModel,
+        round: (task.plan_rounds ?? 0) + 1,
         verdict: dbVerdict,
         planId: p.planId,
         feedback: p.feedback

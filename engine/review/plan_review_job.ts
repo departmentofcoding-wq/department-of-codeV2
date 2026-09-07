@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   DEFAULT_PLAN_ROUNDS_CEILING,
   REVIEW_PR_META_KEYS
@@ -27,7 +28,83 @@ export interface PlanRubricResult {
   missing: string[];
 }
 
-export function evaluatePlanRubric(planText: string): PlanRubricResult {
+export interface EvaluatePlanRubricOptions {
+  worktreePath?: string;
+}
+
+export function cleanTrailingPunctuation(p: string): string {
+  return p.replace(/[.,:;]+$/, '').trim();
+}
+
+export function isCandidatePath(s: string): boolean {
+  if (!s) return false;
+  if (/^file:\/\//i.test(s)) return true;
+  if (/^[A-Za-z]:[\\\/]/.test(s)) return true;
+  if (s.startsWith('/')) return true;
+  return false;
+}
+
+export function extractCandidatePaths(text: string): string[] {
+  const candidates: string[] = [];
+
+  // 1. Markdown link targets: [text](target)
+  const mdLinkRegex = /\[[^\]]*\]\(([^)\r\n]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = mdLinkRegex.exec(text)) !== null) {
+    const target = match[1].trim();
+    if (isCandidatePath(target)) {
+      candidates.push(target);
+    }
+  }
+
+  // 2. Delimited paths in backticks `...`, quotes "...", '...', angle brackets <...>
+  const delimitedRegex = /[`"'<]([^`"'<>\r\n]+)[`"'>]/g;
+  while ((match = delimitedRegex.exec(text)) !== null) {
+    const val = match[1].trim();
+    if (isCandidatePath(val)) {
+      candidates.push(val);
+    }
+  }
+
+  // 3. Line-based or labelled bare paths (e.g. TargetFile: D:\Dept of code v2\...)
+  const labelledPathRegex = /^\s*(?:#+\s*|[-*]\s*|(?:TargetFile|Path|File|MODIFY|NEW|DELETE)[:\s]\s*)([A-Za-z]:[\\\/][^\r\n`"'\)\]\>]+)$/gim;
+  while ((match = labelledPathRegex.exec(text)) !== null) {
+    candidates.push(cleanTrailingPunctuation(match[1]));
+  }
+
+  // 4. Standalone file:// URIs
+  const fileUriRegex = /(?:^|[\s\(\['"<])(file:\/\/[^\s\)\>\]'"`]+)/gi;
+  while ((match = fileUriRegex.exec(text)) !== null) {
+    candidates.push(cleanTrailingPunctuation(match[1]));
+  }
+
+  // 5. Standalone or un-delimited Windows absolute paths (capturing full space-bearing path until delimiter/EOL)
+  const winAbsRegex = /(?:^|[\s\(\['"<])([A-Za-z]:[\\\/][^\r\n`"'\)\]\>]+)/g;
+  while ((match = winAbsRegex.exec(text)) !== null) {
+    const matchIdx = match.index;
+    if (matchIdx >= 6 && text.slice(matchIdx - 6, matchIdx + 2).toLowerCase().includes('file:')) {
+      continue;
+    }
+    candidates.push(cleanTrailingPunctuation(match[1]));
+  }
+
+  // 6. POSIX absolute paths preceded by token boundary (e.g. /home/... or /var/...)
+  const posixAbsRegex = /(?:^|[\s\(\['"<])(\/[A-Za-z0-9_.-]+[\\\/][^\r\n`"'\)\]\>]+)/g;
+  while ((match = posixAbsRegex.exec(text)) !== null) {
+    const matchIdx = match.index;
+    if (matchIdx >= 6 && text.slice(matchIdx - 6, matchIdx + 2).toLowerCase().includes('file:')) {
+      continue;
+    }
+    candidates.push(cleanTrailingPunctuation(match[1]));
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+export function evaluatePlanRubric(
+  planText: string,
+  options?: EvaluatePlanRubricOptions
+): PlanRubricResult {
   const missing: string[] = [];
 
   // 1. Branch named
@@ -50,6 +127,53 @@ export function evaluatePlanRubric(planText: string): PlanRubricResult {
   // 4. Walkthrough planned
   if (!/walkthrough|verification plan/i.test(planText)) {
     missing.push('walkthrough / verification plan');
+  }
+
+  // 5. Path discipline (when worktreePath is provided)
+  if (options?.worktreePath) {
+    const candidates = extractCandidatePaths(planText);
+    const normWorktree = path.resolve(options.worktreePath);
+    const isWin = process.platform === 'win32';
+    const normTarget = isWin
+      ? normWorktree.toLowerCase().replace(/\\/g, '/')
+      : normWorktree;
+
+    let hasViolation = false;
+    for (const raw of candidates) {
+      let p = raw;
+      if (/^file:\/\//i.test(p)) {
+        p = p.replace(/^file:\/\//i, '');
+        if (isWin && /^\/[A-Za-z]:/i.test(p)) {
+          p = p.slice(1);
+        }
+      }
+      if (p.includes('%')) {
+        try {
+          p = decodeURIComponent(p);
+        } catch {
+          // ignore malformed URI
+        }
+      }
+      const resolved = path.resolve(p);
+      const normResolved = isWin
+        ? resolved.toLowerCase().replace(/\\/g, '/')
+        : resolved;
+
+      const isInside =
+        normResolved === normTarget ||
+        normResolved.startsWith(
+          normTarget.endsWith('/') ? normTarget : normTarget + '/'
+        );
+
+      if (!isInside) {
+        hasViolation = true;
+        break;
+      }
+    }
+
+    if (hasViolation) {
+      missing.push('path discipline (file paths must resolve inside task worktree)');
+    }
   }
 
   return {
@@ -123,8 +247,14 @@ export async function handleSeniorReviewPlan(ctx: JobContext): Promise<void> {
 
   const nowIso = new Date().toISOString();
 
+  // Query worktree for path discipline
+  const worktree = ctx.db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
+
   // 1. Cheap Gate: Deterministic Rubric Check
-  const rubric = evaluatePlanRubric(plan.plan_text);
+  const rubric = evaluatePlanRubric(plan.plan_text, { worktreePath: worktree?.path });
 
   if (!rubric.ok) {
     // Rubric Refusal — Zero token cost, guardrail span logged, model NOT called

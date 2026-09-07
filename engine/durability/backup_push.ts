@@ -114,6 +114,8 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
         detail: {
           action: 'backup.push',
           status: 'already_on_remote',
+          remote,
+          branch,
           commit,
           remoteTip: verifiedTip
         }
@@ -138,6 +140,8 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
       detail: {
         action: 'backup.push',
         status: 'mismatch',
+        remote,
+        branch,
         localTip,
         remoteTip,
         reason: errorMsg
@@ -153,6 +157,8 @@ export async function handleBackupPush(ctx: JobContext): Promise<void> {
     detail: {
       action: 'backup.push',
       status: 'success',
+      remote,
+      branch,
       localTip,
       remoteTip
     }

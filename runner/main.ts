@@ -18,6 +18,7 @@ import { reconcileQueuedTasks } from '../engine/flow/reconcile.ts';
 import { isJuniorWedgedWindowError, resolveJunior } from '../engine/harness/antigravity.ts';
 import { setJuniorUnhealthy } from '../engine/flow/junior-health.ts';
 import { DEFAULT_JUNIOR_COOLDOWN_MS } from '../engine/contract/constants.ts';
+import { reconcileDeliveries } from '../engine/flow/reconcile_deliveries.ts';
 // Importing the registry registers the job handlers as a module side effect.
 import { getJobDefinition } from '../engine/jobs/registry.ts';
 
@@ -35,7 +36,12 @@ export const runnerConfigSchema = z.object({
   BUREAU_DB_PATH: z.string().optional(),
   BUREAU_POLL_MS: z.coerce.number().default(100),
   BUREAU_LEASE_MS: z.coerce.number().default(30000),
-  BUREAU_HEARTBEAT_MS: z.coerce.number().default(1000)
+  BUREAU_HEARTBEAT_MS: z.coerce.number().default(1000),
+  // Lane isolation: the most jobs the runner will run concurrently. Bounds a
+  // burst of heavy delivery/freshen reverifies from starving regular task work
+  // (planning/implementation/review). Regular-flow kinds are also claim-preferred
+  // over delivery kinds (see claimJob's ORDER BY).
+  BUREAU_MAX_CONCURRENT_JOBS: z.coerce.number().default(2)
 });
 
 export type RunnerConfig = z.infer<typeof runnerConfigSchema>;
@@ -72,6 +78,7 @@ import { getIdeDriverOverride, setIdeDriverOverride } from '../engine/contract/i
 import { CdpIdeDriver } from '../engine/harness/cdp-client.ts';
 import { GatedIdeDriver } from '../engine/selectors/gate.ts';
 import { reapExpiredWindowLeases } from '../engine/harness/lease-manager.ts';
+import { reconcileDeadDispatchWork } from '../engine/harness/salvage-detector.ts';
 
 function getSelectorCss(db: DbConnection, key: string): string {
   const row = db.get<{ css: string }>('SELECT css FROM bureau_selectors WHERE key = ?', key);
@@ -188,12 +195,29 @@ export class Runner {
         // Reconcile queued tasks that have no cycle behind them
         await this.reconcileQueuedTasks();
 
+        // Reconcile approved-but-undelivered tasks whose delivery job died (the
+        // restart-resume gap): re-drive pr.create/pr.merge/freshen/diff-review.
+        this.reconcileDeliveries();
+
         // Watchdog & Reaper tick
         this.runReaperAndWatchdog();
 
+        // Lane isolation: don't claim past the concurrency cap. A full in-flight
+        // set means heavy delivery/freshen jobs can't starve regular work — the
+        // next tick claims once a slot frees.
+        if (this.activeJobs.size >= this.config.BUREAU_MAX_CONCURRENT_JOBS) {
+          if (!this.isStopping) {
+            await new Promise((res) => {
+              this.pollTimer = setTimeout(res, this.config.BUREAU_POLL_MS);
+            });
+          }
+          continue;
+        }
+
         // Attempt job claim, skipping any kinds another executor owns (the
         // console excludes intake.turn, which it drains inline via claimJobById;
-        // a standalone runner excludes nothing).
+        // a standalone runner excludes nothing). claimJob prefers regular-flow
+        // kinds over delivery kinds when both are eligible.
         const job = claimJob(this.db, this.id, this.config.BUREAU_LEASE_MS, this.excludeKinds);
         if (job) {
           const jobPromise = this.executeJob(job);
@@ -221,6 +245,17 @@ export class Runner {
   public async reconcileQueuedTasks(): Promise<void> {
     for (const taskId of await reconcileQueuedTasks(this.db)) {
       log('INFO', 'reconciler_enqueued_plan_cycle', { taskId });
+    }
+  }
+
+  /**
+   * Restart-safe delivery resumption: re-drive approved needs-review tasks whose
+   * delivery job died (dead = terminal, never auto-retried by the queue manager).
+   * Bounded + classified in the engine door (engine/flow/reconcile_deliveries.ts).
+   */
+  public reconcileDeliveries(): void {
+    for (const taskId of reconcileDeliveries(this.db)) {
+      log('INFO', 'reconciler_resumed_delivery', { taskId });
     }
   }
 
@@ -328,6 +363,17 @@ export class Runner {
       const { terminal } = failJob(this.db, job.id, errMsg, backoffMs, { forceTerminal: nonRetryable });
 
       if (terminal) {
+        if (job.kind === 'junior.dispatch' && job.task_id) {
+          try {
+            await reconcileDeadDispatchWork(this.db, job, errMsg);
+          } catch (recErr: any) {
+            log('ERROR', 'dead_dispatch_reconcile_error', {
+              jobId: job.id,
+              taskId: job.task_id,
+              error: recErr?.message || String(recErr)
+            });
+          }
+        }
         this.notifier.notifyOperator(job.id, `Terminal failure: ${errMsg}`);
         if (job.kind === 'junior.dispatch' && isJuniorWedgedWindowError(err)) {
           let targetJunior: string | null = null;

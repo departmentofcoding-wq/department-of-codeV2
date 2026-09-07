@@ -125,12 +125,15 @@ export async function executeVerifyRunJob(ctx: JobContext): Promise<void> {
       detail: {
         action: 'verify_run_completed',
         run_id: runId,
+        verify_cmd: task.verify_cmd,
         exit_code: outcome.exitCode,
         timed_out: outcome.timedOut,
         duration_ms: outcome.durationMs,
         stages: outcome.stages.map((s) => ({ stage: s.stage, exit_code: s.exit_code, skipped: s.skipped ?? false })),
         pass_before: outcome.passBefore,
-        pass_after: outcome.passAfter
+        pass_after: outcome.passAfter,
+        stdout_tail: outcome.stdoutTail,
+        stderr_tail: outcome.stderrTail
       }
     });
 

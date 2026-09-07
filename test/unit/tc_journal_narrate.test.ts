@@ -229,6 +229,8 @@ describe('tc_journal_narrate: pure journal narration layer', () => {
     it('narrates task-filed', () => {
       expect(narrateEntry({ kind: 'task-filed' }))
         .toBe('Task filed into bureau.');
+      expect(narrateEntry({ kind: 'task-filed', detail: { title: 'Build a clicker' } }))
+        .toBe('Task filed into bureau: "Build a clicker".');
     });
 
     it('narrates project-registered and provisioned', () => {
@@ -241,6 +243,46 @@ describe('tc_journal_narrate: pure journal narration layer', () => {
     it('narrates assignment', () => {
       expect(narrateEntry({ kind: 'assignment', detail: { role: 'junior-engineer' } }))
         .toBe('Task assigned to junior-engineer.');
+      expect(narrateEntry({ kind: 'assignment', detail: { junior: 'A', senior: 'claude' } }))
+        .toBe('Task assigned to junior (A) and senior (claude).');
+    });
+
+    it('narrates observation with stages and actions', () => {
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'plan-authoring', junior: 'A' } }))
+        .toBe('The junior (A) authored the implementation plan.');
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'verify-fix', junior: 'B' } }))
+        .toBe('The junior (B) completed verify-fix dispatch.');
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'work-review-fix', junior: 'A' } }))
+        .toBe('The junior (A) completed work-review fix dispatch.');
+      expect(narrateEntry({ kind: 'observation', detail: { stage: 'junior-implementation', junior: 'A' } }))
+        .toBe('The junior (A) completed work dispatch.');
+      expect(narrateEntry({ kind: 'observation', detail: { dispatchId: 'd-123', junior: 'A' } }))
+        .toBe('The junior (A) completed work dispatch.');
+    });
+
+    it('narrates diff-review stages', () => {
+      expect(narrateEntry({ kind: 'review', provider: 'claude', detail: { stage: 'diff-review', verdict: 'approved' } }))
+        .toBe('The diff senior (claude) approved the code diff.');
+      expect(narrateEntry({ kind: 'review', provider: 'zai', detail: { stage: 'diff-review', verdict: 'amend' } }))
+        .toBe('The diff senior (zai) requested changes on the code diff.');
+    });
+
+    it('narrates verify_run_completed tool span', () => {
+      expect(narrateEntry({ kind: 'tool', detail: { action: 'verify_run_completed', exit_code: 0 } }))
+        .toBe('Verification completed successfully (exit code 0).');
+      expect(narrateEntry({ kind: 'tool', detail: { action: 'verify_run_completed', exit_code: 1 } }))
+        .toBe('Verification completed with exit code 1.');
+    });
+
+    it('narrates system delivery and durability spans', () => {
+      expect(narrateEntry({ kind: 'system', detail: { action: 'pr.create', url: 'https://github.com/org/repo/pull/42' } }))
+        .toBe('Pull request created: https://github.com/org/repo/pull/42.');
+      expect(narrateEntry({ kind: 'system', detail: { action: 'pr.merge', mergedBy: 'system:deterministic:core' } }))
+        .toBe('Pull request merged by system:deterministic:core.');
+      expect(narrateEntry({ kind: 'system', detail: { action: 'backup.push', remote: 'origin', branch: 'main' } }))
+        .toBe('Backup pushed to origin/main.');
+      expect(narrateEntry({ kind: 'system', detail: { action: 'junior_pointed_at_worktree', path: '/worktrees/wt-1' } }))
+        .toBe('Junior pointed at worktree: /worktrees/wt-1.');
     });
   });
 

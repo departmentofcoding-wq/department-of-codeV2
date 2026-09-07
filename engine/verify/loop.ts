@@ -260,6 +260,7 @@ export function handleVerifyOutcome(
       task_id: taskId,
       payload: {
         dispatchId,
+        stage: 'verify-fix',
         prompt: fixPrompt,
         junior,
         freshConversation: false,
