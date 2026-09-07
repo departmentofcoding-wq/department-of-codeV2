@@ -71,6 +71,24 @@ export async function reconcileQueuedTasks(
       break;
     }
 
+    // Operator-action / DEAD-cycle skip — BEFORE any junior probe (senior C3
+    // note #1). A task we will not admit must not open a CDP socket or mark a
+    // junior unhealthy: a DEAD plan.cycle row is never retried here (explicit
+    // operator action), and the single exception is the capacity-defer signature
+    // (a `done` cycle on a still-unassigned, round-0 task) which is reset below.
+    const jobId = planCycleJobId(taskId);
+    const existing = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', jobId);
+    let resetDeferredCycle = false;
+    if (existing) {
+      if (existing.state !== 'done') continue;
+      const rounds = db.get<{ plan_rounds: number }>(
+        'SELECT plan_rounds FROM bureau_tasks WHERE id = ?',
+        taskId
+      );
+      if (!rounds || rounds.plan_rounds > 0) continue;
+      resetDeferredCycle = true;
+    }
+
     const policy = assignJunior({ taskId });
     const candidateJuniors = free.includes(policy)
       ? [policy, ...free.filter(j => j !== policy)]
@@ -137,26 +155,6 @@ export async function reconcileQueuedTasks(
       }
       // Break to wait for cooldown/recovery.
       break;
-    }
-
-    const jobId = planCycleJobId(taskId);
-
-    // Operator-action rule check BEFORE assigning — a task we will not admit
-    // must not consume a junior pin either.
-    //   - a DEAD cycle row is never retried here (explicit operator action),
-    //   - the single exception is the capacity-defer signature: a `done` cycle
-    //     row on a still-unassigned, round-0 task (the plan-cycle handler
-    //     deferring for capacity, having done no agent work) — reset it.
-    const existing = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', jobId);
-    let resetDeferredCycle = false;
-    if (existing) {
-      if (existing.state !== 'done') continue;
-      const rounds = db.get<{ plan_rounds: number }>(
-        'SELECT plan_rounds FROM bureau_tasks WHERE id = ?',
-        taskId
-      );
-      if (!rounds || rounds.plan_rounds > 0) continue;
-      resetDeferredCycle = true;
     }
 
     // Claim-time assignment: pin junior + senior, once, transactionally.
