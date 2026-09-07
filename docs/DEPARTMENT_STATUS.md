@@ -8,6 +8,63 @@ phase plan, then git. Nothing important lives only in a chat window.
 
 ## Current status
 
+**➜ CURRENT (2026-09-07) — this block is authoritative; the table + history below
+are retained but STALE (last real edit 2026-09-03).**
+
+- **Tree:** `main == origin == 8fac376`, `tsc --noEmit` clean, full suite green
+  (bar the known `t4_crash_resume` / `tc_primary_contamination_guard` N16
+  parallel-load flakes, green in isolation). ~145 test files.
+- **Executor:** ONE — the console's embedded Runner (single-executor model; the
+  redundant standalone `npm run runner` was retired, and the recurring "stale
+  runner" was killed). The runner now stamps its git HEAD at boot
+  (`bureau_meta runner:code_sha` + a `runner_boot` span) and warns/notifies on
+  drift (F3), so a stale runner is no longer silent.
+- **Delivery is fixed end-to-end.** The "only the first approved task merges"
+  bug is closed: `pr.merge` classifies gh "not mergeable" as a non-retryable
+  conflict → `delivery.freshen` recovery (merge origin/main into the branch in
+  its worktree; real conflict → abort + report + hold, NEVER auto-resolved;
+  clean → re-verify → re-review at the new tip → deliver). `reconcileDeliveries`
+  (every tick + boot) re-drives approved-but-stranded tasks whose delivery job
+  died. Lane isolation: a department-wide senior-review mutex + a runner
+  concurrency cap (`BUREAU_MAX_CONCURRENT_JOBS`, default 2) + claim priority so
+  delivery never starves regular flow. Hygiene: `.gitignore`/pathspec keep
+  junior-artifacts off delivery branches; a `merge=union` `.gitattributes` (and
+  a freshen fallback that writes it to `info/attributes` for old branches) makes
+  the append-only mutation-evidence ledgers auto-merge.
+- **Senior efficiency + honesty.** The claude senior runs read-only
+  (`--allowedTools "Read Grep Glob"`), model pinned via `CLAUDE_SENIOR_MODEL`
+  (operator set OPUS 4.8), usage captured via `--output-format stream-json`
+  (reviews no longer log `$0`). A senior that hits its QUOTA
+  (`detectQuotaExhaustion`) now fails LOUD instead of fail-closing to a phantom
+  amend that burns the round ceiling and false-blocks a task (the C5 incident).
+  Verdict vocabulary is centralized (`normalizeVerdict`) and ZCode reply chrome
+  stripped (`stripSeniorReplyChrome`).
+- **Diff-review amend now loops to the junior** (bounded, `chainDiffReview` →
+  re-review at the new tip), instead of only holding.
+- **C-series (dead-dispatch salvage) — C1, C2, C4, C5 all DELIVERED + pushed +
+  archived.** C3 (junior health gate at admission) is fixed this session — its
+  probe read the browser CDP target (`/json/version`), where a healthy junior's
+  `Runtime.evaluate` errors `-32601`; validated live against junior A that the
+  PAGE target returns 2, re-pointed to `findMainWindowWs`, live-confirmed
+  (`probeJuniorCdpHealth(A@9333) => true`) + a loud `queue_probe_roster_exhausted`
+  signal so a probe defect can't silently brick the queue. In senior re-review;
+  merge + archive on APPROVE.
+- **Verdicts recorded this stretch:** `verdict-claude-senior-efficiency.md`,
+  `verdict-delivery-conflict-handling.md`, `verdict-delivery-resume-lane.md`,
+  `verdict-dept-hardening.md`, `verdict-c5-verdict-vocab.md`.
+
+**NEXT TO DELIVER:** (1) finish C3 (merge on the re-review APPROVE) — closes the
+C-series. (2) The real bottleneck above all else: **Antigravity junior
+reliability** (junior B @9334 down; the standing CDP flakiness) — C3 is the
+engine-side mitigation, but the juniors themselves being unreliable is why tasks
+keep stalling. (3) Then **Phase 8** (the ≥3-task concurrent run under load — all
+its N0–N17 + delivery/quota prerequisites are now in), then Phase 9 (kernel
+extraction) and Phase 10 (first new department). Loose ends: merge-law git hooks
+still NOT installed (policy tension); intake `acceptance_tests` D0 addendum; A5
+prices operator-set.
+
+---
+
 | | |
 |---|---|
 | **Phase** | **Phase 7 close-out DONE + Part-A improvements A1–A5 all merged (2026-08-26). Roadmap `docs/plan-bureau-kernel-roadmap.md` Part A executed: A1 merge-law git hook + delivery-tail lock, A2 attribution/budget/sandbox-remote, A3 staged verification (D0 + impl), A4 test determinism (retired `fileParallelism:false`), A5 real cost accounting. Each senior-reviewed (Claude CLI headless) and merged `--no-ff` to local main. Plans for the next phases now recorded: `docs/phase-8-plan.md` (concurrency), `docs/phase-9-plan.md` (Bureau Kernel extraction + Department Kit), `docs/phase-10-plan.md` (first real new department).** |
