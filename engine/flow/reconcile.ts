@@ -3,6 +3,7 @@ import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 import { planCycleJobId } from '../jobs/ids.ts';
 import { DEFAULT_PLAN_ROUNDS_CEILING, REVIEW_PR_META_KEYS, DEFAULT_JUNIOR_COOLDOWN_MS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
+import { notifyOperator } from '../state/notifications.ts';
 import { ensureTaskAssignment, juniorIsOccupied, freeJuniors } from './assignment.ts';
 import { assignJunior, resolveJunior, type JuniorConfig } from '../harness/antigravity.ts';
 import { probeJuniorHealth } from '../harness/antigravity-seam.ts';
@@ -76,6 +77,7 @@ export async function reconcileQueuedTasks(
       : free;
 
     let candidateJuniorId: string | null = null;
+    let probeFailedThisTask = false;
 
     for (const j of candidateJuniors) {
       // Stage 2: Cooldown check second.
@@ -95,6 +97,7 @@ export async function reconcileQueuedTasks(
         break;
       } else {
         // Probe failed: mark unhealthy in bureau_meta with cooldown so subsequent sweeps don't repeatedly probe
+        probeFailedThisTask = true;
         setJuniorUnhealthy(db, j, DEFAULT_JUNIOR_COOLDOWN_MS, 'probe_failed');
         journal(db, {
           kind: 'guardrail',
@@ -112,7 +115,27 @@ export async function reconcileQueuedTasks(
     }
 
     if (!candidateJuniorId) {
-      // No free junior is currently healthy and probe-passing. Break to wait for cooldown/recovery.
+      // No free junior is currently healthy and probe-passing. If that is because
+      // every free junior FAILED the CDP probe (not merely cooldown/occupancy),
+      // surface it LOUDLY — a systematically-wrong probe would otherwise brick the
+      // whole queue silently (the senior's C3 concern). Naturally throttled: a
+      // probe-failed junior enters cooldown, so probes only re-run once cooldown
+      // expires, not every 100ms tick.
+      if (probeFailedThisTask) {
+        journal(db, {
+          kind: 'guardrail',
+          attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
+          taskId,
+          detail: { action: 'queue_probe_roster_exhausted', freeRoster: free }
+        });
+        notifyOperator(
+          `queue-probe:${taskId}`,
+          `Queue may be stalled: every free junior failed the CDP health probe for task ${taskId} ` +
+            `(roster: ${free.join(', ')}). Check the junior IDEs / CDP ports — if the juniors ARE up, the ` +
+            `health probe may be misfiring (verify JUNIOR health-probe endpoint semantics).`
+        );
+      }
+      // Break to wait for cooldown/recovery.
       break;
     }
 
