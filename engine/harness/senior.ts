@@ -204,6 +204,38 @@ export function detectUncapturedReview(full: string): string | null {
   return null;
 }
 
+/**
+ * The senior ran OUT OF QUOTA / hit its session limit instead of reviewing. The
+ * CLI/GUI returns a limit notice ("You've hit your session limit · resets 4:20pm",
+ * "usage limit reached", "rate limit", a Claude 5-hour/weekly cap, etc.) with NO
+ * VERDICT line. If we let `parseVerdict` fail-close that to REVISE, the flow
+ * records a phantom "amend", re-dispatches, and — round after round — burns the
+ * review ceiling and FALSE-BLOCKS a task the senior never actually looked at (the
+ * 2026-09-06 C5/3c8e4a65 incident: 5 "amends" that were all quota notices, on a
+ * task the junior never even coded). So the caller THROWS on this: the round is a
+ * loud senior-unavailable failure the operator sees, not a fake verdict. Pure —
+ * unit-tested without a live senior. Returns a reason when the text is a quota
+ * notice (and carries no genuine VERDICT), else null.
+ */
+export const SENIOR_QUOTA_MARKERS: RegExp[] = [
+  /you'?ve hit your (?:session|usage) limit/i,
+  /session limit (?:reached|exceeded)/i,
+  /usage limit (?:reached|exceeded)/i,
+  /\brate limit(?:ed| reached| exceeded)?\b/i,
+  /quota (?:exceeded|exhausted|reached)/i,
+  /out of (?:credits|quota)/i,
+  /resets? (?:at |on )?\d{1,2}(?::\d{2})?\s*(?:am|pm)/i,
+  /upgrade to (?:continue|increase your usage)/i
+];
+
+export function detectQuotaExhaustion(full: string): string | null {
+  const text = (full || '').trim();
+  if (!text) return null; // emptiness is handled by detectUncapturedReview
+  if (/VERDICT:\s*(APPROVE|REVISE|AMEND|REJECT)/i.test(text)) return null; // a real verdict — trust it
+  const hit = SENIOR_QUOTA_MARKERS.find(re => re.test(text));
+  return hit ? `senior returned a quota/limit notice, not a review (matched ${hit}) — the review never ran` : null;
+}
+
 // ---------------------------------------------------------------------------
 // Senior registry
 // ---------------------------------------------------------------------------
@@ -536,6 +568,12 @@ export class ClaudeCliSenior implements SeniorDriver {
       // survives JSON escaping, so parseVerdict still works on either).
       const parsed = parseClaudeStreamJson(stdout);
       const raw = parsed.text || stdout;
+      // Quota/limit notice instead of a review → fail LOUD, never fake an amend
+      // (the C5 false-block class).
+      const quota = detectQuotaExhaustion(raw);
+      if (quota) {
+        throw new HarnessError(`Claude CLI senior did not review: ${quota}. Refusing to record a phantom verdict — the senior is out of quota.`);
+      }
       const { verdict, feedback } = parseVerdict(raw);
       return { senior: this.cfg.id, verdict, feedback, raw, model, usage: parsed.usage };
     });
@@ -1256,6 +1294,11 @@ export class ZCodeSenior implements SeniorDriver {
         throw new HarnessError(
           `ZCode (zai) senior review was not captured: ${uncaptured}. Refusing to record a phantom verdict.`
         );
+      }
+      // Quota/limit notice instead of a review → fail LOUD (the C5 false-block class).
+      const quota = detectQuotaExhaustion(raw);
+      if (quota) {
+        throw new HarnessError(`ZCode (zai) senior did not review: ${quota}. Refusing to record a phantom verdict — the senior is out of quota.`);
       }
       const { verdict, feedback } = parseVerdict(raw);
       return { senior: this.cfg.id, verdict, feedback, raw, model };

@@ -6,6 +6,7 @@ import {
   buildReviewPrompt,
   parseVerdict,
   detectUncapturedReview,
+  detectQuotaExhaustion,
   SENIOR_HOME_SCREEN_MARKERS,
   resolveSenior,
   findSeniorBinary,
@@ -584,5 +585,22 @@ describe('Claude CLI senior — efficiency levers (read-only tools, cheap model,
     const { text, usage } = parseClaudeStreamJson(stdout);
     expect(text).toBe('VERDICT: APPROVE');
     expect(usage?.inputTokens).toBe(10);
+  });
+});
+
+describe('detectQuotaExhaustion — a senior out of quota must fail loud, never fake an amend (C5 class)', () => {
+  it('catches session/usage/rate-limit notices with no VERDICT', () => {
+    expect(detectQuotaExhaustion("You've hit your session limit · resets 4:20pm (Asia/Calcutta)")).toMatch(/quota|limit/i);
+    expect(detectQuotaExhaustion('Usage limit reached — upgrade to continue')).toBeTruthy();
+    expect(detectQuotaExhaustion('rate limited, try again later')).toBeTruthy();
+    expect(detectQuotaExhaustion('out of credits')).toBeTruthy();
+  });
+  it('does NOT trip on a genuine review, even one that mentions limits in prose', () => {
+    expect(detectQuotaExhaustion('VERDICT: APPROVE\nThe rate limiter reset logic looks correct.')).toBeNull();
+    expect(detectQuotaExhaustion('VERDICT: REVISE\nAdd a usage limit check to the endpoint.')).toBeNull();
+  });
+  it('is null on empty (that is detectUncapturedReview\u2019s job) and on ordinary prose', () => {
+    expect(detectQuotaExhaustion('')).toBeNull();
+    expect(detectQuotaExhaustion('The change looks reasonable and the tests pass.')).toBeNull();
   });
 });
