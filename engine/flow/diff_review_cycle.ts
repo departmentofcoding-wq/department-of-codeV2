@@ -314,8 +314,11 @@ export async function runDiffReviewCycle(
       WORK_REVIEW_DIFF_PHASE
     )?.n ?? 0;
   const assignment = readTaskAssignment(db, task.id);
-  if (priorAmends < DIFF_REVIEW_FIX_CEILING && assignment?.junior) {
-    const round = priorAmends; // this row is already recorded; prior amends incl. it
+  // priorAmends counts ALL phase4 amend rows INCLUDING the one just recorded this
+  // round, so `<=` yields a true DIFF_REVIEW_FIX_CEILING fix dispatches (rounds
+  // 1..CEILING), then holds — the count and the "exhausted" message agree.
+  if (priorAmends <= DIFF_REVIEW_FIX_CEILING && assignment?.junior) {
+    const round = priorAmends; // 1-based: this row is already recorded
     const fixPrompt =
       (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
       'CONTEXT — READ FIRST: this may arrive in a NEW conversation. The task and ' +
