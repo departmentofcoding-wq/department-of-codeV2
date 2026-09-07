@@ -4,11 +4,12 @@ import { getWorkspaceProvider } from '../contract/workspace-seam.ts';
 import { journal } from '../journal/writer.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
-import { DeliveryError } from './types.ts';
+import { DeliveryError, PrRefusalError } from './types.ts';
 import { formatActor } from '../contract/validation.ts';
 import { getBranchTipCommit } from './pr_create.ts';
 import { getDeliveryGatingReview } from './diff_review_gate.ts';
 import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
+import { enqueueDeliveryFreshenIfAbsent } from './freshen.ts';
 
 const SYSTEM_ATTRIBUTION: AttributionTuple = {
   actor_role: 'system',
@@ -16,6 +17,15 @@ const SYSTEM_ATTRIBUTION: AttributionTuple = {
   model: 'core',
   account: null
 };
+
+/**
+ * GitHub's deterministic refusal when the PR branch and the moved main both
+ * touched a file: the merge commit "cannot be cleanly created". Retrying the
+ * identical `gh pr merge` can never succeed — yet that is exactly what the
+ * retry loop did (the 2026-09-06 scars: PRs #9 and #11 each burned all 3
+ * attempts on this message and died, stranding approved tasks at needs-review).
+ */
+const NOT_MERGEABLE_RE = /is not mergeable|cannot be cleanly created/i;
 
 export async function handlePrMerge(ctx: JobContext): Promise<void> {
   const { db, payload } = ctx;
@@ -107,6 +117,35 @@ export async function handlePrMerge(ctx: JobContext): Promise<void> {
     await prProvider.mergePr(prNumber, wtRow?.path);
   } catch (err: any) {
     const refusalMsg = err?.message || String(err);
+    if (NOT_MERGEABLE_RE.test(refusalMsg)) {
+      // A delivery conflict is deterministic, not transient: die on the FIRST
+      // attempt (non-retryable) and queue the freshen recovery, which either
+      // auto-merges origin/main into the branch (trivial case) or surfaces a
+      // real conflict report without touching the junior's work.
+      const freshenJobId = enqueueDeliveryFreshenIfAbsent(db, taskId);
+      journal(db, {
+        kind: 'guardrail',
+        attribution: SYSTEM_ATTRIBUTION,
+        taskId,
+        detail: {
+          action: 'pr.merge',
+          status: 'delivery_conflict',
+          prNumber,
+          reason: refusalMsg,
+          recoveryJobId: freshenJobId ?? null
+        }
+      });
+      notifyOperator(
+        `pr.merge:${taskId}`,
+        `PR ${prNumber} for task ${taskId} is not mergeable — the branch conflicts with the moved main.` +
+          ` A delivery.freshen job was queued (${freshenJobId ?? 'already in flight'}): it will merge origin/main into the branch, or report the conflicting files if the conflict is real.`
+      );
+      throw new PrRefusalError(
+        `PR ${prNumber} is not mergeable (branch conflicts with moved main) for task ${taskId} — delivery.freshen queued`,
+        'PR_MERGE_NOT_MERGEABLE',
+        taskId
+      );
+    }
     journal(db, {
       kind: 'guardrail',
       attribution: SYSTEM_ATTRIBUTION,

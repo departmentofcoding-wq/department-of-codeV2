@@ -886,3 +886,92 @@ Feature: In-console one-click Resume button on Workers tab flow cards to recover
   - **Restore:** `is_resumable` ternary button rendering restored in `console/public/render.js`; test passed green (20/20).
 
 Executed 2026-09-04 on branch `bureau-wt-81b5a1ee-3f1a-4888-aadd-d9cf80cea6ed`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
+
+## Delivery-conflict handling — M-DC1 to M-DC5 (2026-09-06)
+
+Branch `wt/delivery-conflict-handling`. Context: gh "not mergeable" refusals
+killed PRs #9/#11 after 3 identical retries (deterministic conflict retried as
+if transient), and checkpoints swept junior artifacts onto delivery branches
+(conflict ballast). Guards below are the fix pack's five load-bearing
+behaviors; each mutation was applied, the named catcher failed with the
+captured output, the edit was reverted, and the catcher passed again.
+
+- **M-DC1 (not-mergeable classification → non-retryable + freshen recovery):**
+  - **Guard:** `engine/delivery/pr_merge.ts` — `NOT_MERGEABLE_RE` classifies
+    gh's "is not mergeable / cannot be cleanly created" as a `PrRefusalError`
+    (`PR_MERGE_NOT_MERGEABLE`, `nonRetryable = true`), journals a
+    `delivery_conflict` span, notifies, and queues `delivery.freshen`.
+  - **Mutation:** regex gutted to never match (`/$a^/`) — conflicts fall back
+    to the plain retryable `PR_MERGE_PROVIDER_FAILED` (the old zombie loop).
+  - **Catcher:** `test/integration/t44_pr_merge.test.ts` → `classifies "not
+    mergeable" as a delivery conflict…`:
+    ```
+    FAIL … > classifies "not mergeable" as a delivery conflict: non-retryable on the FIRST attempt, queues delivery.freshen, journals delivery_conflict, task held at needs-review
+    Tests  1 failed | 4 skipped
+    ```
+  - **Restore:** regex restored; test green (5/5 in file).
+
+- **M-DC2 (conflict is ABORTED, never auto-resolved):**
+  - **Guard:** `engine/delivery/freshen.ts` — on merge conflict the handler
+    runs `git merge --abort` and then a mandatory self-check (tip unchanged +
+    porcelain empty), throwing `FRESHEN_ABORT_UNCLEAN` if the abort failed to
+    restore the pristine state.
+  - **Mutation:** abort branch disabled (`if (false) { … }`) — the conflicted
+    merge state is left in the worktree.
+  - **Catcher:** `test/integration/tc_delivery_freshen.test.ts` → `REAL
+    conflict: merge is aborted, branch tip and worktree stay pristine…`:
+    ```
+    FAIL … > REAL conflict: merge is aborted, branch tip and worktree stay pristine, conflict reported, task held at needs-review
+    Tests  1 failed | 5 skipped
+    ```
+    (The self-check fired `FRESHEN_ABORT_UNCLEAN` — the pristine-state
+    assertion is backed by a second, independent catcher.)
+  - **Restore:** abort restored; test green (6/6 in file).
+  - Process note: the first M-DC2 attempt was a NO-OP mutation (the abort call
+    was accidentally left in place; the catcher rightly passed). The mutation
+    was redone with the call actually disabled and then caught — recorded here
+    so the no-op run is not mistaken for an inert guard.
+
+- **M-DC3 (pr.create idempotent re-delivery):**
+  - **Guard:** `engine/delivery/pr_create.ts` — an existing
+    `pull_request_url` skips `gh pr create` (which would die "already
+    exists"), pushes the tip, and re-enqueues pr.merge for the SAME PR number.
+  - **Mutation:** skip disabled (`if (false && …)`).
+  - **Catcher:** `test/integration/t43_pr_create.test.ts` → `idempotent
+    re-delivery…`:
+    ```
+    FAIL … > idempotent re-delivery: an existing pull_request_url skips gh pr create, pushes the tip, re-enqueues merge for the SAME PR
+    Tests  1 failed | 3 skipped
+    ```
+  - **Restore:** skip restored; test green (4/4 in file).
+
+- **M-DC4 (freshen cycle budget):**
+  - **Guard:** `engine/delivery/freshen.ts` — at `FRESHEN_CYCLE_BUDGET` (2)
+    terminal prior cycles the freshen does NO git work and journals
+    `budget_exhausted` + notifies.
+  - **Mutation:** budget condition extended with `&& false`.
+  - **Catcher:** `test/integration/tc_delivery_freshen.test.ts` → `budget: at
+    the cycle ceiling the freshen does NO git work and exhausts loudly`:
+    ```
+    FAIL … > budget: at the cycle ceiling the freshen does NO git work and exhausts loudly
+    Tests  1 failed | 5 skipped
+    ```
+  - **Restore:** budget restored; test green (6/6 in file).
+
+- **M-DC5 (checkpoint never commits junior artifacts):**
+  - **Guard:** `engine/worktrees/checkpoint.ts` — staging is
+    `git add -A -- ':(exclude)docs/junior-artifacts'`, so artifacts (own OR
+    foreign-task) stay on disk untracked instead of riding delivery branches.
+  - **Mutation:** reverted to plain `git add -A`.
+  - **Catcher:** `test/integration/tc_delivery_hygiene.test.ts` → `checkpoint
+    commits source work but never junior artifacts…`:
+    ```
+    FAIL … > checkpoint commits source work but never junior artifacts, which stay on disk untracked
+    Tests  1 failed | 1 skipped
+    ```
+  - **Restore:** exclusion restored; test green (2/2 in file).
+
+Executed 2026-09-06 on branch `wt/delivery-conflict-handling`; all 5 mutations
+reproduced → restored → re-verified in one sitting, failure output captured
+from `npx vitest run` (file-scoped `-t` filters; the full suite ×2 was run
+clean separately).
