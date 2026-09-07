@@ -216,7 +216,8 @@ export function buildImplementationPrompt(
   task: BureauTaskRow,
   planText: string,
   basis: ImplementationBasis = { approved: true },
-  projectInfo?: { name: string; path: string }
+  projectInfo?: { name: string; path: string },
+  worktreePath?: string
 ): string {
   const header = basis.approved
     ? 'Your implementation plan was reviewed and APPROVED by a senior. Implement ' +
@@ -247,7 +248,7 @@ export function buildImplementationPrompt(
     'NOT re-explore the codebase to re-derive it and do NOT re-plan — open the ' +
     'files the plan names and implement it directly.\n\n' +
     header +
-    `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; add the tests the plan names; ` +
+    `Rules: work directly on the branch already checked out in the worktree (bureau-wt-${task.id}); do not create, switch, or rename branches; Edit ONLY files under ${worktreePath ?? 'the checked-out worktree'}; add the tests the plan names; ` +
     'when done, finish with a walkthrough section summarizing what changed, the ' +
     'test results, and the verification you ran.\n\n' +
     '===== TASK =====\n' +
@@ -571,7 +572,11 @@ export async function runPlanReviewCycle(
   // A plan missing the department standard (branch/scope/tests+mutations/
   // walkthrough) — including a junk fallback transcript — is amended by the
   // rubric, and the cycle loops; the senior is never billed for garbage.
-  const rubric = evaluatePlanRubric(planText);
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
+  const rubric = evaluatePlanRubric(planText, { worktreePath: worktree?.path });
   if (!rubric.ok) {
     const feedback = `Deterministic rubric failure: missing ${rubric.missing.join(', ')}`;
     return finishReviseRound(db, task, {
@@ -764,11 +769,21 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
     account: null
   };
 
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, p.planText, {
-    approved: true,
-    feedback: p.feedback
-  });
+  const implPrompt = buildImplementationPrompt(
+    task,
+    p.planText,
+    {
+      approved: true,
+      feedback: p.feedback
+    },
+    undefined,
+    worktree?.path
+  );
 
   const dispatchJob = db.execTransaction(() => {
     db.run(
@@ -884,9 +899,19 @@ function enqueueImplementationDispatch(
     basis: ImplementationBasis;
   }
 ) {
+  const worktree = db.get<{ path: string }>(
+    "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
+    task.id
+  );
   const nowIso = new Date().toISOString();
   const dispatchId = crypto.randomUUID();
-  const implPrompt = buildImplementationPrompt(task, opts.planText, opts.basis);
+  const implPrompt = buildImplementationPrompt(
+    task,
+    opts.planText,
+    opts.basis,
+    undefined,
+    worktree?.path
+  );
   db.run(
     `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
      VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,

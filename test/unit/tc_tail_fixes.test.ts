@@ -406,4 +406,110 @@ Run vitest suite twice and verify zero operator repair.
       expect(result.missing.length).toBeGreaterThanOrEqual(3);
     });
   });
+
+  // =========================================================================
+  // C4: Plan path discipline & implementation prompt scoping
+  // =========================================================================
+  describe('C4: Plan path discipline & prompt scoping', () => {
+    const worktreePath = 'D:\\Dept of code v2\\.bureau-worktrees\\356f2ea7-e5fc-4702-9753-928d8fc36ed6';
+
+    it('slash-bearing repo-relative paths fixture passes cleanly without false POSIX match', () => {
+      const plan = `
+# Implementation Plan
+## Branch
+bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6
+
+## Scope & Components
+[MODIFY] [plan_review_cycle.ts](engine/flow/plan_review_cycle.ts)
+[MODIFY] [tc_tail_fixes.test.ts](test/unit/tc_tail_fixes.test.ts)
+[MODIFY] [main.ts](runner/main.ts)
+
+## Tests & Mutation Evidence
+Running vitest with mutation evidence.
+
+## Walkthrough / Verification Plan
+Run vitest suite twice.
+`;
+      const result = evaluatePlanRubric(plan, { worktreePath });
+      expect(result.ok).toBe(true);
+      expect(result.missing).toHaveLength(0);
+    });
+
+    it('accepts absolute / file:// paths pointing inside the task worktree (spaces, URI encoding, case-insensitive)', () => {
+      const plan = `
+# Implementation Plan
+## Branch
+bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6
+
+## Scope & Components
+[MODIFY] [plan_review_job.ts](file:///D:/Dept%20of%20code%20v2/.bureau-worktrees/356f2ea7-e5fc-4702-9753-928d8fc36ed6/engine/review/plan_review_job.ts)
+[MODIFY] \`D:\\Dept of code v2\\.bureau-worktrees\\356f2ea7-e5fc-4702-9753-928d8fc36ed6\\engine\\flow\\plan_review_cycle.ts\`
+TargetFile: d:\\dept of code v2\\.bureau-worktrees\\356f2ea7-e5fc-4702-9753-928d8fc36ed6\\engine\\worktrees\\primary_guard.ts
+
+## Tests & Mutation Evidence
+Vitest and mutation evidence recorded.
+
+## Walkthrough / Verification Plan
+Full suite verification.
+`;
+      const result = evaluatePlanRubric(plan, { worktreePath });
+      expect(result.ok).toBe(true);
+      expect(result.missing).toHaveLength(0);
+    });
+
+    it('rejects plans with file paths resolving outside the worktree (primary checkout)', () => {
+      const plan = `
+# Implementation Plan
+## Branch
+bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6
+
+## Scope & Components
+[MODIFY] [plan_review_job.ts](file:///D:/Dept%20of%20code%20v2/engine/review/plan_review_job.ts)
+[MODIFY] \`D:\\Dept of code v2\\engine\\flow\\plan_review_cycle.ts\`
+
+## Tests & Mutation Evidence
+Vitest and mutation evidence recorded.
+
+## Walkthrough / Verification Plan
+Full suite verification.
+`;
+      const result = evaluatePlanRubric(plan, { worktreePath });
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain('path discipline (file paths must resolve inside task worktree)');
+    });
+
+    it('skips path check when worktreePath is undefined', () => {
+      const plan = `
+# Implementation Plan
+## Branch
+bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6
+
+## Scope & Components
+[MODIFY] [plan_review_job.ts](file:///D:/Dept%20of%20code%20v2/engine/review/plan_review_job.ts)
+
+## Tests & Mutation Evidence
+Vitest and mutation evidence recorded.
+
+## Walkthrough / Verification Plan
+Full suite verification.
+`;
+      const result = evaluatePlanRubric(plan);
+      expect(result.ok).toBe(true);
+      expect(result.missing).toHaveLength(0);
+    });
+
+    it('buildImplementationPrompt includes Edit ONLY files under <worktreePath> and retains F2 preamble', () => {
+      const task = { id: 'task-c4', title: 'C4 Task' } as BureauTaskRow;
+      const prompt = buildImplementationPrompt(
+        task,
+        '# Approved Plan\n## Branch\nbureau-wt-task-c4\n',
+        { approved: true },
+        undefined,
+        worktreePath
+      );
+      expect(prompt).toContain(`Edit ONLY files under ${worktreePath};`);
+      expect(prompt).toContain('CONTEXT — READ FIRST: this message may arrive in a NEW conversation');
+      expect(prompt).toContain('Rules: work directly on the branch already checked out in the worktree (bureau-wt-task-c4);');
+    });
+  });
 });

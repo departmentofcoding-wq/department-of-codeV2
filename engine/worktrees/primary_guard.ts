@@ -33,6 +33,7 @@ import path from 'node:path';
  */
 
 export class PrimaryTreeContaminatedError extends Error {
+  public readonly nonRetryable = true;
   readonly dirtyPaths: string[];
   constructor(dirtyPaths: string[]) {
     super(
