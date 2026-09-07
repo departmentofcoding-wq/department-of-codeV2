@@ -556,12 +556,14 @@ export async function runPlanReviewCycle(
       source: 'antigravity',
       stage: 'plan-authoring',
       junior: jr.junior ?? juniorId,
+      model: juniorAttribution.model,
       planId,
       // N17: the full prompt sent to the junior + the authored reply's head are
       // part of the record — the journal is reviewable without the artifacts dir.
       prompt: juniorPrompt,
       replyHead: planText.slice(0, 400),
-      replyChars: planText.length
+      replyChars: planText.length,
+      artifactFiles: (jr as any).artifactFiles ?? null
     }
   });
 
@@ -807,6 +809,8 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       detail: {
         stage: 'plan-review',
         senior: p.seniorId,
+        model: p.seniorModel,
+        round: (task.plan_rounds ?? 0) + 1,
         verdict: dbVerdict,
         planId: p.planId,
         // N17: the senior's full reply is on the journal record, not only in
@@ -832,6 +836,7 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
       task_id: task.id,
       payload: {
         dispatchId,
+        stage: 'junior-implementation',
         prompt: implPrompt,
         junior: p.junior,
         // Continue in the planning conversation (see enqueueImplementationDispatch).
@@ -897,6 +902,7 @@ function enqueueImplementationDispatch(
     task_id: task.id,
     payload: {
       dispatchId,
+      stage: 'junior-implementation',
       prompt: implPrompt,
       junior: opts.junior,
       // Continue in the planning conversation: the junior already holds its
@@ -970,6 +976,8 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
         stage: 'plan-review',
         by: p.by,
         senior: p.seniorId ?? 'rubric',
+        model: p.reviewModel,
+        round: (task.plan_rounds ?? 0) + 1,
         verdict: dbVerdict,
         planId: p.planId,
         feedback: p.feedback

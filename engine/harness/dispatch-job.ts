@@ -24,8 +24,11 @@ import {
   type PrimaryTreeSnapshot
 } from '../worktrees/primary_guard.ts';
 
+export type JuniorDispatchStage = 'junior-implementation' | 'work-review-fix' | 'verify-fix' | string;
+
 export interface JuniorDispatchPayload {
   dispatchId: string;
+  stage?: JuniorDispatchStage;
   windowTarget?: string;
   url?: string;
   actions?: Array<{ selectorKey: string; action: string; value?: string }>;
@@ -383,6 +386,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           source: 'antigravity',
           junior: result.junior ?? resolvedJunior ?? payload.junior ?? null,
           dispatchId: dispatch.id,
+          stage: payload.stage ?? 'junior-implementation',
           prompt: payload.prompt,
           // F2: auditability of the conversation mode this dispatch ran in —
           // 'continue' (meant to continue the task's conversation; the prompt is
@@ -390,6 +394,7 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           conversationMode: payload.freshConversation === false ? 'continue' : 'fresh',
           model: result.model ?? payload.model ?? null,
           folder: payload.folder ?? null,
+          worktreePath: deliveryWorktreePath ?? null,
           folderSelected: result.folderSelected ?? null,
           launched: result.launched,
           transcriptTail: result.transcript,

@@ -180,6 +180,7 @@ function enqueueFixDispatch(
     task_id: task.id,
     payload: {
       dispatchId,
+      stage: 'work-review-fix',
       prompt: opts.prompt,
       junior: opts.junior,
       freshConversation: false,
@@ -423,6 +424,7 @@ export async function runWorkReviewCycle(
       detail: {
         stage: 'work-review',
         senior: seniorId,
+        model,
         verdict,
         reviewId,
         round: roundsUsed,

@@ -101,7 +101,16 @@ export function fileTask(
       kind: 'task-filed',
       attribution,
       taskId: taskRow.id,
-      detail: { sessionId: session.id, idempotencyKey: session.idempotency_key }
+      detail: {
+        sessionId: session.id,
+        idempotencyKey: session.idempotency_key,
+        title: taskRow.title,
+        intent: taskRow.intent,
+        spec: taskRow.spec,
+        acceptance: taskRow.acceptance,
+        verify_cmd: taskRow.verify_cmd,
+        project_id: taskRow.project_id
+      }
     });
 
     // N17 — filing does NOT kick off the flow anymore. A filed task is born

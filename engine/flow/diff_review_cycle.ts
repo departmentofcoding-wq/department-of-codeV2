@@ -284,7 +284,7 @@ export async function runDiffReviewCycle(
       tokensIn: review.usage?.inputTokens ?? null,
       tokensOut: review.usage?.outputTokens ?? null,
       costUsd: review.usage?.costUsd ?? null,
-      detail: { stage: 'diff-review', senior: seniorId, verdict, reviewId, reviewed_commit: tip, feedback: review.feedback }
+      detail: { stage: 'diff-review', senior: seniorId, model: attribution.model, verdict, reviewId, reviewed_commit: tip, feedback: review.feedback }
     });
   });
 

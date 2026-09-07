@@ -69,13 +69,26 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
           if (verdict === 'approved') {
             return `The plan senior (${senior}) approved the plan.`;
           }
-          if (verdict === 'revise') {
+          if (verdict === 'revise' || verdict === 'amend') {
             return `The plan senior (${senior}) requested revisions on the plan.`;
           }
           if (verdict) {
             return `The plan senior (${senior}) reviewed the plan: ${verdict}.`;
           }
           return `The plan senior (${senior}) completed a plan review.`;
+        }
+
+        if (stage === 'diff-review' || stage === 'work.diff-review' || stage === 'code-diff') {
+          if (verdict === 'approved') {
+            return `The diff senior (${senior}) approved the code diff.`;
+          }
+          if (verdict === 'revise' || verdict === 'amend') {
+            return `The diff senior (${senior}) requested changes on the code diff.`;
+          }
+          if (verdict) {
+            return `The diff senior (${senior}) reviewed the code diff: ${verdict}.`;
+          }
+          return `The diff senior (${senior}) completed a code diff review.`;
         }
 
         // Default: work-review
@@ -85,7 +98,7 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
           }
           return `The work senior (${senior}) approved the implementation.`;
         }
-        if (verdict === 'revise') {
+        if (verdict === 'revise' || verdict === 'amend') {
           return `The work senior (${senior}) requested revisions on the implementation.`;
         }
         if (verdict) {
@@ -149,25 +162,74 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
 
       case 'llm': {
         const model = (typeof row.model === 'string' && row.model) ||
-                      (typeof row.provider === 'string' && row.provider) ||
-                      'model';
+                       (typeof row.provider === 'string' && row.provider) ||
+                       'model';
         return `LLM call to ${model} completed.`;
       }
 
       case 'tool': {
+        if (detail.action === 'verify_run_completed' || detail.name === 'verify_run_completed') {
+          const exitCode = detail.exit_code !== undefined ? detail.exit_code : 0;
+          if (exitCode === 0) {
+            return 'Verification completed successfully (exit code 0).';
+          }
+          return `Verification completed with exit code ${exitCode}.`;
+        }
         const toolName = detail.name || detail.tool || 'execution';
         return `Tool ${toolName} executed.`;
       }
 
       case 'observation': {
+        const junior = detail.junior ||
+                       (typeof row.provider === 'string' && row.provider) ||
+                       (typeof row.actor_role === 'string' && row.actor_role) ||
+                       'junior';
+        const stage = detail.stage || detail.action || '';
+        if (stage === 'plan-authoring') {
+          return `The junior (${junior}) authored the implementation plan.`;
+        }
+        if (stage === 'verify-fix') {
+          return `The junior (${junior}) completed verify-fix dispatch.`;
+        }
+        if (stage === 'work-review-fix') {
+          return `The junior (${junior}) completed work-review fix dispatch.`;
+        }
+        if (stage === 'junior-implementation' || detail.dispatchId) {
+          return `The junior (${junior}) completed work dispatch.`;
+        }
+        if (detail.junior) {
+          return `Junior (${junior}) observation recorded.`;
+        }
         return 'Junior observation recorded.';
       }
 
       case 'system': {
+        const action = detail.action || '';
+        if (action === 'pr.create') {
+          const target = detail.url || (detail.number ? `#${detail.number}` : '');
+          return target ? `Pull request created: ${target}.` : 'Pull request created.';
+        }
+        if (action === 'pr.merge') {
+          const by = detail.mergedBy ? ` by ${detail.mergedBy}` : '';
+          return `Pull request merged${by}.`;
+        }
+        if (action === 'backup.push') {
+          const target = detail.remote && detail.branch ? ` to ${detail.remote}/${detail.branch}` : '';
+          return `Backup pushed${target}.`;
+        }
+        if (action === 'junior_pointed_at_worktree') {
+          return `Junior pointed at worktree: ${detail.path}.`;
+        }
+        if (action) {
+          return `System event: ${action}.`;
+        }
         return 'System event recorded.';
       }
 
       case 'task-filed': {
+        if (detail.title) {
+          return `Task filed into bureau: "${detail.title}".`;
+        }
         return 'Task filed into bureau.';
       }
 
@@ -182,6 +244,12 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
       }
 
       case 'assignment': {
+        if (detail.junior && detail.senior) {
+          return `Task assigned to junior (${detail.junior}) and senior (${detail.senior}).`;
+        }
+        if (detail.junior) {
+          return `Task assigned to junior (${detail.junior}).`;
+        }
         const role = detail.role || (typeof row.actor_role === 'string' ? row.actor_role : '') || 'worker';
         return `Task assigned to ${role}.`;
       }
