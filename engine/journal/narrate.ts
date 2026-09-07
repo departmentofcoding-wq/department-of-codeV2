@@ -1,4 +1,5 @@
 import type { BureauJournalRow } from '../contract/index.ts';
+import { normalizeVerdict } from '../harness/senior.ts';
 
 function safeParseDetail(detail: unknown): Record<string, any> {
   if (!detail) return {};
@@ -62,14 +63,14 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
                        (typeof row.actor_role === 'string' && row.actor_role) ||
                        'senior';
         const stage = detail.stage || 'work-review';
-        const verdict = detail.verdict || detail.action || '';
+        const verdict = normalizeVerdict(detail.verdict || detail.action || '');
         const round = detail.round;
 
         if (stage === 'plan-review') {
           if (verdict === 'approved') {
             return `The plan senior (${senior}) approved the plan.`;
           }
-          if (verdict === 'revise' || verdict === 'amend') {
+          if (verdict === 'amend') {
             return `The plan senior (${senior}) requested revisions on the plan.`;
           }
           if (verdict) {
@@ -82,7 +83,7 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
           if (verdict === 'approved') {
             return `The diff senior (${senior}) approved the code diff.`;
           }
-          if (verdict === 'revise' || verdict === 'amend') {
+          if (verdict === 'amend') {
             return `The diff senior (${senior}) requested changes on the code diff.`;
           }
           if (verdict) {
@@ -98,7 +99,7 @@ export function narrateEntry(row: Partial<BureauJournalRow> | Record<string, unk
           }
           return `The work senior (${senior}) approved the implementation.`;
         }
-        if (verdict === 'revise' || verdict === 'amend') {
+        if (verdict === 'amend') {
           return `The work senior (${senior}) requested revisions on the implementation.`;
         }
         if (verdict) {
