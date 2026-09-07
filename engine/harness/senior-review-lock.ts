@@ -16,16 +16,25 @@ import { acquireZCodeLock, type ZCodeLockOptions } from './zcode-lock.ts';
  *
  * It reuses the proven zcode-lock file-mutex primitive at a DISTINCT path, so for
  * zai the acquisition order is always senior-review-lock (outer) → zcode
- * instance lock (inner) — one consistent order, no deadlock. A live holder past
- * the wait window fails fast ("senior busy"); the delivery review job is
- * retryable, so it simply runs on a later tick rather than colliding now.
+ * instance lock (inner) — one consistent order, no deadlock.
+ *
+ * The loser WAITS for the holder to finish rather than dying: the three
+ * senior-driving jobs (plan.cycle, work.cycle, work.diff-review) are all
+ * `maxAttempts: 1`, so a lock that gave up and threw would kill the second review
+ * permanently and strand its task (plan/work cycles have no delivery reconciler
+ * to re-drive them). So the wait window is deliberately LONGER than any real
+ * review yet below the review job's own 45-min timeout: a normal review (minutes)
+ * is always waited out; only a genuinely stuck senior (holding past ~40 min, i.e.
+ * about to hit its own timeout anyway) makes the waiter give up — the correct
+ * outcome, since a wedged senior should fail, not queue forever.
  */
 export function defaultSeniorReviewLockPath(): string {
   return process.env['SENIOR_REVIEW_LOCK_PATH'] || path.join(os.tmpdir(), 'dept-of-code-senior-review.lock');
 }
 
-/** How long to wait for an in-flight review to finish before failing (retryable). */
-export const SENIOR_REVIEW_LOCK_DEFAULT_WAIT_MS = 4 * 60 * 1000;
+/** How long the loser waits for an in-flight review to finish. Longer than any
+ *  real review, below the 45-min review job timeout (see the class docstring). */
+export const SENIOR_REVIEW_LOCK_DEFAULT_WAIT_MS = 40 * 60 * 1000;
 
 function resolveWaitMs(): number {
   const n = Number(process.env['SENIOR_REVIEW_LOCK_WAIT_MS']);

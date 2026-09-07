@@ -134,11 +134,40 @@ export function reconcileDeliveries(db: DbConnection): string[] {
     }
 
     const gating = getDeliveryGatingReview(db, taskId);
+    const dead = latestDeadDelivery(db, taskId);
     let action: string | null = null;
     let jobId: string | undefined;
 
-    if (gating && gating.reviewed_commit === currentTip) {
-      // Gate stands at the current tip: create the PR, or merge the open one.
+    // Classify a dead delivery job FIRST — BEFORE the gate-at-tip shortcut. A
+    // genuine not-mergeable corpse always has an approved phase4 gate standing at
+    // the current tip (pr.merge exists only after pr.create, which required the
+    // gate at tip; the conflict is with MAIN, so the branch tip never moved). If
+    // we checked gate-at-tip first we would re-enqueue the guaranteed-to-fail
+    // `gh pr merge` — the exact thrash PRs #9/#11 died on. Freshening is the fix.
+    if (pull_request_url && dead && dead.kind === 'pr.merge' && NOT_MERGEABLE_RE.test(dead.error)) {
+      // The classic conflict corpse — hand it to the freshen recovery. (Freshen
+      // is a local, non-destructive git merge/abort, cheaply bounded by its own
+      // budget — not a guaranteed-failing remote call.)
+      jobId = enqueueDeliveryFreshenIfAbsent(db, taskId);
+      action = 'delivery.freshen';
+    } else if (dead && TRANSIENT_RE.test(dead.error)) {
+      // A transient (network/gh) failure — retry the same delivery step.
+      jobId = enqueueJob(db, { kind: dead.kind, task_id: taskId, payload: { taskId } }).id;
+      action = `${dead.kind}(retry)`;
+    } else if (dead && (dead.kind === 'pr.create' || dead.kind === 'pr.merge')) {
+      // A hard, non-transient delivery error (e.g. the branch is gone) — the
+      // "dead needs operator action" policy: do NOT auto-retry, park once.
+      parkOnce(
+        db,
+        taskId,
+        'delivery_resume_hard_error',
+        { kind: dead.kind, error: dead.error.slice(0, 200) },
+        `Task ${taskId} ${dead.kind} failed with a non-transient error — parked. Reason: ${dead.error.slice(0, 160)}`
+      );
+      continue;
+    } else if (gating && gating.reviewed_commit === currentTip) {
+      // Gate stands at the current tip and no recoverable dead job — create the
+      // PR, or merge the open one.
       if (pull_request_url) {
         jobId = enqueueJob(db, { kind: 'pr.merge', task_id: taskId, payload: { taskId } }).id;
         action = 'pr.merge';
@@ -147,32 +176,10 @@ export function reconcileDeliveries(db: DbConnection): string[] {
         action = 'pr.create';
       }
     } else {
-      const dead = latestDeadDelivery(db, taskId);
-      if (pull_request_url && dead && dead.kind === 'pr.merge' && NOT_MERGEABLE_RE.test(dead.error)) {
-        // The classic conflict corpse — hand it to the freshen recovery.
-        jobId = enqueueDeliveryFreshenIfAbsent(db, taskId);
-        action = 'delivery.freshen';
-      } else if (dead && TRANSIENT_RE.test(dead.error)) {
-        // A transient (network/gh) failure — retry the same delivery step.
-        jobId = enqueueJob(db, { kind: dead.kind, task_id: taskId, payload: { taskId } }).id;
-        action = `${dead.kind}(retry)`;
-      } else if (dead && (dead.kind === 'pr.create' || dead.kind === 'pr.merge')) {
-        // A hard, non-transient delivery error (e.g. the branch is gone) — the
-        // "dead needs operator action" policy: do NOT auto-retry, park once.
-        parkOnce(
-          db,
-          taskId,
-          'delivery_resume_hard_error',
-          { kind: dead.kind, error: dead.error.slice(0, 200) },
-          `Task ${taskId} ${dead.kind} failed with a non-transient error — parked. Reason: ${dead.error.slice(0, 160)}`
-        );
-        continue;
-      } else {
-        // No gate at the tip and no recoverable dead job — (re)produce the
-        // phase4 gate at the tip.
-        jobId = enqueueJob(db, { kind: 'work.diff-review', task_id: taskId, payload: { taskId } }).id;
-        action = 'work.diff-review';
-      }
+      // No gate at the tip and no recoverable dead job — (re)produce the phase4
+      // gate at the tip.
+      jobId = enqueueJob(db, { kind: 'work.diff-review', task_id: taskId, payload: { taskId } }).id;
+      action = 'work.diff-review';
     }
 
     if (action && jobId !== undefined) {

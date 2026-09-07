@@ -42,6 +42,30 @@ describe('withSeniorReviewLock', () => {
     expect(await withSeniorReviewLock(async () => 'ok', { lockPath, waitMs: 200 })).toBe('ok');
   });
 
+  it('WAITS out the holder (does not drop the loser): a second review with enough wait succeeds after the first releases', async () => {
+    // The finding-#1 fix: review jobs are maxAttempts:1, so the loser must WAIT,
+    // not die. With a wait longer than the holder's duration, the second review
+    // completes rather than throwing "busy".
+    const lockPath = tmpLock();
+    const order: string[] = [];
+    const first = withSeniorReviewLock(
+      async () => {
+        await new Promise((r) => setTimeout(r, 120));
+        order.push('first');
+      },
+      { lockPath, waitMs: 5000 }
+    );
+    await new Promise((r) => setTimeout(r, 20)); // ensure `first` holds the lock
+    const second = withSeniorReviewLock(
+      async () => {
+        order.push('second');
+      },
+      { lockPath, waitMs: 5000, pollMs: 20 }
+    );
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first', 'second']); // serialized, neither dropped
+  });
+
   it('releases the lock even when the body throws', async () => {
     const lockPath = tmpLock();
     await expect(withSeniorReviewLock(async () => { throw new Error('boom'); }, { lockPath })).rejects.toThrow('boom');

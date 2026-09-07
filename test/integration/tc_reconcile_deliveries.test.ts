@@ -120,13 +120,20 @@ describe('tc: reconcileDeliveries (restart-safe delivery resume)', () => {
     expect(liveJobs(db, 'r-create', 'pr.create')).toBe(1);
   });
 
-  it('PR + pr.merge dead "not mergeable": enqueues delivery.freshen (the conflict corpse)', async () => {
+  it('PR + pr.merge dead "not mergeable" WITH the phase4 gate standing at tip: freshen (not a re-merge)', async () => {
+    // The representative corpse: a real not-mergeable PR always has an APPROVED
+    // phase4 gate at the tip (pr.merge exists only after pr.create, which needs
+    // the gate; the conflict is with main, so the branch tip never moved). The
+    // classifier must route to freshen, NOT re-enqueue the guaranteed-failing
+    // pr.merge (the #9/#11 thrash).
     const db = openDbConnection(dbPath);
     seedApproved(db, 'r-freshen', { pr: 'https://github.com/o/r/pull/9' });
-    await worktree(db, 'r-freshen');
+    const wt = await worktree(db, 'r-freshen');
+    addPhase4(db, 'r-freshen', 'approved', git(wt, ['rev-parse', 'HEAD'])); // gate stands at tip
     addDeadJob(db, 'r-freshen', 'pr.merge', 'PR 9 is not mergeable: the merge commit cannot be cleanly created.');
     reconcileDeliveries(db);
     expect(liveJobs(db, 'r-freshen', 'delivery.freshen')).toBe(1);
+    expect(liveJobs(db, 'r-freshen', 'pr.merge')).toBe(0); // did NOT re-issue the doomed merge
   });
 
   it('latest diff-review AMEND: excluded (owes a junior fix, not delivery)', async () => {
