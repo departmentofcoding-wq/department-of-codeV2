@@ -6,7 +6,7 @@ import { enqueueJob } from '../jobs/jobs.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import { assignSeniorForTask } from '../harness/senior.ts';
+import { assignSeniorForTask, normalizeVerdict } from '../harness/senior.ts';
 import { readLatestArtifacts } from '../harness/junior-artifacts.ts';
 import { assignJunior, JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
 import { readTaskAssignment, ensureTaskAssignment } from './assignment.ts';
@@ -380,7 +380,7 @@ export async function runWorkReviewCycle(
     throw new Error(`Unexpected state: senior review missing after retry loop for task ${task.id}`);
   }
 
-  const verdict = review.verdict === 'approve' ? 'approved' : 'amend';
+  const verdict = normalizeVerdict(review.verdict);
   const model = review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL;
   const attribution: AttributionTuple = {
     actor_role: 'senior-engineer',

@@ -10,7 +10,7 @@ import { JUNIOR_COMPLETION_INSTRUCTION, sliceAfterPrompt, isJuniorWedgedWindowEr
 import { ensureTaskAssignment } from './assignment.ts';
 import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from '../harness/lease-manager.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import type { SeniorUsage } from '../harness/senior.ts';
+import { normalizeVerdict, type SeniorUsage } from '../harness/senior.ts';
 import { evaluatePlanRubric, SENIOR_RUBRIC_ATTRIBUTION } from '../review/plan_review_job.ts';
 import { DEFAULT_AUTHORING_LEASE_WAIT_MS } from '../contract/constants.ts';
 
@@ -698,7 +698,7 @@ export async function runPlanReviewCycle(
     throw new Error(`Unexpected state: senior review missing after retry loop for task ${task.id}`);
   }
 
-  if (review.verdict === 'approve') {
+  if (normalizeVerdict(review.verdict) === 'approved') {
     return finishApproveRound(db, task, {
       planId,
       planText,
