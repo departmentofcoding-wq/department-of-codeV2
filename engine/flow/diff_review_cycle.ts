@@ -11,6 +11,11 @@ import { readTaskAssignment } from './assignment.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
 import { getDeliveryGatingReview } from '../delivery/diff_review_gate.ts';
 import { readSeniorStallRetries } from './work_review_cycle.ts';
+import { JUNIOR_COMPLETION_INSTRUCTION } from '../harness/antigravity.ts';
+
+/** F4: how many junior-fix rounds a diff-review AMEND may loop before it holds
+ *  at the gate for the operator. Bounds the diff-review-amend → junior-fix loop. */
+export const DIFF_REVIEW_FIX_CEILING = 3;
 
 /**
  * Diff-review cycle — the CODE-DIFF (phase4) senior review that gates delivery.
@@ -297,13 +302,76 @@ export async function runDiffReviewCycle(
     return { outcome: 'approved', senior: seniorId, reviewId, reviewedCommit: tip, deliveryJobId };
   }
 
-  // AMEND: record the review, hold the task at the human gate, notify the
-  // operator. First cut is notify-and-hold (the human done-gate is never
-  // bypassed); a future revision can loop the fixes back to the junior like the
-  // walkthrough cycle does.
+  // AMEND: the delivery-gate senior wants changes. F4 — loop the fixes back to
+  // the junior (bounded), instead of only holding. The task STAYS at needs-review
+  // (needs-review → claimed is illegal), the junior fixes in the worktree, and the
+  // dispatch chains back to work.diff-review at the new tip (chainDiffReview). On
+  // approve it delivers; on amend it loops, up to DIFF_REVIEW_FIX_CEILING rounds.
+  const priorAmends =
+    db.get<{ n: number }>(
+      `SELECT COUNT(*) n FROM bureau_work_reviews WHERE task_id = ? AND phase = ? AND verdict = 'amend'`,
+      task.id,
+      WORK_REVIEW_DIFF_PHASE
+    )?.n ?? 0;
+  const assignment = readTaskAssignment(db, task.id);
+  // priorAmends counts ALL phase4 amend rows INCLUDING the one just recorded this
+  // round, so `<=` yields a true DIFF_REVIEW_FIX_CEILING fix dispatches (rounds
+  // 1..CEILING), then holds — the count and the "exhausted" message agree.
+  if (priorAmends <= DIFF_REVIEW_FIX_CEILING && assignment?.junior) {
+    const round = priorAmends; // 1-based: this row is already recorded
+    const fixPrompt =
+      (task.id ? `[bureau-task:${task.id}] ${task.title}\n\n` : '') +
+      'CONTEXT — READ FIRST: this may arrive in a NEW conversation. The task and ' +
+      'EVERY required change are below; touch only what they need, do not re-derive ' +
+      'prior work.\n\n' +
+      `A senior reviewed your CODE DIFF at the delivery gate and is requesting changes ` +
+      `(revision round ${round} of at most ${DIFF_REVIEW_FIX_CEILING}). Implement EVERY ` +
+      'required change below in the worktree, then finish with an updated summary of ' +
+      'what you changed and the tests you ran — the senior will re-review the diff.\n\n' +
+      '===== TASK =====\n' +
+      `TITLE: ${task.title}\n` +
+      (projectInfo ? `PROJECT: ${projectInfo.name} (${projectInfo.path})\n` : '') +
+      (task.intent ? `INTENT: ${task.intent}\n` : '') +
+      (task.spec ? `SPEC: ${task.spec}\n` : '') +
+      (task.acceptance ? `ACCEPTANCE: ${task.acceptance}\n` : '') +
+      `\n===== SENIOR'S REQUIRED CHANGES =====\n${review.feedback.trim()}\n\n${JUNIOR_COMPLETION_INSTRUCTION}`;
+    const dispatchId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    const fixJob = db.execTransaction(() => {
+      db.run(
+        `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+         VALUES (?, ?, ?, 'junior-engineer', 'antigravity', NULL, NULL, 'pending', ?)`,
+        dispatchId,
+        task.id,
+        task.work_uuid,
+        nowIso
+      );
+      return enqueueJob(db, {
+        kind: 'junior.dispatch',
+        task_id: task.id,
+        payload: { dispatchId, stage: 'diff-review-fix', prompt: fixPrompt, junior: assignment.junior, freshConversation: false, chainDiffReview: true },
+        max_attempts: 1
+      });
+    });
+    journal(db, {
+      kind: 'system',
+      attribution,
+      taskId: task.id,
+      jobId: opts.jobId ?? null,
+      detail: { action: 'diff_review_fix_dispatch', round, ceiling: DIFF_REVIEW_FIX_CEILING, junior: assignment.junior, dispatchJobId: fixJob.id }
+    });
+    notifyOperator(
+      opts.jobId ?? 'work.diff-review',
+      `Task ${task.id} code-diff needs changes (${seniorId}, round ${round}/${DIFF_REVIEW_FIX_CEILING}) — dispatched junior ${assignment.junior} to fix; re-reviews the diff at the new tip. Stays needs-review.`
+    );
+    return { outcome: 'amend', senior: seniorId, reviewId, reviewedCommit: tip, feedback: review.feedback };
+  }
+
+  // Ceiling reached (or no junior assigned): hold at the human gate for the
+  // operator — the loop never runs forever, and delivery is never bypassed.
   notifyOperator(
     opts.jobId ?? 'work.diff-review',
-    `Task ${task.id} code-diff review requires changes (${seniorId}) — held in needs-review, NOT delivered. ` +
+    `Task ${task.id} code-diff review requires changes (${seniorId}) — ${assignment?.junior ? `${DIFF_REVIEW_FIX_CEILING} fix rounds exhausted` : 'no junior assigned'}; held in needs-review, NOT delivered. ` +
       `Required changes: ${review.feedback}`
   );
   return { outcome: 'amend', senior: seniorId, reviewId, reviewedCommit: tip, feedback: review.feedback };

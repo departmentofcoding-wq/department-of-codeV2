@@ -19,6 +19,7 @@ import { isJuniorWedgedWindowError, resolveJunior } from '../engine/harness/anti
 import { setJuniorUnhealthy } from '../engine/flow/junior-health.ts';
 import { DEFAULT_JUNIOR_COOLDOWN_MS } from '../engine/contract/constants.ts';
 import { reconcileDeliveries } from '../engine/flow/reconcile_deliveries.ts';
+import { getGitHeadSha, isCodeStale } from '../engine/harness/code-version.ts';
 // Importing the registry registers the job handlers as a module side effect.
 import { getJobDefinition } from '../engine/jobs/registry.ts';
 
@@ -99,6 +100,10 @@ export class Runner {
   private runningJobIds = new Set<string>();
   private pollTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  /** git HEAD at process start — the running code's version (F3 stale-runner). */
+  private readonly bootSha: string | null = getGitHeadSha();
+  private staleWarned = false;
+  private lastFreshnessCheck = 0;
 
   /**
    * Job kinds this Runner must not claim because another executor owns them.
@@ -143,7 +148,24 @@ export class Runner {
 
 
   public start(): void {
-    log('INFO', 'runner_started', { runnerId: this.id, config: this.config });
+    log('INFO', 'runner_started', { runnerId: this.id, config: this.config, codeSha: this.bootSha });
+    // F3: stamp the running code version so a stale runner is VISIBLE (the
+    // recurring 2026-09-07 problem). Recorded in the journal + bureau_meta.
+    try {
+      journal(this.db, {
+        kind: 'system',
+        attribution: FOREMAN_ATTRIBUTION,
+        detail: { action: 'runner_boot', runnerId: this.id, codeSha: this.bootSha, at: new Date().toISOString() }
+      });
+      if (this.bootSha) {
+        this.db.run(
+          `INSERT INTO bureau_meta (key, value) VALUES ('runner:code_sha', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          this.bootSha
+        );
+      }
+    } catch {
+      /* best-effort telemetry */
+    }
 
     // Start Heartbeat Loop
     this.heartbeatTimer = setInterval(() => {
@@ -198,6 +220,9 @@ export class Runner {
         // Reconcile approved-but-undelivered tasks whose delivery job died (the
         // restart-resume gap): re-drive pr.create/pr.merge/freshen/diff-review.
         this.reconcileDeliveries();
+
+        // F3: notice when this runner is running STALE code (main moved under it).
+        this.checkCodeFreshness();
 
         // Watchdog & Reaper tick
         this.runReaperAndWatchdog();
@@ -256,6 +281,38 @@ export class Runner {
   public reconcileDeliveries(): void {
     for (const taskId of reconcileDeliveries(this.db)) {
       log('INFO', 'reconciler_resumed_delivery', { taskId });
+    }
+  }
+
+  /**
+   * F3 — stale-runner detection. Throttled to once/60s: if git HEAD has moved
+   * past this process's boot sha, the running code is stale (Node never reloads)
+   * and a restart is due. Warns + notifies the operator ONCE per drift — a stale
+   * runner is otherwise silent and can run the pre-fix pr.merge zombie path.
+   */
+  public checkCodeFreshness(): void {
+    if (this.staleWarned || !this.bootSha) return;
+    const now = Date.now();
+    if (now - this.lastFreshnessCheck < 60_000) return;
+    this.lastFreshnessCheck = now;
+    const current = getGitHeadSha();
+    if (isCodeStale(this.bootSha, current)) {
+      this.staleWarned = true;
+      log('WARN', 'runner_code_stale', { runnerId: this.id, bootSha: this.bootSha, currentSha: current });
+      try {
+        journal(this.db, {
+          kind: 'guardrail',
+          attribution: FOREMAN_ATTRIBUTION,
+          detail: { action: 'runner_code_stale', runnerId: this.id, bootSha: this.bootSha, currentSha: current }
+        });
+      } catch {
+        /* best-effort */
+      }
+      this.notifier.notifyOperator(
+        `stale-runner:${this.id}`,
+        `Runner ${this.id} is running STALE code (boot ${this.bootSha?.slice(0, 8)} vs HEAD ${current?.slice(0, 8)}). ` +
+          `Restart it (kill + \`npm run runner\`, or restart the console) so it picks up the merged code.`
+      );
     }
   }
 
