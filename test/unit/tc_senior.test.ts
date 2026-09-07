@@ -7,6 +7,8 @@ import {
   parseVerdict,
   detectUncapturedReview,
   detectQuotaExhaustion,
+  normalizeVerdict,
+  stripSeniorReplyChrome,
   SENIOR_HOME_SCREEN_MARKERS,
   resolveSenior,
   findSeniorBinary,
@@ -604,3 +606,33 @@ describe('detectQuotaExhaustion — a senior out of quota must fail loud, never 
     expect(detectQuotaExhaustion('The change looks reasonable and the tests pass.')).toBeNull();
   });
 });
+
+describe('C5 — centralized verdict vocabulary + senior-reply chrome hygiene', () => {
+  it('normalizeVerdict maps every synonym to the canonical FlowVerdict', () => {
+    expect(normalizeVerdict('approve')).toBe('approved');
+    expect(normalizeVerdict('approved')).toBe('approved');
+    expect(normalizeVerdict('APPROVE')).toBe('approved'); // case-insensitive
+    expect(normalizeVerdict('revise')).toBe('amend');
+    expect(normalizeVerdict('amend')).toBe('amend');
+    expect(normalizeVerdict('reject')).toBe('amend');
+    expect(normalizeVerdict('  Revise  ')).toBe('amend'); // trimmed
+  });
+  it('normalizeVerdict passes unknown strings through and empties null/undefined', () => {
+    expect(normalizeVerdict('weird')).toBe('weird');
+    expect(normalizeVerdict(null)).toBe('');
+    expect(normalizeVerdict(undefined)).toBe('');
+    expect(normalizeVerdict('')).toBe('');
+  });
+  it('stripSeniorReplyChrome removes leading Copy/Edit/Worked-for chrome, preserving the review', () => {
+    const raw = 'Copy\nEdit\nWorked for 1m 49s\nVERDICT: APPROVE\nLooks good.';
+    expect(stripSeniorReplyChrome(raw)).toBe('VERDICT: APPROVE\nLooks good.');
+    // leading blanks are skipped too
+    expect(stripSeniorReplyChrome('\n\nCopy\nVERDICT: REVISE')).toBe('VERDICT: REVISE');
+  });
+  it('stripSeniorReplyChrome leaves a clean review untouched and preserves internal text', () => {
+    expect(stripSeniorReplyChrome('VERDICT: APPROVE\nCopy this snippet exactly.')).toBe(
+      'VERDICT: APPROVE\nCopy this snippet exactly.'
+    );
+    expect(stripSeniorReplyChrome('')).toBe('');
+  });
+})

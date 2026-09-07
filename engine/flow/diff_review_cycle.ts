@@ -6,7 +6,7 @@ import { journal } from '../journal/writer.ts';
 import { enqueueJob } from '../jobs/jobs.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getSeniorDriver } from '../harness/senior-seam.ts';
-import { assignSeniorForTask } from '../harness/senior.ts';
+import { assignSeniorForTask, normalizeVerdict } from '../harness/senior.ts';
 import { readTaskAssignment } from './assignment.ts';
 import { getBranchTipCommit } from '../worktrees/commit.ts';
 import { getDeliveryGatingReview } from '../delivery/diff_review_gate.ts';
@@ -256,7 +256,7 @@ export async function runDiffReviewCycle(
     throw new Error(`Unexpected state: senior diff review missing after retry loop for task ${task.id}`);
   }
 
-  const verdict = review.verdict === 'approve' ? 'approved' : 'amend';
+  const verdict = normalizeVerdict(review.verdict);
   const model = review.model ?? opts.seniorModel ?? UNSPECIFIED_MODEL;
   const attribution: AttributionTuple = { actor_role: 'senior-engineer', provider: seniorId, model, account: null };
   const reviewId = crypto.randomUUID();

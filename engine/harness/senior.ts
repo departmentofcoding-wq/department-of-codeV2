@@ -147,6 +147,60 @@ export function parseVerdict(raw: string): { verdict: Verdict; feedback: string 
   return { verdict: 'revise', feedback };
 }
 
+// ---------------------------------------------------------------------------
+// C5 — centralized verdict vocabulary + senior-reply chrome hygiene
+// ---------------------------------------------------------------------------
+
+/** The flow's canonical two-value verdict, as written to bureau_*_reviews. */
+export type FlowVerdict = 'approved' | 'amend';
+
+/**
+ * The ONE place the department maps a senior's raw verdict word to the flow's
+ * canonical vocabulary. Before this, each cycle inlined
+ * `review.verdict === 'approve' ? 'approved' : 'amend'` and the narrator
+ * separately special-cased `'revise' || 'amend'` — drift waiting to happen.
+ */
+export const VERDICT_SYNONYMS: Record<string, FlowVerdict> = {
+  approve: 'approved',
+  approved: 'approved',
+  revise: 'amend',
+  amend: 'amend',
+  reject: 'amend'
+};
+
+/** Normalize any verdict synonym to the canonical FlowVerdict; unknown strings
+ *  pass through unchanged (so callers can still see an unexpected value). */
+export function normalizeVerdict(v: string | null | undefined): FlowVerdict | string {
+  if (!v) return '';
+  const key = v.trim().toLowerCase();
+  return VERDICT_SYNONYMS[key] ?? v;
+}
+
+/**
+ * Strip leading GUI chrome lines ("Copy", "Edit", "Worked for <duration>", and
+ * leading blanks) that ZCode/GLM reply bubbles prepend before the review text,
+ * so the captured `raw`/feedback is the review itself, not the app's copy-button
+ * chrome. Stops at the first real line; preserves everything after. Pure.
+ */
+export function stripSeniorReplyChrome(raw: string): string {
+  if (!raw) return '';
+  const lines = raw.split(/\r?\n/);
+  let startIdx = 0;
+  while (startIdx < lines.length) {
+    const trimmed = lines[startIdx].trim();
+    if (!trimmed) {
+      startIdx++;
+      continue;
+    }
+    if (/^(?:copy|edit)$/i.test(trimmed) || /^worked for\b/i.test(trimmed)) {
+      startIdx++;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(startIdx).join('\n');
+}
+
 /**
  * Distinctive visible chrome of the CDP senior's EMPTY home screen — text that
  * renders ONLY before a conversation has started. Calibrated live against
@@ -1285,7 +1339,9 @@ export class ZCodeSenior implements SeniorDriver {
       // home-screen chrome fail-close to a spurious REVISE — the very bug this
       // guards against. `raw` falls back to `full` when the prompt boundary isn't
       // found, so the single-round case is unchanged.
-      const raw = sliceAfterPrompt(full, prompt) || full;
+      // C5: strip the GUI reply chrome ("Copy"/"Edit"/"Worked for …") before any
+      // guard or parse, so the checks and the recorded feedback see the review text.
+      const raw = stripSeniorReplyChrome(sliceAfterPrompt(full, prompt) || full);
       // Guard against the phantom-REVISE loop: if we captured the app's empty
       // home screen instead of a review, FAIL — never let `parseVerdict` turn that
       // chrome into a spurious REVISE that re-dispatches the whole task.
