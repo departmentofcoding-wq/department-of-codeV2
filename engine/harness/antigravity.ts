@@ -500,8 +500,14 @@ export async function probeJuniorCdpHealth(
     if (opts.deps?.getWebSocketUrl) {
       wsUrl = await opts.deps.getWebSocketUrl(port, timeoutMs);
     } else {
-      const v = await cdpGet(port, '/json/version', timeoutMs);
-      wsUrl = typeof v?.webSocketDebuggerUrl === 'string' ? v.webSocketDebuggerUrl : null;
+      // Probe the PAGE window ws (from /json/list) the junior actually runs on —
+      // the same target AntigravitySession drives Runtime.evaluate against — NOT
+      // the browser-level /json/version endpoint. VALIDATED LIVE 2026-09-07 against
+      // Antigravity IDE 1.107 on junior A: Runtime.evaluate on the PAGE target
+      // returns 2, but on the BROWSER target it errors `-32601 'Runtime.evaluate'
+      // wasn't found` — so the old /json/version probe fail-closed EVERY healthy
+      // junior and would brick the queue (senior F3, confirmed).
+      wsUrl = await findMainWindowWs(port).catch(() => null);
     }
 
     if (!wsUrl) return false;

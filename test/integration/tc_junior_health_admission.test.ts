@@ -67,6 +67,24 @@ function createTestCdpServer(initialMode: 'wedged' | 'healthy' = 'wedged', socke
         );
         return;
       }
+      // The probe now targets the PAGE window ws (via findMainWindowWs → /json/list),
+      // NOT the browser endpoint — a healthy Antigravity's browser target rejects
+      // Runtime.evaluate with -32601 (validated live 2026-09-07). Serve a page target
+      // pointing at the same fake WS, so the wedged/healthy WS behavior still governs.
+      if (req.url === '/json/list') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify([
+            {
+              type: 'page',
+              title: 'Workbench',
+              url: 'https://127.0.0.1/workbench',
+              webSocketDebuggerUrl: `ws://127.0.0.1:${serverPort}/devtools/page/1`
+            }
+          ])
+        );
+        return;
+      }
       res.writeHead(404);
       res.end();
     });
