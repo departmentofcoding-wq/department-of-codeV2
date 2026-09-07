@@ -24,8 +24,6 @@ export const DELIVERY_RESUME_BUDGET = 3;
 const NOT_MERGEABLE_RE = /is not mergeable|cannot be cleanly created/i;
 const TRANSIENT_RE = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|network|EAI_AGAIN|temporarily|rate limit/i;
 
-const DELIVERY_KINDS = ['pr.create', 'pr.merge', 'delivery.freshen', 'work.diff-review'] as const;
-
 interface DeadDelivery {
   kind: string;
   error: string;
