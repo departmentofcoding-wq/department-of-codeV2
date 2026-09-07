@@ -9,6 +9,7 @@ import { AGENT_PROGRESS_LABEL_RE, ensureCompleted, waitForAgentIdle, type AgentA
 import { killProcessesByImageName, processImageName } from './process-control.ts';
 import { makeInactivityGuard } from './inactivity-guard.ts';
 import { acquireZCodeLock, type ZCodeLockOptions } from './zcode-lock.ts';
+import { withSeniorReviewLock } from './senior-review-lock.ts';
 
 /**
  * Senior review harness — "run the senior with code."
@@ -517,23 +518,27 @@ export class ClaudeCliSenior implements SeniorDriver {
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    const { system, user } = buildReviewPrompt(input);
-    const bin = findSeniorBinary(this.cfg);
-    const model = resolveClaudeSeniorModel(input, this.model);
-    const args = buildClaudeSeniorArgs({
-      system,
-      model,
-      allowedTools: resolveClaudeSeniorAllowedTools(),
-      fallbackModel: resolveClaudeSeniorFallbackModel()
+    // Department-wide senior-review mutex: never run two senior reviews at once
+    // (delivery re-review vs regular review — the N15 contention scar).
+    return withSeniorReviewLock(async () => {
+      const { system, user } = buildReviewPrompt(input);
+      const bin = findSeniorBinary(this.cfg);
+      const model = resolveClaudeSeniorModel(input, this.model);
+      const args = buildClaudeSeniorArgs({
+        system,
+        model,
+        allowedTools: resolveClaudeSeniorAllowedTools(),
+        fallbackModel: resolveClaudeSeniorFallbackModel()
+      });
+      const stdout = await this.spawnClaude(bin, args, user);
+      // stream-json stdout is newline-delimited events; pull the final review text
+      // + usage. Fall back to the raw stdout if nothing parsed (the VERDICT marker
+      // survives JSON escaping, so parseVerdict still works on either).
+      const parsed = parseClaudeStreamJson(stdout);
+      const raw = parsed.text || stdout;
+      const { verdict, feedback } = parseVerdict(raw);
+      return { senior: this.cfg.id, verdict, feedback, raw, model, usage: parsed.usage };
     });
-    const stdout = await this.spawnClaude(bin, args, user);
-    // stream-json stdout is newline-delimited events; pull the final review text
-    // + usage. Fall back to the raw stdout if nothing parsed (the VERDICT marker
-    // survives JSON escaping, so parseVerdict still works on either).
-    const parsed = parseClaudeStreamJson(stdout);
-    const raw = parsed.text || stdout;
-    const { verdict, feedback } = parseVerdict(raw);
-    return { senior: this.cfg.id, verdict, feedback, raw, model, usage: parsed.usage };
   }
 
   private spawnClaude(bin: string, args: string[], stdin: string): Promise<string> {
@@ -1177,19 +1182,23 @@ export class ZCodeSenior implements SeniorDriver {
   }
 
   async review(input: SeniorReviewInput): Promise<SeniorVerdict> {
-    // Single-instance mutex (scar 2026-08-28): a second driver attaching to the
-    // ONE ZCode instance resets the first's in-flight review with its
-    // newConversation(). Hold the lock for the whole review — including the
-    // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
-    // holder keeps it.
-    const lock = await acquireZCodeLock(this.lockOpts);
-    try {
-      // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
-      // went down), and if it dies MID-review, relaunch once and retry.
-      return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
-    } finally {
-      lock.release();
-    }
+    // Department-wide senior-review mutex (outer): never run two senior reviews
+    // at once, regardless of senior — delivery re-review vs regular review.
+    return withSeniorReviewLock(async () => {
+      // Single-instance mutex (scar 2026-08-28, inner): a second driver attaching
+      // to the ONE ZCode instance resets the first's in-flight review with its
+      // newConversation(). Hold the lock for the whole review — including the
+      // mid-death relaunch retry — and fail fast with "ZCode busy" if a live
+      // holder keeps it. Acquisition order is always senior-review → zcode.
+      const lock = await acquireZCodeLock(this.lockOpts);
+      try {
+        // Self-heal instead of dying: ensure ZCode is up (relaunching it if it
+        // went down), and if it dies MID-review, relaunch once and retry.
+        return await runSeniorWithRecovery(this.cfg, () => this.reviewOnce(input));
+      } finally {
+        lock.release();
+      }
+    });
   }
 
   private async reviewOnce(input: SeniorReviewInput): Promise<SeniorVerdict> {

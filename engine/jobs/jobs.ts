@@ -147,7 +147,12 @@ export function claimJob(
          WHERE state = 'pending'
            AND (run_after IS NULL OR run_after <= ?)
            ${kindFilter}
-         ORDER BY created_at ASC, id ASC
+         ORDER BY
+           -- Lane isolation: regular-flow kinds (plan/dispatch/work) are claimed
+           -- before delivery kinds so a burst of heavy delivery/freshen jobs
+           -- can't starve live task work; FIFO within each lane.
+           (CASE WHEN kind IN ('pr.create','pr.merge','delivery.freshen','work.diff-review') THEN 1 ELSE 0 END) ASC,
+           created_at ASC, id ASC
          LIMIT 1
        )
        RETURNING *`,
