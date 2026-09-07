@@ -52,6 +52,10 @@ export interface JuniorDispatchPayload {
    *  the junior's walkthrough. Set by the plan cycle's implementation dispatch so
    *  the flow reaches a work review instead of dead-ending after the code lands. */
   chainWorkReview?: boolean;
+  /** F4: when true, on successful completion enqueue a `work.diff-review` so the
+   *  delivery-gate senior re-reads the fixed diff (the diff-review-amend fix loop,
+   *  task stays at needs-review). */
+  chainDiffReview?: boolean;
   /** Carried across work-review fix rounds so the SAME senior re-reviews and the
    *  chained work.cycle knows which senior/model to use. */
   workSeniorId?: string;
@@ -603,6 +607,18 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
             ...(payload.workSeniorId ? { seniorId: payload.workSeniorId } : {}),
             ...(payload.workSeniorModel ? { seniorModel: payload.workSeniorModel } : {})
           },
+          max_attempts: 1
+        });
+      }
+      // F4: a diff-review-fix dispatch chains back into work.diff-review so the
+      // delivery-gate senior re-reads the fixed diff at the new tip (the task
+      // stays at needs-review throughout — no illegal transition). On approve it
+      // delivers; on amend it loops, bounded by the diff-review-fix ceiling.
+      if (payload.chainDiffReview && dispatch.task_id) {
+        enqueueJob(ctx.db, {
+          kind: 'work.diff-review',
+          task_id: dispatch.task_id,
+          payload: { taskId: dispatch.task_id },
           max_attempts: 1
         });
       }

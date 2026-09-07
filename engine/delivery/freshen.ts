@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { AttributionTuple, BureauTaskRow, DbConnection, JobContext } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
 import { notifyOperator } from '../state/notifications.ts';
@@ -172,6 +174,31 @@ export async function handleDeliveryFreshen(ctx: JobContext): Promise<void> {
       'FRESHEN_DIRTY_TREE',
       taskId
     );
+  }
+
+  // Activate the `union` merge driver for the append-only ledgers even on OLD
+  // branches that predate main's tracked .gitattributes. Without this, freshen
+  // false-conflicts on docs/mutation-evidence-phase*.md (the 2026-09-06 C4 blind
+  // spot: the branch's worktree had no union rule, so the ledger textually
+  // conflicted and the whole freshen parked, though main merges it cleanly).
+  // Written to the repo-local, UNtracked info/attributes so it never touches the
+  // working tree / porcelain / the merge commit — a pure merge-behavior hint that
+  // keeps BOTH sides of an append-only log (drops no one's work).
+  try {
+    // `--git-path` returns a path relative to the git() cwd (the worktree) or
+    // absolute; path.resolve against the worktree normalizes both.
+    const attrPath = await git(['rev-parse', '--git-path', 'info/attributes']);
+    const abs = path.resolve(wtRow.path, attrPath);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const rule = 'docs/mutation-evidence-phase*.md merge=union';
+    let existing = '';
+    try { existing = fs.readFileSync(abs, 'utf-8'); } catch { /* no file yet */ }
+    if (!existing.includes('merge=union')) {
+      fs.writeFileSync(abs, (existing && !existing.endsWith('\n') ? existing + '\n' : existing) + rule + '\n');
+    }
+  } catch {
+    // Best-effort: if the attribute can't be set, the merge still runs — a ledger
+    // conflict then surfaces as a normal (aborted) conflict, exactly as before.
   }
 
   try {
