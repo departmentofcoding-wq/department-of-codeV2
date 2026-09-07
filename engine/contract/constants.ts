@@ -121,6 +121,8 @@ export const BUDGET_META_KEYS = {
   VERIFY_STRUCTURAL_CMD: 'verify:structural_cmd'
 } as const;
 
+export const DEFAULT_VERIFY_TIMEOUT_MS = 120_000;
+
 export const HARNESS_META_KEYS = {
   LEASE_MS: 'harness:lease_ms',
   LEASE_HEARTBEATS_CEILING: 'harness:lease:heartbeats'
@@ -242,4 +244,10 @@ export const WATCHDOG_ATTRIBUTION = {
   actor_role: 'system',
   ...DETERMINISTIC_ATTRIBUTION
 } as const;
+
+export const JUNIOR_HEALTH_META_KEYS = {
+  COOLDOWN_PREFIX: 'junior:cooldown:'
+} as const;
+
+export const DEFAULT_JUNIOR_COOLDOWN_MS = 60_000;
 

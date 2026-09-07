@@ -57,10 +57,10 @@ describe.each(testImplementations)('Reconciler reconcileQueuedTasks ($name)', ({
     cleanup();
   });
 
-  it('enqueues exactly one plan.cycle for a queued task that has none', () => {
+  it('enqueues exactly one plan.cycle for a queued task that has none', async () => {
     insertTask(db, 'task-stranded', 'queued');
 
-    const enqueued = reconcileQueuedTasks(db);
+    const enqueued = await reconcileQueuedTasks(db, { probe: async () => true });
     expect(enqueued).toEqual(['task-stranded']);
 
     const jobs = db.all<{ id: string; task_id: string; state: string }>(
@@ -72,17 +72,17 @@ describe.each(testImplementations)('Reconciler reconcileQueuedTasks ($name)', ({
     expect(jobs[0].state).toBe('pending');
   });
 
-  it('is idempotent: a second sweep enqueues nothing and leaves exactly one job', () => {
+  it('is idempotent: a second sweep enqueues nothing and leaves exactly one job', async () => {
     insertTask(db, 'task-stranded', 'queued');
 
-    expect(reconcileQueuedTasks(db)).toEqual(['task-stranded']);
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual(['task-stranded']);
+    expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual([]);
 
     const jobs = db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`);
     expect(jobs).toHaveLength(1);
   });
 
-  it('is bounded: does not re-enqueue for a task whose earlier cycle already failed/dead', () => {
+  it('is bounded: does not re-enqueue for a task whose earlier cycle already failed/dead', async () => {
     insertTask(db, 'task-failed-cycle', 'queued');
     // Simulate a cycle that already ran and terminally failed.
     const job = enqueueJob(db, {
@@ -94,18 +94,18 @@ describe.each(testImplementations)('Reconciler reconcileQueuedTasks ($name)', ({
     });
     db.run(`UPDATE bureau_jobs SET state = 'dead' WHERE id = ?`, job.id);
 
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual([]);
 
     const jobs = db.all<{ state: string }>(`SELECT state FROM bureau_jobs WHERE kind = 'plan.cycle'`);
     expect(jobs).toHaveLength(1);
     expect(jobs[0].state).toBe('dead');
   });
 
-  it('ignores tasks that are not queued', () => {
+  it('ignores tasks that are not queued', async () => {
     insertTask(db, 'task-claimed', 'claimed');
     insertTask(db, 'task-blocked', 'blocked');
 
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual([]);
     expect(db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`)).toHaveLength(0);
   });
 });

@@ -84,6 +84,9 @@ describe('N17: claim-time assignment + capacity queue', () => {
   beforeEach(() => {
     savedJuniorDefault = process.env.JUNIOR_DEFAULT;
     delete process.env.JUNIOR_DEFAULT;
+    setAntigravityDriverOverride({
+      runCommand: async () => ({ transcript: 'ok', launched: false })
+    });
   });
   afterEach(() => {
     setAntigravityDriverOverride(null);
@@ -92,14 +95,14 @@ describe('N17: claim-time assignment + capacity queue', () => {
     else process.env.JUNIOR_DEFAULT = savedJuniorDefault;
   });
 
-  it('T-N17-1: five filed tasks → one sweep admits exactly the roster size (2), FIFO by created_at, each pinned with a pending plan.cycle', () => {
+  it('T-N17-1: five filed tasks → one sweep admits exactly the roster size (2), FIFO by created_at, each pinned with a pending plan.cycle', async () => {
     const db = createFakeDb();
     const base = Date.now() - 60_000;
     for (let i = 1; i <= 5; i++) {
       seedTask(db, `t${i}`, { createdAt: new Date(base + i * 1000).toISOString() });
     }
 
-    const admitted = reconcileQueuedTasks(db);
+    const admitted = await reconcileQueuedTasks(db);
     expect(admitted).toEqual(['t1', 't2']);
 
     // Both admitted tasks are pinned (junior + senior + timestamp) and hold a
@@ -143,13 +146,13 @@ describe('N17: claim-time assignment + capacity queue', () => {
     }
   });
 
-  it('T-N17-2: FIFO continues — when the first in-flight task reaches needs-review, the next queued task is admitted onto the freed junior', () => {
+  it('T-N17-2: FIFO continues — when the first in-flight task reaches needs-review, the next queued task is admitted onto the freed junior', async () => {
     const db = createFakeDb();
     const base = Date.now() - 60_000;
     for (let i = 1; i <= 3; i++) {
       seedTask(db, `t${i}`, { createdAt: new Date(base + i * 1000).toISOString() });
     }
-    expect(reconcileQueuedTasks(db)).toEqual(['t1', 't2']);
+    expect(await reconcileQueuedTasks(db)).toEqual(['t1', 't2']);
 
     const t1Junior = db.get<any>(
       'SELECT assigned_junior FROM bureau_tasks WHERE id = ?', 't1'
@@ -159,7 +162,7 @@ describe('N17: claim-time assignment + capacity queue', () => {
     db.run(`UPDATE bureau_tasks SET state = 'needs-review' WHERE id = 't1'`);
     expect(juniorIsOccupied(db, t1Junior)).toBe(false);
 
-    const admitted = reconcileQueuedTasks(db);
+    const admitted = await reconcileQueuedTasks(db);
     expect(admitted).toEqual(['t3']);
     const t3 = db.get<any>(
       'SELECT assigned_junior FROM bureau_tasks WHERE id = ?', 't3'
@@ -171,30 +174,30 @@ describe('N17: claim-time assignment + capacity queue', () => {
     ).toBe('pending');
   });
 
-  it('T-N17-3: blocked and archived tasks free their junior too (the queue never starves behind a parked task)', () => {
+  it('T-N17-3: blocked and archived tasks free their junior too (the queue never starves behind a parked task)', async () => {
     const db = createFakeDb();
     seedTask(db, 't1', { assignedJunior: 'A', assignedSenior: 'claude', state: 'claimed' });
     seedTask(db, 't2', { assignedJunior: 'B', assignedSenior: 'claude', state: 'claimed' });
     seedTask(db, 't3');
 
     // Roster fully busy → nothing admitted, nothing assigned, no agent work.
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db)).toEqual([]);
     expect(
       db.get<any>('SELECT assigned_junior FROM bureau_tasks WHERE id = ?', 't3').assigned_junior
     ).toBeNull();
 
     // Operator blocks t1 (senior stall exhaustion etc.) → A frees.
     db.run(`UPDATE bureau_tasks SET state = 'blocked' WHERE id = 't1'`);
-    expect(reconcileQueuedTasks(db)).toEqual(['t3']);
+    expect(await reconcileQueuedTasks(db)).toEqual(['t3']);
     expect(
       db.get<any>('SELECT assigned_junior FROM bureau_tasks WHERE id = ?', 't3').assigned_junior
     ).toBe('A');
 
     // Archiving works the same way for a claimed task.
     seedTask(db, 't4');
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db)).toEqual([]);
     db.run(`UPDATE bureau_tasks SET archived_at = ? WHERE id = 't2'`, now());
-    expect(reconcileQueuedTasks(db)).toEqual(['t4']);
+    expect(await reconcileQueuedTasks(db)).toEqual(['t4']);
     expect(
       db.get<any>('SELECT assigned_junior FROM bureau_tasks WHERE id = ?', 't4').assigned_junior
     ).toBe('B');
@@ -388,7 +391,7 @@ describe('N17: claim-time assignment + capacity queue', () => {
     expect(span).toBeTruthy();
   });
 
-  it('T-N17-9: a capacity-deferred cycle row (done, round 0) is reset by the next sweep; a DEAD cycle row is left to the operator', () => {
+  it('T-N17-9: a capacity-deferred cycle row (done, round 0) is reset by the next sweep; a DEAD cycle row is left to the operator', async () => {
     const db = createFakeDb();
     const t = now();
 
@@ -400,7 +403,7 @@ describe('N17: claim-time assignment + capacity queue', () => {
       t,
       t
     );
-    expect(reconcileQueuedTasks(db)).toEqual(['deferred']);
+    expect(await reconcileQueuedTasks(db)).toEqual(['deferred']);
     expect(
       db.get<any>('SELECT state FROM bureau_jobs WHERE id = ?', 'plan.cycle:deferred')?.state
     ).toBe('pending');
@@ -417,7 +420,7 @@ describe('N17: claim-time assignment + capacity queue', () => {
       t,
       t
     );
-    expect(reconcileQueuedTasks(db)).toEqual([]);
+    expect(await reconcileQueuedTasks(db)).toEqual([]);
     expect(
       db.get<any>('SELECT state FROM bureau_jobs WHERE id = ?', 'plan.cycle:failed-cycle')?.state
     ).toBe('dead');

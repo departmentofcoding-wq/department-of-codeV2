@@ -5,7 +5,6 @@ import path from 'node:path';
 import { createRealSqliteDb } from '../fixtures/db_factory.ts';
 import { rekickTaskFlow } from '../../engine/flow/rekick.ts';
 import { ensureTaskAssignment } from '../../engine/flow/assignment.ts';
-import { reconcileQueuedTasks } from '../../engine/flow/reconcile.ts';
 import { planCycleJobId } from '../../engine/jobs/ids.ts';
 import type { DbConnection } from '../../engine/contract/types.ts';
 

@@ -423,8 +423,10 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
           folder: workFolder,
           requireFolder,
           freshConversation: payload.freshConversation,
-          signal: combinedSignal
-        }
+          signal: combinedSignal,
+          db: ctx.db
+        },
+        cfg => recoverJuniorRunning(cfg, { timeoutMs: JUNIOR_PORT_WAIT_MS, db: ctx.db, deps: { findWindow: findMainWindowWs } })
       );
 
       // Persist plan/walkthrough/full-output as reviewable department data.

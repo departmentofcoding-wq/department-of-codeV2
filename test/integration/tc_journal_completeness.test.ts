@@ -254,8 +254,9 @@ describe('tc_journal_completeness: full flow reconstructable from journal alone'
     expect(task).toBeDefined();
     expect(task.state).toBe('queued');
 
-    // 3. Queue admission & Assignment
-    const reconciled = reconcileQueuedTasks(db);
+    // 3. Queue admission & Assignment (reconcileQueuedTasks is async: it CDP-
+    //    health-probes the pinned junior before admission).
+    const reconciled = await reconcileQueuedTasks(db);
     expect(reconciled.length).toBe(1);
 
     // 4. Drain Plan Cycle (Round 1: Revise, Round 2: Approve -> Dispatches junior.dispatch)

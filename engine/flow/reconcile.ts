@@ -1,9 +1,14 @@
 import type { DbConnection } from '../contract/index.ts';
 import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
 import { planCycleJobId } from '../jobs/ids.ts';
-import { DEFAULT_PLAN_ROUNDS_CEILING, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
+import { DEFAULT_PLAN_ROUNDS_CEILING, REVIEW_PR_META_KEYS, DEFAULT_JUNIOR_COOLDOWN_MS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
+import { notifyOperator } from '../state/notifications.ts';
 import { ensureTaskAssignment, juniorIsOccupied, freeJuniors } from './assignment.ts';
+import { assignJunior, resolveJunior, type JuniorConfig } from '../harness/antigravity.ts';
+import { probeJuniorHealth } from '../harness/antigravity-seam.ts';
+import { isJuniorHealthy, setJuniorUnhealthy } from './junior-health.ts';
+import { evaluateAdmissionGate } from './admission_predicate.ts';
 
 /**
  * N17 — the department's task queue manager (evolved from the plain
@@ -11,28 +16,30 @@ import { ensureTaskAssignment, juniorIsOccupied, freeJuniors } from './assignmen
  *
  * Filed tasks are born `queued` and WAIT HERE. A task is admitted — assigned a
  * junior + senior (the claim-time pin, `engine/flow/assignment.ts`) and handed
- * its deterministic `plan.cycle` job — only when a junior has capacity. With
- * two juniors in the roster at most two tasks are in flight at any moment;
- * five filed tasks form a neat FIFO queue (created_at order) instead of all
- * being claimed at once and colliding on the junior windows (the 2026-09-02
- * incident).
+ * its deterministic `plan.cycle` job — only when a junior has capacity and is healthy.
  *
- * Admission rules (fail-closed, same spirit as the old reconciler):
- * - Candidate: `queued`, unarchived, UNASSIGNED, rounds below the plan
- *   ceiling, with no live (pending/running) plan.cycle.
- * - A junior must be FREE (see `juniorIsOccupied`). None free → admit nothing
- *   this sweep; the queue just waits (no journal spam, no claim churn).
- * - Fresh enqueue uses the filing door's deterministic id (`INSERT OR IGNORE`),
- *   so this composes with every other door and can never double-file.
- * - The operator-action rule for FAILED cycles is unchanged: a DEAD cycle row
- *   is never retried here. The single exception is the capacity-defer
- *   signature — a `done` cycle row on a still-unassigned, round-0 task (the
- *   plan-cycle handler deferring for capacity, having done no agent work) —
- *   which is RESET to pending, exactly once, when capacity exists.
+ * 3-Stage Admission Gate:
+ * 1. Capacity check first: Verify free juniors (!juniorIsOccupied(db, j)). If none free,
+ *    halt without any probing or cooldown reads.
+ * 2. Cooldown check second: For candidate juniors, check isJuniorHealthy(db, j). If in
+ *    cooldown, fall through to other free and healthy juniors.
+ * 3. CDP Handshake probe last: Probe ONLY the pinned candidate free junior when there is
+ *    a candidate task to admit. If probe fails, mark cooldown and fall through to another free junior.
+ *
+ * If no free junior is admissible: the sweep halts and candidate tasks wait in FIFO order.
+ * If admitted: assign junior + senior and enqueue plan.cycle.
  *
  * @returns the task ids admitted this sweep, in queue order.
  */
-export function reconcileQueuedTasks(db: DbConnection): string[] {
+export interface ReconcileOptions {
+  probe?: (cfg: JuniorConfig) => Promise<boolean>;
+  probeTimeoutMs?: number;
+}
+
+export async function reconcileQueuedTasks(
+  db: DbConnection,
+  opts: ReconcileOptions = {}
+): Promise<string[]> {
   const ceilingRow = db.get<{ value: string }>(
     'SELECT value FROM bureau_meta WHERE key = ?',
     REVIEW_PR_META_KEYS.REVIEW_PLAN_ROUNDS_CEILING
@@ -55,20 +62,21 @@ export function reconcileQueuedTasks(db: DbConnection): string[] {
   );
 
   const admitted: string[] = [];
+  const probeFn = opts.probe ?? ((cfg: JuniorConfig) => probeJuniorHealth(cfg, { timeoutMs: opts.probeTimeoutMs }));
+
   for (const { id: taskId } of candidates) {
-    // Capacity first: stop at the first task no junior is free for. The queue
-    // is FIFO — a busy roster must not let task 5 leapfrog task 3.
+    // Stage 1: Capacity check first. Stop at first task no junior is free for.
     const free = freeJuniors().filter(j => !juniorIsOccupied(db, j));
-    if (free.length === 0) break;
+    if (free.length === 0) {
+      break;
+    }
 
+    // Operator-action / DEAD-cycle skip — BEFORE any junior probe (senior C3
+    // note #1). A task we will not admit must not open a CDP socket or mark a
+    // junior unhealthy: a DEAD plan.cycle row is never retried here (explicit
+    // operator action), and the single exception is the capacity-defer signature
+    // (a `done` cycle on a still-unassigned, round-0 task) which is reset below.
     const jobId = planCycleJobId(taskId);
-
-    // Operator-action rule check BEFORE assigning — a task we will not admit
-    // must not consume a junior pin either.
-    //   - a DEAD cycle row is never retried here (explicit operator action),
-    //   - the single exception is the capacity-defer signature: a `done` cycle
-    //     row on a still-unassigned, round-0 task (the plan-cycle handler
-    //     deferring for capacity, having done no agent work) — reset it.
     const existing = db.get<{ state: string }>('SELECT state FROM bureau_jobs WHERE id = ?', jobId);
     let resetDeferredCycle = false;
     if (existing) {
@@ -81,10 +89,76 @@ export function reconcileQueuedTasks(db: DbConnection): string[] {
       resetDeferredCycle = true;
     }
 
+    const policy = assignJunior({ taskId });
+    const candidateJuniors = free.includes(policy)
+      ? [policy, ...free.filter(j => j !== policy)]
+      : free;
+
+    let candidateJuniorId: string | null = null;
+    let probeFailedThisTask = false;
+
+    for (const j of candidateJuniors) {
+      // Stage 2: Cooldown check second.
+      const inCooldown = !isJuniorHealthy(db, j);
+      if (inCooldown) {
+        evaluateAdmissionGate({ occupied: false, inCooldown: true });
+        // Cooldown holds: try next free junior
+        continue;
+      }
+
+      // Stage 3: CDP Handshake probe last.
+      const probeOk = await probeFn(resolveJunior(j));
+      const decision = evaluateAdmissionGate({ occupied: false, inCooldown: false, probeResult: probeOk });
+
+      if (decision.action === 'admit') {
+        candidateJuniorId = j;
+        break;
+      } else {
+        // Probe failed: mark unhealthy in bureau_meta with cooldown so subsequent sweeps don't repeatedly probe
+        probeFailedThisTask = true;
+        setJuniorUnhealthy(db, j, DEFAULT_JUNIOR_COOLDOWN_MS, 'probe_failed');
+        journal(db, {
+          kind: 'guardrail',
+          attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
+          taskId,
+          detail: {
+            action: 'junior_unhealthy_hold',
+            junior: j,
+            reason: 'probe_failed'
+          }
+        });
+        // Try next free junior!
+        continue;
+      }
+    }
+
+    if (!candidateJuniorId) {
+      // No free junior is currently healthy and probe-passing. If that is because
+      // every free junior FAILED the CDP probe (not merely cooldown/occupancy),
+      // surface it LOUDLY — a systematically-wrong probe would otherwise brick the
+      // whole queue silently (the senior's C3 concern). Naturally throttled: a
+      // probe-failed junior enters cooldown, so probes only re-run once cooldown
+      // expires, not every 100ms tick.
+      if (probeFailedThisTask) {
+        journal(db, {
+          kind: 'guardrail',
+          attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
+          taskId,
+          detail: { action: 'queue_probe_roster_exhausted', freeRoster: free }
+        });
+        notifyOperator(
+          `queue-probe:${taskId}`,
+          `Queue may be stalled: every free junior failed the CDP health probe for task ${taskId} ` +
+            `(roster: ${free.join(', ')}). Check the junior IDEs / CDP ports — if the juniors ARE up, the ` +
+            `health probe may be misfiring (verify JUNIOR health-probe endpoint semantics).`
+        );
+      }
+      // Break to wait for cooldown/recovery.
+      break;
+    }
+
     // Claim-time assignment: pin junior + senior, once, transactionally.
-    // (No jobId on the span: the assignment precedes the cycle-row insert, and
-    // the journal's job FK demands a real row — the taskId identifies the act.)
-    const ensured = ensureTaskAssignment(db, taskId);
+    const ensured = ensureTaskAssignment(db, taskId, { preferJunior: candidateJuniorId });
     if (ensured.status !== 'assigned') break;
 
     if (resetDeferredCycle) {
