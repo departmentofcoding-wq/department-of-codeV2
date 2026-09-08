@@ -34,6 +34,16 @@ import { evaluateAdmissionGate } from './admission_predicate.ts';
 export interface ReconcileOptions {
   probe?: (cfg: JuniorConfig) => Promise<boolean>;
   probeTimeoutMs?: number;
+  /**
+   * Junior auto-warmup hook: called (fire-and-forget, never awaited) when a
+   * junior fails the CDP probe, so a COLD junior gets opened instead of merely
+   * held (the C3 gap — docs/plan-junior-auto-warmup.md). Return true iff a warm
+   * is in flight for the junior after the call; that drives the quiet rule
+   * below (senior R2 — no operator page during a healthy warm). Default no-op
+   * (returns undefined): unit tests never launch a real app, and the loud C3
+   * behavior is unchanged.
+   */
+  requestWarmup?: (juniorId: string) => boolean | void;
 }
 
 export async function reconcileQueuedTasks(
@@ -96,6 +106,8 @@ export async function reconcileQueuedTasks(
 
     let candidateJuniorId: string | null = null;
     let probeFailedThisTask = false;
+    const probeFailedJuniors: string[] = [];
+    const warmingJuniors: string[] = [];
 
     for (const j of candidateJuniors) {
       // Stage 2: Cooldown check second.
@@ -116,6 +128,7 @@ export async function reconcileQueuedTasks(
       } else {
         // Probe failed: mark unhealthy in bureau_meta with cooldown so subsequent sweeps don't repeatedly probe
         probeFailedThisTask = true;
+        probeFailedJuniors.push(j);
         setJuniorUnhealthy(db, j, DEFAULT_JUNIOR_COOLDOWN_MS, 'probe_failed');
         journal(db, {
           kind: 'guardrail',
@@ -127,6 +140,9 @@ export async function reconcileQueuedTasks(
             reason: 'probe_failed'
           }
         });
+        // AFTER the cooldown mark (the hook may observe/clear it): request a
+        // background warm — a cold junior must be opened, not just held.
+        if (opts.requestWarmup?.(j) === true) warmingJuniors.push(j);
         // Try next free junior!
         continue;
       }
@@ -140,18 +156,36 @@ export async function reconcileQueuedTasks(
       // probe-failed junior enters cooldown, so probes only re-run once cooldown
       // expires, not every 100ms tick.
       if (probeFailedThisTask) {
-        journal(db, {
-          kind: 'guardrail',
-          attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
-          taskId,
-          detail: { action: 'queue_probe_roster_exhausted', freeRoster: free }
-        });
-        notifyOperator(
-          `queue-probe:${taskId}`,
-          `Queue may be stalled: every free junior failed the CDP health probe for task ${taskId} ` +
-            `(roster: ${free.join(', ')}). Check the junior IDEs / CDP ports — if the juniors ARE up, the ` +
-            `health probe may be misfiring (verify JUNIOR health-probe endpoint semantics).`
-        );
+        // Quiet rule (senior R2): a healthy cold start legitimately spans
+        // multiple cooldown windows, and notifyOperator is a bare, undeduped
+        // WARN — paging every window would cry "stalled" 1-3 times during a
+        // HEALTHY auto-warm. Stay quiet (a `queue_probe_warming` span) while a
+        // warm is in flight for every junior that probe-failed this sweep; go
+        // loud only when some probe-failed junior has NO warm in flight (warm
+        // failed into backoff, cap tripped, or warming disabled).
+        const allWarming =
+          probeFailedJuniors.length > 0 && probeFailedJuniors.every(j => warmingJuniors.includes(j));
+        if (allWarming) {
+          journal(db, {
+            kind: 'system',
+            attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
+            taskId,
+            detail: { action: 'queue_probe_warming', freeRoster: free, warming: warmingJuniors }
+          });
+        } else {
+          journal(db, {
+            kind: 'guardrail',
+            attribution: { actor_role: 'system', provider: 'deterministic', model: 'queue-policy', account: null },
+            taskId,
+            detail: { action: 'queue_probe_roster_exhausted', freeRoster: free, warming: warmingJuniors }
+          });
+          notifyOperator(
+            `queue-probe:${taskId}`,
+            `Queue may be stalled: every free junior failed the CDP health probe for task ${taskId} ` +
+              `(roster: ${free.join(', ')}). Check the junior IDEs / CDP ports — if the juniors ARE up, the ` +
+              `health probe may be misfiring (verify JUNIOR health-probe endpoint semantics).`
+          );
+        }
       }
       // Break to wait for cooldown/recovery.
       break;

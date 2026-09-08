@@ -146,6 +146,41 @@ port) and retries the run **once** inside the same dispatch attempt, instead of
 burning all attempts against the same dead instance. Non-wedged failures
 propagate untouched.
 
+## Junior auto-warmup (the producer behind the C3 admission gate)
+
+Since C3, the queue manager probes a junior's CDP health BEFORE admitting a task
+(`engine/flow/reconcile.ts`). The probe never launches, so a merely **cold**
+(not-yet-started) junior used to fail admission forever — the department wedged
+with tasks queued and no code path opening the IDE (see
+`docs/plan-junior-auto-warmup.md`). The warmer (`engine/flow/junior-warmer.ts`,
+owned by the Runner) restores auto-open **off the poll loop**:
+
+- **Demand-driven:** at boot only when queued work is waiting, and on every
+  admission probe failure. A junior closed with an empty queue stays closed;
+  one closed with work waiting reopens. No blind periodic re-warm.
+- **"Warm succeeded" = the admission probe passes:** after `ensureJuniorRunning`
+  brings the port up, a readiness loop polls the SAME probe the gate uses (page
+  ws + `Runtime.evaluate` handshake) — never merely window presence.
+- **Never blocks the runner:** launches are fire-and-forget, deduped per junior,
+  backoff-paced (60s after a failure), and capped at 180s per attempt.
+- **Honest paging:** while a warm is in flight the sweep journals a quiet
+  `queue_probe_warming` span; the loud `queue_probe_roster_exhausted` operator
+  notify fires only when a probe-failed junior has no warm in flight (warm
+  failed, cap tripped, or warming disabled).
+
+**Operator switch** — because the warmer deliberately ignores the admission
+cooldown (a cooldown-gated warmer would deadlock on the mark the sweep just
+made), the keep-juniors-down control is its own key:
+
+```
+npm run junior:warmup -- status   # switch + per-junior cooldown state
+npm run junior:warmup -- off      # stop auto-opening juniors (journaled human act)
+npm run junior:warmup -- on       # resume warming
+```
+
+With warming off, cold juniors hold the queue as before C3's fix — `npm run
+junior` (manual force-open) remains the recovery path.
+
 ## Calibration notes (version-specific — 2.8.1)
 
 - **Chat input:** a `contenteditable` `DIV` whose `aria-label`/`placeholder` is

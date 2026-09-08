@@ -1066,3 +1066,59 @@ Changes:
 
 Executed 2026-09-06 on branch `bureau-wt-356f2ea7-e5fc-4702-9753-928d8fc36ed6`; all 4 mutations reproduced → restored → re-verified in one sitting, failure output captured verbatim from `npx vitest run`.
 
+
+## M-AW1 to M-AW7 — Junior Auto-Warmup Behind the C3 Admission Gate
+
+Branch `wt/junior-auto-warmup`. Restores auto-open of cold Antigravity juniors: a background,
+deduped, backoff-paced warmer (`engine/flow/junior-warmer.ts`) opens juniors off the runner's
+poll loop; the admission gate stays a fail-closed CDP probe whose probe failures now request a
+warm (hook in `engine/flow/reconcile.ts`, wired by `runner/main.ts`), with a quiet rule so a
+healthy >60s cold start doesn't page the operator (senior round-1 R1/R2, Rec3–Rec5 — plan
+`docs/plan-junior-auto-warmup.md` rev 2). "Warm succeeded" is defined as "the admission probe
+passes" (readiness loop over `probeJuniorHealth`), never merely window presence.
+
+All 7 mutations reproduced → restored → re-verified in one sitting (2026-09-08), failure names
+captured verbatim from `npx vitest run`; after the final restore, the three touched test files
+re-ran green (32/32) and `tsc --noEmit` was clean.
+
+- **M-AW1 (Drop the warm request on probe failure):**
+  - **Guard:** `engine/flow/reconcile.ts` Stage-3 probe-fail branch calls `opts.requestWarmup?.(j)` — the producer that makes the C3 gate passable for a cold junior.
+  - **Mutation:** `if (false && opts.requestWarmup?.(j) === true) warmingJuniors.push(j);`
+  - **Catcher:** `test/unit/reconcile.test.ts` → `the un-wedge path: a cold junior is held + warmed on sweep 1, then admitted on sweep 2 once the warm cleared cooldown and the probe passes` (FAIL, both DB variants — sweep 2 admits `[]`, today's wedge exactly) and `probe failure requests a background warm for every probed junior` (FAIL, hook never called).
+  - **Restore:** Call restored; both tests green.
+
+- **M-AW2 (Gate the warmer on the admission cooldown — the §4.1 self-deadlock):**
+  - **Guard:** `JuniorWarmer.request` must NOT consult `isJuniorHealthy` — the sweep's probe-fail path itself marks the 60s cooldown, so a cooldown-gated warmer is blocked by the very mark that triggered it (a permanent wedge).
+  - **Mutation:** Added `if (!isJuniorHealthy(this.db, juniorId)) return false;` at the top of `request`.
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `warms a cold junior: ensure -> probe readiness -> clears the admission cooldown...` (FAIL — request refused, `expected true to be false` class) and `a failed warm (ensure throws)... backs off` (FAIL).
+  - **Restore:** Guard removed (the warmer's gates remain in-flight dedupe + failure backoff only); tests green.
+
+- **M-AW3 (Declare warm success at port/ensure time, skipping probe readiness — senior R1):**
+  - **Guard:** `runWarmSequence` polls `probeJuniorHealth` (page ws + `Runtime.evaluate` handshake — the gate's own criterion) until true; window/port presence alone is not success.
+  - **Mutation:** After `ensure`, immediately cleared cooldown + journaled `junior_warmup_succeeded` + returned true, bypassing the readiness loop.
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `R1: success requires the ADMISSION PROBE to pass — ensure alone (probe never ready) is a failure, not a success` (FAIL — succeeded span written, no failure), plus `warms a cold junior...` and `readiness can arrive late...` (FAIL, 3 catchers).
+  - **Restore:** Readiness loop restored; tests green.
+
+- **M-AW4 (Remove in-flight dedupe):**
+  - **Guard:** `request` returns early (true) while a warm for the junior is already in flight — the 100ms sweep must not spawn parallel launches.
+  - **Mutation:** Deleted the `if (this.inFlight.has(juniorId)) return true;` check.
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `dedupes: while a warm is in flight, further requests return true without a second ensure` (FAIL — `expect(ensure).toHaveBeenCalledTimes(1)`).
+  - **Restore:** Dedupe restored; test green.
+
+- **M-AW5 (Remove failure backoff):**
+  - **Guard:** A failed warm sets `lastFailedAt`; re-requests inside `WARM_RETRY_BACKOFF_MS` (60s) are refused so a broken install can't thrash launch attempts.
+  - **Mutation:** `if (false && lastFail !== undefined && ...)`.
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `a failed warm (ensure throws) journals a guardrail span, sets cooldown, and backs off — a re-request inside the backoff returns false, after it returns true` (FAIL — re-request inside backoff returned true).
+  - **Restore:** Backoff restored; test green.
+
+- **M-AW6 (Move in-flight cleanup off the race chain — senior Rec4):**
+  - **Guard:** The `Promise.race([attempt, cap])` chain's `.finally` deletes the in-flight entry, so a HUNG ensure is evicted when the 180s absolute cap fires.
+  - **Mutation:** Removed the race-chain `.finally`; moved the delete to the ends of the inner `runWarmSequence` try/catch (unreachable while the ensure hangs).
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `Rec4 absolute cap: a HUNG ensure cannot pin the in-flight entry — the cap clears it and a fresh warm may start` (FAIL — `pollUntil timed out after 10000ms waiting for: warm for A settled`; the entry stayed pinned).
+  - **Restore:** Race-chain cleanup restored; test green.
+
+- **M-AW7 (Disable the quiet rule — senior R2):**
+  - **Guard:** While every probe-failed junior has a warm in flight, the sweep journals a quiet `queue_probe_warming` span instead of `queue_probe_roster_exhausted` + operator page.
+  - **Mutation:** `const allWarming = false && ...`.
+  - **Catcher:** `test/unit/reconcile.test.ts` → `quiet rule (R2): with every probe-failed junior warming, the sweep journals queue_probe_warming and does NOT page` (FAIL, both DB variants) + `the un-wedge path` (FAIL, both variants), and `test/integration/tc_junior_health_admission.test.ts` → `Junior auto-warmup: cold junior (probe fails) requests a background warm; once the warm clears cooldown + the endpoint answers, the next sweep admits` (FAIL — exhaust span present).
+  - **Restore:** Quiet rule restored; all three files green.

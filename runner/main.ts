@@ -17,6 +17,8 @@ import {
 import { reconcileQueuedTasks } from '../engine/flow/reconcile.ts';
 import { isJuniorWedgedWindowError, resolveJunior } from '../engine/harness/antigravity.ts';
 import { setJuniorUnhealthy } from '../engine/flow/junior-health.ts';
+import { JuniorWarmer } from '../engine/flow/junior-warmer.ts';
+import { freeJuniors } from '../engine/flow/assignment.ts';
 import { DEFAULT_JUNIOR_COOLDOWN_MS } from '../engine/contract/constants.ts';
 import { reconcileDeliveries } from '../engine/flow/reconcile_deliveries.ts';
 import { getGitHeadSha, isCodeStale } from '../engine/harness/code-version.ts';
@@ -115,11 +117,19 @@ export class Runner {
    */
   private excludeKinds: readonly string[];
 
+  /**
+   * Junior auto-warmup owner (docs/plan-junior-auto-warmup.md): opens cold
+   * juniors in the background so the C3 admission gate has something to pass.
+   * Injectable for tests; production wiring happens here, reaching both
+   * executors (the console embeds this Runner).
+   */
+  private warmer: JuniorWarmer;
+
   constructor(
     db: DbConnection,
     config?: Partial<RunnerConfig>,
     notifier?: OperatorNotifier,
-    options?: { excludeKinds?: readonly string[] }
+    options?: { excludeKinds?: readonly string[]; warmer?: JuniorWarmer }
   ) {
     this.id = `runner-${crypto.randomUUID()}`;
     this.db = db;
@@ -132,6 +142,7 @@ export class Runner {
     });
     this.notifier = notifier ?? defaultNotifier;
     this.excludeKinds = options?.excludeKinds ?? [];
+    this.warmer = options?.warmer ?? new JuniorWarmer(db);
 
     if (!getWorkspaceProviderOverride()) {
       setWorkspaceProvider(new GitWorkspaceProvider());
@@ -165,6 +176,26 @@ export class Runner {
       }
     } catch {
       /* best-effort telemetry */
+    }
+
+    // Junior auto-warmup, demand-gated (senior Rec3): only when queued work is
+    // actually waiting does boot bring the roster up, so an operator opening
+    // the console to an empty queue spawns no IDEs. Fire-and-forget — a warmer
+    // fault must never fail boot, and the 100ms loop must never block on a
+    // cold start (plan §2). A task filed later cold-starts through the
+    // admission gate's own probe_failed trigger.
+    try {
+      const waiting = this.db.get<{ n: number }>(
+        `SELECT COUNT(*) n FROM bureau_tasks
+         WHERE state = 'queued' AND archived_at IS NULL AND assigned_junior IS NULL`
+      );
+      if ((waiting?.n ?? 0) > 0) {
+        const roster = freeJuniors();
+        for (const junior of roster) this.warmer.request(junior, 'boot');
+        log('INFO', 'junior_boot_warm', { runnerId: this.id, queued: waiting?.n, roster });
+      }
+    } catch {
+      /* best-effort warm-up */
     }
 
     // Start Heartbeat Loop
