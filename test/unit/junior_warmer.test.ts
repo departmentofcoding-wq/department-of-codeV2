@@ -8,6 +8,7 @@ import {
 } from '../../engine/flow/junior-warmer.ts';
 import { isJuniorHealthy, setJuniorUnhealthy } from '../../engine/flow/junior-health.ts';
 import { Runner } from '../../runner/main.ts';
+import { setAntigravityDriverOverride } from '../../engine/harness/antigravity-seam.ts';
 import { pollUntil } from '../helpers/wait.ts';
 
 /**
@@ -300,5 +301,45 @@ describe('Runner boot wiring (demand-gated junior auto-warmup)', () => {
       expect(warmer.requests.map(r => r.junior).sort()).toEqual(['A', 'B']);
       expect(warmer.requests.every(r => r.reason === 'boot')).toBe(true);
     });
+  });
+
+  it('live-sweep wiring (senior round-2 blocking fix): a probe failure in the RUNNING loop requests warm-ups (probe_failed) and the quiet rule engages end-to-end', async () => {
+    // Hermetic: the driver override's probe forces failure without touching a
+    // real CDP port, and the injected warmer records requests — nothing here
+    // launches a real app.
+    setAntigravityDriverOverride({
+      runCommand: async () => {
+        throw new Error('not used by this test');
+      },
+      probeJuniorHealth: async () => false
+    });
+    insertQueuedTask(db, 'task-loopwarm-1');
+    const warmer = fakeWarmer();
+    try {
+      await withStartedRunner(db, warmer, async () => {
+        await pollUntil(
+          () => warmer.requests.some(r => r.reason === 'probe_failed'),
+          { label: 'the live sweep requested a warm on probe failure' }
+        );
+        expect(
+          warmer.requests.filter(r => r.reason === 'probe_failed').map(r => r.junior).sort()
+        ).toEqual(['A', 'B']);
+        // R2 through the RUNNER path: quiet warming span, no loud roster-exhausted page.
+        await pollUntil(
+          () =>
+            db.get(
+              `SELECT id FROM bureau_journal WHERE json_extract(detail, '$.action') = 'queue_probe_warming'`
+            ),
+          { label: 'quiet warming span written by the live sweep' }
+        );
+        expect(
+          db.get(
+            `SELECT id FROM bureau_journal WHERE json_extract(detail, '$.action') = 'queue_probe_roster_exhausted'`
+          )
+        ).toBeUndefined();
+      });
+    } finally {
+      setAntigravityDriverOverride(null);
+    }
   });
 });

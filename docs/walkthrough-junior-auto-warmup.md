@@ -33,7 +33,12 @@ unwedge a manual `run_junior`. The gate cannot distinguish "broken" from "not st
   loud with a `warming: [...]` detail.
 - **`runner/main.ts`** — Runner owns a warmer (injectable for tests); `start()` fires a
   **demand-gated boot warm** (Rec3): only when ≥1 queued unassigned task exists, for the whole
-  roster (A + B). An operator opening the console to an empty queue spawns no IDEs.
+  roster (A + B). An operator opening the console to an empty queue spawns no IDEs. **The live
+  sweep wires the probe-failure trigger too (senior round-2 blocking fix):** the runner's
+  `reconcileQueuedTasks` passes `requestWarmup: junior => this.warmer.request(junior,
+  'probe_failed')`, so a task filed after boot into a cold department still triggers the warm,
+  and the quiet rule (R2) is armed in production — guarded by a through-the-runner test
+  (hermetic via a driver-override probe) and mutations M-AW1b/M-AW7b.
 - **`scripts/junior_warmup.ts` + `npm run junior:warmup -- off|on|status`** (Rec5) — the
   operator keep-juniors-down switch (`bureau_meta['junior_warmup:disabled']`), journaled as a
   human act, documented in `docs/antigravity-integration.md`.
@@ -45,16 +50,23 @@ order (senior note #1), and all four reconcile-touching test files behave unchan
 ## Verification (re-runnable)
 
 - **Targeted:** `npx vitest run test/unit/junior_warmer.test.ts test/unit/reconcile.test.ts
-  test/integration/tc_junior_health_admission.test.ts` → **32/32 green** (re-verified after
-  the final mutation restore).
-- **Full suite on the branch — 5 runs:** 908/908 green (runs 1 and 3); 907/908 with only
-  `tc_primary_contamination_guard` C4 (runs 4 and 5 — the ledger-known N16 parallel-load
-  flake; **13/13 green in isolation**, and that file never touches the Runner); run 2 =
-  906/908 with the two failure names lost to a truncated log capture (disclosed — three
-  fully-green runs bracket it, and no failure in any run named a file this stream touches).
-- **`tsc --noEmit` clean** on the branch.
-- **Mutations M-AW1…7:** each reproduced → caught by its named test → restored → re-verified
-  green, in one sitting; records in `docs/mutation-evidence-phase8.md`.
+  test/integration/tc_junior_health_admission.test.ts` → **33/33 green** (re-verified after
+  the final mutation restore, round 2).
+- **Full suite, round 1 (commit `23b1a69`):** five runs — 908/908 green (runs 1 and 3);
+  907/908 with only `tc_primary_contamination_guard` C4 (runs 4 and 5 — the ledger-known N16
+  parallel-load flake; **13/13 green in isolation**, and that file never touches the Runner);
+  run 2 = 906/908 with the two failure names lost to a truncated log capture (disclosed —
+  three fully-green runs bracket it, and no failure in any run named a file this stream
+  touches).
+- **Full suite, round 2 (the runner-wiring fix):** two runs — failures were ONLY the
+  ledger-documented flake trio, differently per run (t4_crash_resume both subtests in run 1;
+  t5_two_runners + tc_primary_contamination_guard C4 in run 2) — **all three files 18/18
+  green together in isolation**, none touches a file this stream changes, and none can reach
+  the warmer (no queued candidates in their DBs).
+- **`tsc --noEmit` clean** on the branch (both rounds).
+- **Mutations M-AW1…7** (round 1) plus **M-AW1b/M-AW7b through the runner path** (round 2):
+  each reproduced → caught by its named test → restored → re-verified green, in one sitting
+  per round; records in `docs/mutation-evidence-phase8.md`.
 - **CLI smoke (temp DB, never the live one):** `status` (enabled) → `off` (DISABLED,
   journaled) → `status` → `on` → bad arg prints usage and exits 1.
 - **No test launches a real app or touches the live db**: warmer deps and the reconcile hook

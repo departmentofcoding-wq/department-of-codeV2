@@ -299,7 +299,14 @@ export class Runner {
    * engine/flow/reconcile.ts for why it is bounded and idempotent.
    */
   public async reconcileQueuedTasks(): Promise<void> {
-    for (const taskId of await reconcileQueuedTasks(this.db)) {
+    // The probe-failure trigger is wired HERE (senior round-2 blocking fix):
+    // the live sweep requests a background warm for every junior that fails
+    // the CDP gate — without this, a task filed after boot into a cold
+    // department re-wedges silently and the quiet rule (R2) never engages in
+    // production.
+    for (const taskId of await reconcileQueuedTasks(this.db, {
+      requestWarmup: junior => this.warmer.request(junior, 'probe_failed')
+    })) {
       log('INFO', 'reconciler_enqueued_plan_cycle', { taskId });
     }
   }

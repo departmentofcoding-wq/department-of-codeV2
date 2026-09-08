@@ -1122,3 +1122,31 @@ re-ran green (32/32) and `tsc --noEmit` was clean.
   - **Mutation:** `const allWarming = false && ...`.
   - **Catcher:** `test/unit/reconcile.test.ts` → `quiet rule (R2): with every probe-failed junior warming, the sweep journals queue_probe_warming and does NOT page` (FAIL, both DB variants) + `the un-wedge path` (FAIL, both variants), and `test/integration/tc_junior_health_admission.test.ts` → `Junior auto-warmup: cold junior (probe fails) requests a background warm; once the warm clears cooldown + the endpoint answers, the next sweep admits` (FAIL — exhaust span present).
   - **Restore:** Quiet rule restored; all three files green.
+
+### Round-2 addendum — the runner wiring guard (senior code-diff review @ 23b1a69)
+
+The round-1 evidence proved the engine door but not the production executor: the runner's
+live sweep called `reconcileQueuedTasks(this.db)` with NO `requestWarmup`, so the probe-fail
+trigger and the quiet rule never ran outside tests (senior round-2 blocking finding). Fixed
+on this branch: `runner/main.ts` now passes
+`requestWarmup: junior => this.warmer.request(junior, 'probe_failed')`, guarded by a
+through-the-runner test. Safety audit before wiring: every suite test that starts a live
+Runner loop was checked — t28/t4/t5/t6/tc_async_providers have no `queued` tasks;
+tc_dead_dispatch_salvage runs under driver overrides (probe → true, no queued candidates);
+t36 constructs a Runner but never starts the loop — so no existing test can fire a real
+warm.
+
+- **M-AW1b (Unwire the probe_failed trigger in the RUNNER — through-runner M-AW1 semantics):**
+  - **Guard:** `runner/main.ts` `reconcileQueuedTasks()` passes the `requestWarmup` hook into the engine sweep.
+  - **Mutation:** `requestWarmup: undefined` in the runner's call.
+  - **Catcher:** `test/unit/junior_warmer.test.ts` → `live-sweep wiring (senior round-2 blocking fix): a probe failure in the RUNNING loop requests warm-ups (probe_failed) and the quiet rule engages end-to-end` (FAIL — `pollUntil timed out after 10000ms waiting for: the live sweep requested a warm on probe failure`; exactly the silent re-wedge the senior described).
+  - **Restore:** Wiring restored; test green.
+
+- **M-AW7b (Disable the quiet rule — verified through the RUNNER path):**
+  - **Guard:** same reconcile quiet rule as M-AW7, now exercised by the live loop.
+  - **Mutation:** `const allWarming = false && ...` in `engine/flow/reconcile.ts`.
+  - **Catcher:** the same live-sweep test (FAIL — the `queue_probe_warming` span never appeared within the poll window; the loud path would have paged).
+  - **Restore:** Quiet rule restored; all three touched test files green.
+
+Executed 2026-09-08 on `wt/junior-auto-warmup` (round-2 fix commit), both mutations
+reproduced → restored → re-verified in one sitting.

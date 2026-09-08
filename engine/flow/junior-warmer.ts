@@ -129,6 +129,11 @@ export class JuniorWarmer {
       this.inFlight.set(juniorId, raced);
       // Cleanup hangs off the RACE chain (Rec4): a hung inner ensure clears the
       // entry when the cap fires, so the next request can start a fresh warm.
+      // Note (senior round-2, minor — disclosed): if the cap fires, the inner
+      // attempt keeps running and records no backoff timestamp, so retry pacing
+      // falls to the sweep's 60s admission cooldown alone. Defensive-only in
+      // practice: ensureJuniorRunning self-times-out at 90s and the readiness
+      // loop is poll-bounded, both well under the 180s cap.
       raced
         .finally(() => {
           if (capTimer) clearTimeout(capTimer);
