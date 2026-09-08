@@ -21,6 +21,7 @@
     "console": "node --experimental-strip-types scripts/console.ts",
     "runner": "node --experimental-strip-types runner/main.ts",
     "junior": "node --experimental-strip-types scripts/run_junior.ts",
+    "junior:warmup": "node --experimental-strip-types scripts/junior_warmup.ts",
     "project": "node --experimental-strip-types scripts/project.ts",
     "task:file": "node --experimental-strip-types scripts/file_task.ts",
     "hooks:install": "node --experimental-strip-types scripts/install_git_hooks.ts",

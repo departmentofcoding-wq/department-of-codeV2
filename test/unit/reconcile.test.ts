@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DbConnection } from '../../engine/contract/index.ts';
 import { reconcileQueuedTasks } from '../../engine/flow/reconcile.ts';
 import { enqueueJob } from '../../engine/jobs/jobs.ts';
+import { clearJuniorUnhealthy } from '../../engine/flow/junior-health.ts';
 import { createFakeDb, createRealSqliteDb } from '../fixtures/db_factory.ts';
 
 const testImplementations = [
@@ -107,5 +108,85 @@ describe.each(testImplementations)('Reconciler reconcileQueuedTasks ($name)', ({
 
     expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual([]);
     expect(db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`)).toHaveLength(0);
+  });
+
+  // --- Junior auto-warmup hook + quiet rule (docs/plan-junior-auto-warmup.md) ---
+
+  function spanActions(db: DbConnection, taskId: string, action: string): number {
+    return db.all(
+      `SELECT id FROM bureau_journal
+       WHERE task_id = ? AND json_extract(detail, '$.action') = ?`,
+      taskId,
+      action
+    ).length;
+  }
+
+  it('probe failure requests a background warm for every probed junior (default no-op hook stays loud)', async () => {
+    insertTask(db, 'task-warm-hook', 'queued');
+    const requestWarmup = vi.fn((_junior: string) => false);
+    const admitted = await reconcileQueuedTasks(db, { probe: async () => false, requestWarmup });
+    expect(admitted).toEqual([]);
+    // Both roster juniors were probed and each failure requested a warm.
+    expect(requestWarmup.mock.calls.map(c => c[0]).sort()).toEqual(['A', 'B']);
+    // Hook returned false (no warm in flight) -> the loud C3 path is intact.
+    expect(spanActions(db, 'task-warm-hook', 'queue_probe_roster_exhausted')).toBe(1);
+    expect(spanActions(db, 'task-warm-hook', 'queue_probe_warming')).toBe(0);
+  });
+
+  it('quiet rule (R2): with every probe-failed junior warming, the sweep journals queue_probe_warming and does NOT page (no roster-exhausted span)', async () => {
+    insertTask(db, 'task-warming', 'queued');
+    const requestWarmup = vi.fn(() => true);
+
+    const admitted = await reconcileQueuedTasks(db, { probe: async () => false, requestWarmup });
+    expect(admitted).toEqual([]);
+    expect(spanActions(db, 'task-warming', 'queue_probe_warming')).toBe(1);
+    expect(spanActions(db, 'task-warming', 'queue_probe_roster_exhausted')).toBe(0);
+    // The per-junior hold span is still recorded (cooldown marking is unchanged).
+    expect(spanActions(db, 'task-warming', 'junior_unhealthy_hold')).toBe(2);
+  });
+
+  it('quiet rule is per-junior: one warming + one non-warming failed junior still pages (mixed roster stays loud)', async () => {
+    insertTask(db, 'task-mixed', 'queued');
+    const requestWarmup = vi.fn((j: string) => j === 'A');
+
+    const admitted = await reconcileQueuedTasks(db, { probe: async () => false, requestWarmup });
+    expect(admitted).toEqual([]);
+    const exhausted = db.get<{ detail: string }>(
+      `SELECT detail FROM bureau_journal
+       WHERE task_id = 'task-mixed' AND json_extract(detail, '$.action') = 'queue_probe_roster_exhausted'`
+    );
+    expect(exhausted).toBeTruthy();
+    expect(JSON.parse(exhausted!.detail).warming).toEqual(['A']);
+    expect(spanActions(db, 'task-mixed', 'queue_probe_warming')).toBe(0);
+  });
+
+  it('the un-wedge path: a cold junior is held + warmed on sweep 1, then admitted on sweep 2 once the warm cleared cooldown and the probe passes', async () => {
+    insertTask(db, 'task-cold', 'queued');
+    // Occupy junior B so the candidate roster is exactly [A].
+    insertTask(db, 'occupant-b', 'claimed');
+    db.run(`UPDATE bureau_tasks SET assigned_junior = 'B' WHERE id = 'occupant-b'`);
+
+    let juniorAUp = false;
+    const requestWarmup = (j: string): boolean => {
+      if (j !== 'A') return false;
+      // The "warm" completes: the junior comes up and its admission cooldown clears.
+      juniorAUp = true;
+      clearJuniorUnhealthy(db, 'A');
+      return true;
+    };
+    const probe = async (cfg: { id: string }) => cfg.id === 'A' && juniorAUp;
+
+    // Sweep 1: A is cold — held (cooldown + span), warm requested, quiet warming span.
+    expect(await reconcileQueuedTasks(db, { probe, requestWarmup })).toEqual([]);
+    expect(spanActions(db, 'task-cold', 'junior_unhealthy_hold')).toBe(1);
+    expect(spanActions(db, 'task-cold', 'queue_probe_warming')).toBe(1);
+
+    // Sweep 2: the warm finished — A passes the probe and the task is admitted.
+    expect(await reconcileQueuedTasks(db, { probe, requestWarmup })).toEqual(['task-cold']);
+    const task = db.get<{ assigned_junior: string | null }>(
+      'SELECT assigned_junior FROM bureau_tasks WHERE id = ?',
+      'task-cold'
+    );
+    expect(task?.assigned_junior).toBe('A');
   });
 });

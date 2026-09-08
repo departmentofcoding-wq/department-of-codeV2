@@ -16,7 +16,8 @@ import {
 } from '../../engine/harness/antigravity.ts';
 import {
   isJuniorHealthy,
-  setJuniorUnhealthy
+  setJuniorUnhealthy,
+  clearJuniorUnhealthy
 } from '../../engine/flow/junior-health.ts';
 import { DEFAULT_JUNIOR_COOLDOWN_MS } from '../../engine/contract/constants.ts';
 import { setAntigravityDriverOverride, getAntigravityDriver } from '../../engine/harness/antigravity-seam.ts';
@@ -307,6 +308,46 @@ describe('Integration: Junior Health Gate Admission (Socket-Layer Wedged Endpoin
 
     // Verify runner executed terminal failure path and marked Junior A in cooldown
     expect(isJuniorHealthy(db, 'A')).toBe(false);
+  });
+
+  it('Junior auto-warmup: cold junior (probe fails) requests a background warm; once the warm clears cooldown + the endpoint answers, the next sweep admits', async () => {
+    // Junior A starts COLD: its endpoint answers nothing (wedged socket — probe
+    // times out), exactly the "not started yet" class the C3 gate used to wedge on.
+    serverA.mode = 'wedged';
+    insertTask('occupant-b', 'claimed', 'B');
+    insertTask('task-coldwarm-1', 'queued');
+
+    let warmed = false;
+    const requestWarmup = (j: string): boolean => {
+      if (j !== 'A' || warmed) return false;
+      warmed = true;
+      // The warm completes: the endpoint comes up and the admission cooldown clears.
+      serverA.mode = 'healthy';
+      clearJuniorUnhealthy(db, 'A');
+      return true;
+    };
+
+    // Sweep 1: cold — held, warm requested, QUIET (warming span; no roster-exhausted page).
+    const admitted1 = await reconcileQueuedTasks(db, { probeTimeoutMs: 200, requestWarmup });
+    expect(admitted1).toEqual([]);
+    const warming = db.get<{ detail: string }>(
+      "SELECT detail FROM bureau_journal WHERE task_id = 'task-coldwarm-1' AND json_extract(detail,'$.action') = 'queue_probe_warming'"
+    );
+    expect(warming).toBeTruthy();
+    expect(JSON.parse(warming!.detail).warming).toEqual(['A']);
+    const exhausted1 = db.get(
+      "SELECT id FROM bureau_journal WHERE task_id = 'task-coldwarm-1' AND json_extract(detail,'$.action') = 'queue_probe_roster_exhausted'"
+    );
+    expect(exhausted1).toBeUndefined();
+
+    // Sweep 2: the warm finished — the real socket-layer probe passes and the task admits on A.
+    const admitted2 = await reconcileQueuedTasks(db, { probeTimeoutMs: 200, requestWarmup });
+    expect(admitted2).toEqual(['task-coldwarm-1']);
+    const task = db.get<{ assigned_junior: string | null }>(
+      'SELECT assigned_junior FROM bureau_tasks WHERE id = ?',
+      'task-coldwarm-1'
+    );
+    expect(task?.assigned_junior).toBe('A');
   });
 
   it('R1 Production recovery clears cooldown flag in bureau_meta without manual opts.db passing', async () => {
