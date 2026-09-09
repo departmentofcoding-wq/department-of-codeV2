@@ -173,23 +173,56 @@ describe('Integration: Window Lease Heartbeat & Per-Junior Scoping (Phase 8 P1.2
     expect(leaseB?.window_target).toBe('window-B');
     expect(leaseB?.status).toBe('active');
 
-    // A third dispatch attempting junior 'A' concurrently fails with LeaseError
-    const ctxA2: any = {
-      db,
-      job: { id: 'job-3', task_id: 'task-1' },
-      payload: { dispatchId: 'disp-3', prompt: 'task A concurrent', junior: 'A' },
-      signal: new AbortController().signal
-    };
+    // A third dispatch attempting junior 'A' concurrently must NOT time-share
+    // the window. Under R5 it WAITS (bounded) and then DEFERS with backoff —
+    // no attempts consumed — instead of the old fail-fast LeaseError (which
+    // burned all attempts in <1s against a holder minutes from releasing).
+    process.env['BUREAU_DISPATCH_LEASE_WAIT_MS'] = '1500';
+    try {
+      const ctxA2: any = {
+        db,
+        job: { id: 'job-3', task_id: 'task-1' },
+        payload: { dispatchId: 'disp-3', prompt: 'task A concurrent', junior: 'A' },
+        signal: new AbortController().signal
+      };
 
-    await expect(handleJuniorDispatch(ctxA2)).rejects.toThrow(LeaseError);
+      const deferred = handleJuniorDispatch(ctxA2);
+      await vi.advanceTimersByTimeAsync(1700);
+      await deferred;
 
-    // Advance 4000ms (beyond 3000ms initial lease duration). Active heartbeat on A still holds window-A
-    await vi.advanceTimersByTimeAsync(4000);
+      // Deferred: dispatch parked back to pending, successor job with backoff,
+      // and NO lease held for disp-3 — exclusivity is preserved.
+      expect(
+        db.get<BureauDispatchRow>(`SELECT status FROM bureau_dispatches WHERE id = 'disp-3'`)?.status
+      ).toBe('pending');
+      const deferJob = db.get<{ state: string; run_after: string | null }>(
+        `SELECT state, run_after FROM bureau_jobs WHERE id = 'junior.dispatch:defer:disp-3:1'`
+      );
+      expect(deferJob?.state).toBe('pending');
+      expect(deferJob?.run_after).toBeTruthy();
+      expect(
+        db.get(`SELECT * FROM bureau_window_leases WHERE dispatch_id = 'disp-3' AND status = 'active'`)
+      ).toBeFalsy();
 
-    await expect(handleJuniorDispatch(ctxA2)).rejects.toThrow(LeaseError);
+      // Still held 1500ms later (heartbeat renews window-A): defers AGAIN,
+      // idempotently — the same successor slot, never a second live dispatch.
+      await vi.advanceTimersByTimeAsync(1500);
+      const deferredAgain = handleJuniorDispatch(ctxA2);
+      await vi.advanceTimersByTimeAsync(1700);
+      await deferredAgain;
+      expect(
+        db.get<BureauDispatchRow>(`SELECT status FROM bureau_dispatches WHERE id = 'disp-3'`)?.status
+      ).toBe('pending');
+      const deferJobs = db.all(
+        `SELECT id FROM bureau_jobs WHERE id LIKE 'junior.dispatch:defer:disp-3:%'`
+      );
+      expect(deferJobs).toHaveLength(1);
+    } finally {
+      delete process.env['BUREAU_DISPATCH_LEASE_WAIT_MS'];
+    }
 
-    // Advance remaining 1000ms to complete both
-    await vi.advanceTimersByTimeAsync(1000);
+    // Advance remaining time to complete both
+    await vi.advanceTimersByTimeAsync(1200);
     await Promise.all([promiseA, promiseB]);
 
     expect(
