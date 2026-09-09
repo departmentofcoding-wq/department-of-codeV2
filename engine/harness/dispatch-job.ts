@@ -1,8 +1,9 @@
 import { getIdeDriver } from '../contract/ide-driver-seam.ts';
-import type { AttributionTuple, BureauDispatchRow, JobContext, JobDefinition } from '../contract/types.ts';
+import type { AttributionTuple, BureauDispatchRow, BureauWindowLeaseRow, JobContext, JobDefinition } from '../contract/types.ts';
 import { journal } from '../journal/writer.ts';
-import { acquireLease, releaseLease, startWindowLeaseHeartbeat } from './lease-manager.ts';
-import { enqueueJob } from '../jobs/jobs.ts';
+import { releaseLease, startWindowLeaseHeartbeat, waitForWindowLease } from './lease-manager.ts';
+import { LeaseError } from './errors.ts';
+import { enqueueJob, enqueueJobIfAbsent } from '../jobs/jobs.ts';
 import { recordCorrelatedObservation } from '../selectors/correlation.ts';
 import { callModel } from '../llm/call_model.ts';
 import { JUNIOR_DISPATCH_SYSTEM_PROMPT, parseJuniorDispatchDecision } from '../review/junior_prompt.ts';
@@ -60,6 +61,28 @@ export interface JuniorDispatchPayload {
    *  chained work.cycle knows which senior/model to use. */
   workSeniorId?: string;
   workSeniorModel?: string;
+  /** R5: how many times this dispatch has already been DEFERRED on window-lease
+   *  contention (the deferred re-enqueue carries this counter; at the ceiling the
+   *  contention is real and the dispatch fails loudly for salvage/operator). */
+  deferCount?: number;
+}
+
+/**
+ * R5 — bounded wait budget for a dispatch's window lease. Contended windows
+ * wait (like plan authoring, N11) instead of burning all attempts in ~1s
+ * (the 2026-09-08 incident: both duplicate dispatches died ×3 on window-B in
+ * under 1.2 seconds). Env-tunable for tests.
+ */
+function resolveDispatchLeaseWaitMs(): number {
+  const envVal = Number(process.env['BUREAU_DISPATCH_LEASE_WAIT_MS']);
+  return Number.isFinite(envVal) && envVal >= 0 ? envVal : 120_000;
+}
+
+/** Deferral ceiling: past this, contention is real and the dispatch fails loudly. */
+export const MAX_DISPATCH_LEASE_DEFERS = 8;
+
+function dispatchDeferBackoffMs(deferCount: number): number {
+  return Math.min(15_000 * 2 ** deferCount, 300_000);
 }
 
 /**
@@ -275,8 +298,55 @@ export async function handleJuniorDispatch(ctx: JobContext): Promise<void> {
     }
   });
 
-  // Acquire window lease
-  const lease = acquireLease(ctx.db, windowTarget, dispatch.id, attribution);
+  // Acquire window lease — WAIT for it, don't fail-fast (R5). A contended
+  // window means a sibling dispatch/authoring cycle is LIVE on this junior; the
+  // old fail-fast burned all 3 job attempts in ~1 second against a holder that
+  // would only free the window minutes later, then the terminal death fed the
+  // salvage detector. Within the wait budget this serializes like plan
+  // authoring (N11); past the budget the dispatch is DEFERRED — re-enqueued
+  // with run_after backoff and fresh attempts — up to MAX_DISPATCH_LEASE_DEFERS
+  // times, after which the contention is treated as real and fails loudly.
+  const leaseDeferCount = Number(payload.deferCount ?? 0);
+  let lease: BureauWindowLeaseRow;
+  try {
+    lease = await waitForWindowLease(ctx.db, windowTarget, dispatch.id, attribution, {
+      waitMs: resolveDispatchLeaseWaitMs(),
+      pollMs: 2_000,
+      signal: ctx.signal
+    });
+  } catch (err) {
+    if (err instanceof LeaseError && leaseDeferCount < MAX_DISPATCH_LEASE_DEFERS) {
+      const backoffMs = dispatchDeferBackoffMs(leaseDeferCount);
+      ctx.db.execTransaction(() => {
+        ctx.db.run(`UPDATE bureau_dispatches SET status = 'pending' WHERE id = ?`, dispatch.id);
+        enqueueJobIfAbsent(ctx.db, {
+          id: `junior.dispatch:defer:${dispatch.id}:${leaseDeferCount + 1}`,
+          kind: 'junior.dispatch',
+          task_id: dispatch.task_id,
+          payload: { ...payload, deferCount: leaseDeferCount + 1 },
+          run_after: new Date(Date.now() + backoffMs).toISOString()
+        });
+        journal(ctx.db, {
+          kind: 'system',
+          attribution,
+          taskId: dispatch.task_id,
+          workUuid: dispatch.work_uuid,
+          jobId: ctx.job.id,
+          detail: {
+            action: 'dispatch_lease_deferred',
+            dispatchId: dispatch.id,
+            windowTarget,
+            deferCount: leaseDeferCount + 1,
+            maxDefers: MAX_DISPATCH_LEASE_DEFERS,
+            waitMs: resolveDispatchLeaseWaitMs(),
+            backoffMs
+          }
+        });
+      });
+      return;
+    }
+    throw err;
+  }
 
   const internalAbortController = new AbortController();
   const combinedSignal = ctx.signal
