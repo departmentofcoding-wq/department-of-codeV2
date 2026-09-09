@@ -226,13 +226,67 @@ export function detectWatchdogFindings(
   return createdFindings;
 }
 
+/**
+ * R6 — finalize dispatch rows orphaned by their job's death.
+ *
+ * Scar (2026-09-08): dispatches 95fb3a3b / 383b9e39 / a27059f7 were left at
+ * status='running' forever when their junior.dispatch jobs died — nothing
+ * finalizes the row on the terminal-failure path, so the Workers view and any
+ * lease/occupancy reasoning that trusts dispatch status see phantom live work.
+ *
+ * A dispatch is an orphan iff it is 'running' and NO live (pending/running)
+ * junior.dispatch job still references it (job done, dead, or absent). Reaped
+ * rows are finalized to 'failed' with a `dispatch_orphan_reaped` span.
+ * Idempotent: a reaped row is no longer 'running', so the sweep is a no-op on
+ * the second pass. This mutates bureau_dispatches only — the sweep's read-only
+ * law covers bureau_tasks/bureau_jobs, which this never touches.
+ */
+export function reapOrphanedDispatches(db: DbConnection, jobId?: string | null): number {
+  const now = new Date().toISOString();
+
+  return db.execTransaction(() => {
+    const orphans = db.all<BureauDispatchRow>(
+      `SELECT * FROM bureau_dispatches d
+       WHERE d.status = 'running'
+         AND NOT EXISTS (
+           SELECT 1 FROM bureau_jobs j
+           WHERE j.kind = 'junior.dispatch'
+             AND j.state IN ('pending','running')
+             AND json_extract(j.payload, '$.dispatchId') = d.id
+         )`
+    );
+
+    for (const dispatch of orphans) {
+      db.run(`UPDATE bureau_dispatches SET status = 'failed' WHERE id = ?`, dispatch.id);
+      journal(db, {
+        kind: 'guardrail',
+        attribution: WATCHDOG_ATTRIBUTION,
+        taskId: dispatch.task_id,
+        jobId: jobId ?? null,
+        detail: {
+          action: 'dispatch_orphan_reaped',
+          dispatch_id: dispatch.id,
+          task_id: dispatch.task_id,
+          reason: 'no live junior.dispatch job references this running dispatch',
+          detectedAt: now
+        }
+      });
+    }
+
+    return orphans.length;
+  });
+}
+
 export async function handleWatchdogSweep(ctx: JobContext): Promise<void> {
   const cadenceMs = (ctx.payload?.cadenceMs as number) ?? 30000;
 
   // 1. Run detection scan
   detectWatchdogFindings(ctx.db, { jobId: ctx.job.id });
 
-  // 2. Re-enqueue watchdog.sweep on bounded cadence (no setInterval)
+  // 2. R6: finalize dispatch rows orphaned by dead jobs (idempotent, cheap)
+  reapOrphanedDispatches(ctx.db, ctx.job.id);
+
+  // 3. Re-enqueue watchdog.sweep on bounded cadence (no setInterval)
   enqueueJobIfAbsent(ctx.db, {
     id: 'watchdog:sweep:next',
     kind: 'watchdog.sweep',
