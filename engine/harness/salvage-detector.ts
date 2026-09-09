@@ -216,6 +216,40 @@ export async function reconcileDeadDispatchWork(
     ? (task.assigned_junior ?? payload.junior ?? 'A')
     : (payload.junior ?? task.assigned_junior ?? 'A');
 
+  // R1 (2026-09-08 incident): never salvage-and-block while a SIBLING dispatch
+  // for the same task is still live. The detection below scans the SHARED
+  // per-task worktree and the per-junior brain dir, so a terminally failed
+  // DUPLICATE dispatch sees the LIVE sibling's in-flight work and would block
+  // the task mid-implementation (dispatch 383b9e39's lease-conflict death
+  // blocked task 9cabfabd while its real dispatch a9c80b20 was still running).
+  // The live sibling drives the task to completion; nothing is stranded.
+  const liveSiblings = db.all<{ id: string }>(
+    `SELECT id FROM bureau_dispatches WHERE task_id = ? AND id <> ? AND status = 'running'`,
+    task.id,
+    dispatchId
+  );
+  if (liveSiblings.length > 0) {
+    journal(db, {
+      kind: 'guardrail',
+      attribution: {
+        actor_role: 'system',
+        provider: 'deterministic',
+        model: 'core',
+        account: null
+      },
+      taskId: task.id,
+      workUuid: task.work_uuid,
+      jobId: job.id,
+      detail: {
+        action: 'dead_dispatch_skipped_live_sibling',
+        deadDispatchId: dispatchId,
+        liveDispatchIds: liveSiblings.map((s) => s.id),
+        error
+      }
+    });
+    return false;
+  }
+
   const detection = await detectDeadDispatchWork({
     db,
     taskId: task.id,
