@@ -57,6 +57,14 @@ export type EnsureAssignmentResult =
  *     junior's conversation and MUST NOT be interleaved with another task.
  * needs-review / blocked / done / failed free the junior (a blocked or
  * needs-review task waits on a human, not on the junior).
+ *
+ * R4 (2026-09-08 incident): task state is not the whole truth. A falsely (or
+ * transiently) blocked task freed junior B in the occupancy map while its
+ * implementation dispatch still HELD the window-B lease — the queue admitted a
+ * second task onto the same window and both died in lease collisions. The
+ * window lease is the physical resource: while an active, non-expired lease
+ * exists on the junior's window, the junior is occupied regardless of what the
+ * pinned task rows say. Stale leases self-heal (expiry + the lease reaper).
  */
 export function juniorIsOccupied(db: DbConnection, junior: string): boolean {
   const row = db.get<{ n: number }>(
@@ -76,7 +84,17 @@ export function juniorIsOccupied(db: DbConnection, junior: string): boolean {
        )`,
     junior
   );
-  return !!row && row.n > 0;
+  if (!!row && row.n > 0) return true;
+
+  const lease = db.get<{ n: number }>(
+    `SELECT COUNT(*) n FROM bureau_window_leases
+     WHERE window_target = ?
+       AND status = 'active'
+       AND expires_at > ?`,
+    `window-${junior.toUpperCase()}`,
+    new Date().toISOString()
+  );
+  return !!lease && lease.n > 0;
 }
 
 /** The juniors currently free, in stable roster order. */
