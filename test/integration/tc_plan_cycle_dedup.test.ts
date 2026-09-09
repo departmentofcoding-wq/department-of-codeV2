@@ -69,7 +69,7 @@ describe('R2: plan-cycle enqueue idempotence (fork collapse)', () => {
     expect(r1.outcome).toBe('revise');
     expect(r2.outcome).toBe('revise');
 
-    const successors = db.all(
+    const successors = db.all<{ id: string; state: string }>(
       `SELECT id, state FROM bureau_jobs WHERE kind = 'plan.cycle' AND task_id = ? AND id LIKE '%:r%'`,
       taskId
     );
@@ -103,14 +103,17 @@ describe('R2: plan-cycle enqueue idempotence (fork collapse)', () => {
     expect(r1.outcome).toBe('approved');
     expect(r2.outcome).toBe('approved');
 
-    const dispatchJobs = db.all(
+    const dispatchJobs = db.all<{ id: string; state: string }>(
       `SELECT id, state FROM bureau_jobs WHERE kind = 'junior.dispatch' AND task_id = ?`,
       taskId
     );
     expect(dispatchJobs).toHaveLength(1);
     expect(dispatchJobs[0].id).toBe(implementationDispatchJobId(taskId));
 
-    const dispatchRows = db.all(`SELECT id, status FROM bureau_dispatches WHERE task_id = ?`, taskId);
+    const dispatchRows = db.all<{ id: string; status: string }>(
+      `SELECT id, status FROM bureau_dispatches WHERE task_id = ?`,
+      taskId
+    );
     expect(dispatchRows).toHaveLength(1);
     expect(dispatchRows[0].id).toBe(implementationDispatchRowId(taskId));
     expect(dispatchRows[0].status).toBe('pending');
