@@ -95,4 +95,42 @@ describe('T21: Worktree Checkpoints with Attribution Trailers', () => {
     const finalCommitCount = runGit(['rev-list', '--count', 'HEAD'], handle.path);
     expect(finalCommitCount).toBe(commitCountAfterDirty);
   }, 20000);
+
+  it('T21: checkpoint commits real work when docs/junior-artifacts is gitignored, without erroring on the ignored path (2026-09-09 delivery blocker)', async () => {
+    // Commit a .gitignore that ignores docs/junior-artifacts (the dept repo
+    // shape). Before the fix, `git add -A -- :(exclude)docs/junior-artifacts`
+    // errored ("paths are ignored ... Use -f") and every checkpoint threw, so
+    // no approved task could ever deliver.
+    fs.writeFileSync(path.join(repoPath, '.gitignore'), 'docs/junior-artifacts/\n');
+    runGit(['add', '.gitignore'], repoPath);
+    runGit(['commit', '-m', 'ignore junior artifacts'], repoPath);
+
+    const db = openDbConnection(dbPath);
+    const provider = new GitWorkspaceProvider(repoPath);
+    setWorkspaceProvider(provider);
+
+    const taskId = 't21-ignored-artifacts';
+    const now = new Date().toISOString();
+    db.run(
+      "INSERT INTO bureau_tasks (id, title, state, work_uuid, created_at, updated_at) VALUES (?, 'T21 Ignored', 'verifying', 'w-t21b', ?, ?)",
+      taskId,
+      now,
+      now
+    );
+
+    const handle = await provider.prepare(db, taskId);
+
+    // Real approved work + an ignored junior artifact side by side.
+    fs.writeFileSync(path.join(handle.path, 'feature.ts'), 'export const feat = 1;\n');
+    fs.mkdirSync(path.join(handle.path, 'docs', 'junior-artifacts', 'run1'), { recursive: true });
+    fs.writeFileSync(path.join(handle.path, 'docs', 'junior-artifacts', 'run1', 'plan.md'), '# plan\n');
+
+    // Must not throw (the bug), must commit, and must leave the tree clean.
+    await checkpoint(db, taskId, verifierAttr, 'deliver');
+    expect(await provider.isClean(db, taskId)).toBe(true);
+
+    const committed = runGit(['show', '--stat', '--name-only', '--format=', 'HEAD'], handle.path);
+    expect(committed).toContain('feature.ts');
+    expect(committed).not.toContain('junior-artifacts');
+  }, 20000);
 });
