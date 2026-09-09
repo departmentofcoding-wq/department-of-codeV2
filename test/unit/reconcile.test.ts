@@ -110,6 +110,17 @@ describe.each(testImplementations)('Reconciler reconcileQueuedTasks ($name)', ({
     expect(db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`)).toHaveLength(0);
   });
 
+  it('ignores a phantom queued task: a done task that was unarchived keeps completed_at set and is not an admission candidate', async () => {
+    // Unarchiving a completed task clears archived_at but never resets state or
+    // completed_at (2026-09-09 phantom-backlog scar) — the row reads `queued`
+    // yet is not real work. It must not be admitted or spawn a junior.
+    insertTask(db, 'task-phantom', 'queued');
+    db.run(`UPDATE bureau_tasks SET completed_at = ? WHERE id = ?`, new Date().toISOString(), 'task-phantom');
+
+    expect(await reconcileQueuedTasks(db, { probe: async () => true })).toEqual([]);
+    expect(db.all(`SELECT id FROM bureau_jobs WHERE kind = 'plan.cycle'`)).toHaveLength(0);
+  });
+
   // --- Junior auto-warmup hook + quiet rule (docs/plan-junior-auto-warmup.md) ---
 
   function spanActions(db: DbConnection, taskId: string, action: string): number {

@@ -60,6 +60,7 @@ export async function reconcileQueuedTasks(
     `SELECT t.id FROM bureau_tasks t
      WHERE t.state = 'queued'
        AND t.archived_at IS NULL
+       AND t.completed_at IS NULL
        AND t.assigned_junior IS NULL
        AND t.plan_rounds < ?
        AND NOT EXISTS (
