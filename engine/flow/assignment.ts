@@ -71,6 +71,7 @@ export function juniorIsOccupied(db: DbConnection, junior: string): boolean {
     `SELECT COUNT(*) n FROM bureau_tasks t
      WHERE t.assigned_junior = ?
        AND t.archived_at IS NULL
+       AND t.completed_at IS NULL
        AND (
          t.state IN ('claimed','verifying')
          OR (

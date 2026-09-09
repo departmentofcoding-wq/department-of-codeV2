@@ -186,8 +186,13 @@ export class Runner {
     // admission gate's own probe_failed trigger.
     try {
       const waiting = this.db.get<{ n: number }>(
+        // `completed_at IS NULL` is load-bearing: unarchiving a done task clears
+        // archived_at but never resets state/completed_at, leaving a phantom
+        // `queued` row. Without this filter that phantom reads as waiting work
+        // and boot spawns the whole roster onto an empty queue (2026-09-09).
         `SELECT COUNT(*) n FROM bureau_tasks
-         WHERE state = 'queued' AND archived_at IS NULL AND assigned_junior IS NULL`
+         WHERE state = 'queued' AND archived_at IS NULL AND completed_at IS NULL
+           AND assigned_junior IS NULL`
       );
       if ((waiting?.n ?? 0) > 0) {
         const roster = freeJuniors();
