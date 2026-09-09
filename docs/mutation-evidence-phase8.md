@@ -1150,3 +1150,44 @@ warm.
 
 Executed 2026-09-08 on `wt/junior-auto-warmup` (round-2 fix commit), both mutations
 reproduced → restored → re-verified in one sitting.
+
+## R-pack (R1–R6 reliability fixes, the 2026-09-08 all-blocked incident) — branch `wt/junior-reliability-fixpack`
+
+Six guards, six mutations, each caught by its new test (all executed 2026-09-09 on the
+branch; each mutation reproduced a real failure mode of the 2026-09-08 incident).
+
+- **M-R1 (Salvage blocks despite a live sibling dispatch — the false block):**
+  - **Guard:** `engine/harness/salvage-detector.ts` `reconcileDeadDispatchWork` refuses to salvage/block a task while another `running` dispatch exists for it.
+  - **Mutation:** `if (false && liveSiblings.length > 0)`.
+  - **Catcher:** `test/unit/salvage_detector_r1.test.ts` → `skips salvage (no block) when a sibling dispatch is still running — even with detectable work` (FAIL on both DB variants — the task false-blocks over a dirty worktree that is the LIVE sibling's work, exactly the 9cabfabd block).
+  - **Restore:** Guard restored; file green (6/6).
+
+- **M-R3 (Checkpoint failure swallowed — false reviewed_commit at base tip):**
+  - **Guard:** `engine/flow/work_review_cycle.ts` approve path: bounded checkpoint retry, `checkpoint_failed` span, refusal to record `reviewed_commit` while the tree is dirty.
+  - **Mutation:** `if (false && !clean)` (restores the old empty-catch semantics — failure silently proceeds to tip recording).
+  - **Catcher:** `test/unit/work_review_checkpoint_r3.test.ts` → `checkpoint THROWS: task blocked with named reason, NO false reviewed_commit, no worktree.prepare, loud span, one retry` (FAIL on both DB variants) + the `checkpoint no-ops and the tree stays DIRTY` test (FAIL).
+  - **Restore:** Guard restored; file green (6/6).
+
+- **M-R2 (Successor enqueue dedup removed — the lineage fork):**
+  - **Guard:** `engine/flow/plan_review_cycle.ts` successor round enqueues via `enqueueJobIfAbsent` with `planCycleRoundJobId(task, round)`.
+  - **Mutation:** `id: undefined` (back to random ids — two forked rounds mint two successors).
+  - **Catcher:** `test/integration/tc_plan_cycle_dedup.test.ts` → `two FORKED amend rounds enqueue exactly ONE successor cycle` (FAIL — two successor jobs appear). The task-keyed dispatch dedup has its own assertion in the sibling test (still passing under this mutation — different door, same class).
+  - **Restore:** Guard restored; file green (2/2).
+
+- **M-R4 (Occupancy blind to window leases — the double-booking):**
+  - **Guard:** `engine/flow/assignment.ts` `juniorIsOccupied` also returns true while an active, non-expired lease exists on the junior's window.
+  - **Mutation:** `if (true) return false;` before the lease query (task-state-only occupancy, the pre-R4 law).
+  - **Catcher:** `test/unit/assignment_lease_occupancy_r4.test.ts` → `an ACTIVE lease on the junior window occupies the junior` (FAIL on both DB variants) — plus the pack regression `test/integration/tc_two_task_concurrency_regression.test.ts` exercises the same guard through the real admission door.
+  - **Restore:** Guard restored; file green (8/8).
+
+- **M-R5 (Dispatch fail-fast on lease contention — attempts burned in ~1s):**
+  - **Guard:** `engine/harness/dispatch-job.ts` acquires the window via `waitForWindowLease` and defers with `run_after` backoff instead of throwing.
+  - **Mutation:** `if (false && err instanceof LeaseError && ...)` (defer path disabled — contention throws LeaseError immediately).
+  - **Catcher:** `test/integration/tc_dispatch_lease_defer.test.ts` → `a held window defers: dispatch back to pending, successor job with run_after backoff, NO attempt consumed` (FAIL — the handler rejects instead of deferring).
+  - **Restore:** Guard restored; file green (3/3).
+
+- **M-R6 (Reaper query matches nothing — phantom running dispatches):**
+  - **Guard:** `engine/watchdog/sweep.ts` `reapOrphanedDispatches` finalizes `running` dispatches with no live job.
+  - **Mutation:** `WHERE d.status = 'never-running'`.
+  - **Catcher:** `test/unit/watchdog_dispatch_reap_r6.test.ts` → `a running dispatch whose job is DEAD is finalized to failed with a span` + `a running dispatch with NO job row at all is reaped` (both FAIL on both DB variants; the live-job and untouched-status tests correctly still pass).
+  - **Restore:** Guard restored; file green (8/8).
