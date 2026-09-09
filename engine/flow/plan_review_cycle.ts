@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 import type { AttributionTuple, BureauTaskRow, DbConnection } from '../contract/types.ts';
 import { DEFAULT_PLAN_ROUNDS_CEILING, DEFAULT_SENIOR_STALL_RETRIES, DEFAULT_PLAN_AUTHORING_INFRA_RETRIES, REVIEW_PR_META_KEYS } from '../contract/constants.ts';
 import { journal } from '../journal/writer.ts';
-import { enqueueJob } from '../jobs/jobs.ts';
+import { enqueueJobIfAbsent } from '../jobs/jobs.ts';
+import {
+  implementationDispatchJobId,
+  implementationDispatchRowId,
+  planCycleRoundJobId
+} from '../jobs/ids.ts';
 import { transition } from '../state/machine.ts';
 import { notifyOperator } from '../state/notifications.ts';
 import { getAntigravityDriver, type AntigravityRunResult } from '../harness/antigravity-seam.ts';
@@ -773,7 +778,13 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
     "SELECT path FROM bureau_worktrees WHERE task_id = ? AND status <> 'removed'",
     task.id
   );
-  const dispatchId = crypto.randomUUID();
+  // R2 (2026-09-08 incident): the dispatch row/job for an APPROVED plan gets a
+  // deterministic TASK-keyed id — a forked cycle lineage (even one approving a
+  // DIFFERENT plan) must not mint a SECOND live implementation dispatch for one
+  // task. Two approved plans dispatched in the incident (a9c80b20 + 383b9e39);
+  // the loser died on the window lease and its salvage blocked the task
+  // mid-flight (see R1). INSERT OR IGNORE collapses the fork.
+  const dispatchId = implementationDispatchRowId(task.id);
   const implPrompt = buildImplementationPrompt(
     task,
     p.planText,
@@ -836,17 +847,10 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
 
     // Legacy A-7a continuation, on the harness path: an approved plan immediately
     // becomes a real dispatch row + job for the SAME junior who planned it.
-    db.run(
-      `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
-       VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
-      dispatchId,
-      task.id,
-      task.work_uuid,
-      p.juniorProvider,
-      p.juniorModel,
-      nowIso
-    );
-    return enqueueJob(db, {
+    // R2: enqueue-if-absent FIRST — when a forked lineage already dispatched
+    // this plan, no second dispatch row is created either.
+    const dispatchJob = enqueueJobIfAbsent(db, {
+      id: implementationDispatchJobId(task.id),
       kind: 'junior.dispatch',
       task_id: task.id,
       payload: {
@@ -865,6 +869,19 @@ function finishApproveRound(db: DbConnection, task: BureauTaskRow, p: ApprovePar
         ...(p.carry.folder ? { folder: p.carry.folder } : {})
       }
     });
+    if (dispatchJob.inserted) {
+      db.run(
+        `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+         VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
+        dispatchId,
+        task.id,
+        task.work_uuid,
+        p.juniorProvider,
+        p.juniorModel,
+        nowIso
+      );
+    }
+    return dispatchJob.job;
   });
 
   return {
@@ -904,7 +921,10 @@ function enqueueImplementationDispatch(
     task.id
   );
   const nowIso = new Date().toISOString();
-  const dispatchId = crypto.randomUUID();
+  // R2: deterministic TASK-keyed id — the ceiling path and the approve path
+  // share one dispatch slot per task; a surviving fork cannot mint a second
+  // live implementation dispatch (see finishApproveRound).
+  const dispatchId = implementationDispatchRowId(task.id);
   const implPrompt = buildImplementationPrompt(
     task,
     opts.planText,
@@ -912,17 +932,8 @@ function enqueueImplementationDispatch(
     undefined,
     worktree?.path
   );
-  db.run(
-    `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
-     VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
-    dispatchId,
-    task.id,
-    task.work_uuid,
-    opts.juniorProvider,
-    opts.juniorModel,
-    nowIso
-  );
-  return enqueueJob(db, {
+  const dispatchJob = enqueueJobIfAbsent(db, {
+    id: implementationDispatchJobId(task.id),
     kind: 'junior.dispatch',
     task_id: task.id,
     payload: {
@@ -939,6 +950,19 @@ function enqueueImplementationDispatch(
       ...(opts.folder ? { folder: opts.folder } : {})
     }
   });
+  if (dispatchJob.inserted) {
+    db.run(
+      `INSERT INTO bureau_dispatches (id, task_id, work_uuid, actor_role, provider, model, account, status, created_at)
+       VALUES (?, ?, ?, 'junior-engineer', ?, ?, NULL, 'pending', ?)`,
+      dispatchId,
+      task.id,
+      task.work_uuid,
+      opts.juniorProvider,
+      opts.juniorModel,
+      nowIso
+    );
+  }
+  return dispatchJob.job;
 }
 
 interface ReviseParams {
@@ -1071,7 +1095,14 @@ function finishReviseRound(db: DbConnection, task: BureauTaskRow, p: ReviseParam
     };
   }
 
-  const next = enqueueJob(db, {
+  // R2 (2026-09-08 incident): the successor round enqueues with a DETERMINISTIC
+  // per-(task, round) id via enqueue-if-absent. One cycle job previously emitted
+  // two review rounds and each minted a random-id successor — the lineage forked,
+  // both branches approved plans, and each dispatched an implementation
+  // (the duplicate-dispatch incident). INSERT OR IGNORE collapses the fork at
+  // this door AND at the dispatch door (deterministic per-plan dispatch ids).
+  const next = enqueueJobIfAbsent(db, {
+    id: planCycleRoundJobId(task.id, roundsUsed + 1),
     kind: 'plan.cycle',
     task_id: task.id,
     payload: {
