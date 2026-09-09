@@ -86,7 +86,20 @@ export type WorkReviewResult =
       ceilingReached: boolean;
     }
   | { outcome: 'skipped'; reason: 'no_walkthrough' }
-  | { outcome: 'blocked'; reason: 'senior_stall_exhausted'; senior: string; attempts: number };
+  | { outcome: 'blocked'; reason: 'senior_stall_exhausted'; senior: string; attempts: number }
+  | {
+      /** R3: the walkthrough was approved but the worktree could not be
+       *  checkpointed — the junior's work is uncommitted and the task must not
+       *  proceed to delivery on a false reviewed_commit. */
+      outcome: 'blocked';
+      reason: 'checkpoint_failed_after_approve';
+      senior: string;
+      feedback: string;
+      reviewId: string;
+      roundsUsed: number;
+      ceiling: number;
+      attempts: number;
+    };
 
 export function readSeniorStallRetries(db: DbConnection): number {
   const envVal = process.env['SENIOR_STALL_RETRIES'];
@@ -450,10 +463,63 @@ export async function runWorkReviewCycle(
     if (wtRow) {
       const wsProvider = getWorkspaceProviderOverride();
       if (wsProvider) {
-        try {
-          await wsProvider.checkpoint(db, task.id, attribution, 'walkthrough-approved');
-        } catch {
-          // Checkpoint failure is best-effort before recording tip
+        // R3 (2026-09-08 incident): the checkpoint is the ONLY committer of the
+        // junior's disk-written work, and it used to fail into an empty catch —
+        // reviewed_commit was then recorded at the branch tip = the BASE commit
+        // while the approved work sat uncommitted, and the follow-on
+        // worktree.prepare correctly refused the dirty tree → task blocked with
+        // approved work stranded. Now: bounded retry, loud failure, and NEVER a
+        // false tip — a dirty tree after checkpointing blocks the task with a
+        // named reason (recoverable) instead of recording reviewed_commit=base.
+        let checkpointError: string | null = null;
+        let clean = false;
+        for (let attempt = 1; attempt <= 2 && !clean; attempt++) {
+          try {
+            await wsProvider.checkpoint(db, task.id, attribution, 'walkthrough-approved');
+            clean = await wsProvider.isClean(db, task.id);
+            if (!clean) {
+              checkpointError = 'worktree still dirty after checkpoint';
+            }
+          } catch (err: any) {
+            checkpointError = err instanceof Error ? err.message : String(err);
+          }
+        }
+        if (!clean) {
+          journal(db, {
+            kind: 'guardrail',
+            attribution,
+            taskId: task.id,
+            workUuid: task.work_uuid,
+            jobId: opts.jobId ?? null,
+            detail: {
+              action: 'checkpoint_failed',
+              stage: 'walkthrough-approved',
+              reviewId,
+              error: checkpointError ?? 'unknown checkpoint failure'
+            }
+          });
+          const refreshed = db.get<BureauTaskRow>('SELECT * FROM bureau_tasks WHERE id = ?', task.id);
+          if (refreshed && refreshed.state === 'claimed') {
+            transition(db, task.id, 'blocked', attribution, {
+              reason: 'checkpoint_failed_after_approve',
+              reviewId
+            });
+          }
+          notifyOperator(
+            opts.jobId ?? 'work.cycle',
+            `Task ${task.id} walkthrough was APPROVED but its worktree could not be checkpointed ` +
+              `(${checkpointError}) — the junior's work is uncommitted; blocked rather than recording a false reviewed_commit`
+          );
+          return {
+            outcome: 'blocked',
+            reason: 'checkpoint_failed_after_approve',
+            senior: seniorId,
+            feedback: review.feedback,
+            reviewId,
+            roundsUsed,
+            ceiling,
+            attempts: 2
+          };
         }
       }
       try {
